@@ -17,7 +17,9 @@ limitations under the License.
 package integration
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/client-go/rest"
 
@@ -27,6 +29,7 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/cluster"
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 )
 
 var _ = Describe("Cluster Creation", Ordered, func() {
@@ -42,6 +45,7 @@ var _ = Describe("Cluster Creation", Ordered, func() {
 		kubeconfigPath    string
 		tunnelinfo        *ssh.TunnelInfo
 		clusterDefinition *config.ClusterDefinition
+		module            *deckhouse.Module
 	)
 
 	BeforeAll(func() {
@@ -113,14 +117,17 @@ var _ = Describe("Cluster Creation", Ordered, func() {
 		})
 	})
 
-	It("should query K8s cluster", func() {
-		By("Querying Kubernetes cluster", func() {
-			GinkgoWriter.Printf("    ▶️ Querying K8s cluster using kubeconfig: %s\n", kubeconfigPath)
-			// TODO: Add actual cluster querying logic here
-			GinkgoWriter.Printf("    ✅ Cluster query completed successfully\n")
+	It("should make sure that virtualization module is Ready", func() {
+		By("Checking if virtualization module is Ready", func() {
+			GinkgoWriter.Printf("    ▶️ Getting module with timeout\n")
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			module, err = deckhouse.GetModule(ctx, kubeconfig, "virtualization")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(module).NotTo(BeNil())
+			Expect(module.Status.Phase).To(Equal("Ready"), "Module status phase should be Ready")
+			GinkgoWriter.Printf("    ✅ Module %s retrieved successfully with status: %s\n", module.Name, module.Status.Phase)
 		})
 	})
-
-	_ = kubeconfig // TODO: use kubeconfig
 
 }) // Describe: Cluster Creation
