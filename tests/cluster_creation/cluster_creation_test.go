@@ -35,8 +35,8 @@ import (
 var _ = Describe("Cluster Creation Test", Ordered, func() {
 	var (
 		yamlConfigFilename       string = "cluster_creation_test.yml"
-		baseClusterMasterIP      string = "172.17.1.67"
-		baseClusterUser          string = "tfadm"
+		baseClusterMasterIP      string = "10.0.0.181"
+		baseClusterUser          string = "w-ansible"
 		baseClusterSSHPrivateKey string = "~/.ssh/id_rsa"
 
 		err               error
@@ -123,18 +123,9 @@ var _ = Describe("Cluster Creation Test", Ordered, func() {
 			tunnelinfo, err = ssh.EstablishSSHTunnel(ctx, sshclient, "6445")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tunnelinfo).NotTo(BeNil())
-			Expect(tunnelinfo.LocalPort).To(BeNumerically(">=", 1024))
+			Expect(tunnelinfo.LocalPort).To(Equal(6445), "Local port should be exactly 6445")
 			GinkgoWriter.Printf("    ✅ SSH tunnel established on local port: %d\n", tunnelinfo.LocalPort)
 
-			// Update kubeconfig if port differs from 6445
-			if tunnelinfo.LocalPort != 6445 {
-				By(fmt.Sprintf("Updating kubeconfig to use local port %d instead of 6445", tunnelinfo.LocalPort), func() {
-					GinkgoWriter.Printf("    ▶️ Updating kubeconfig port from 6445 to %d\n", tunnelinfo.LocalPort)
-					err = cluster.UpdateKubeconfigPort(kubeconfigPath, tunnelinfo.LocalPort)
-					Expect(err).NotTo(HaveOccurred())
-					GinkgoWriter.Printf("    ✅ Kubeconfig updated successfully\n")
-				})
-			}
 		})
 	})
 

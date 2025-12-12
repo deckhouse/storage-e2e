@@ -23,7 +23,6 @@ import (
 	"strconv"
 	"time"
 
-	netpkg "github.com/deckhouse/storage-e2e/internal/infrastructure/net"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -127,29 +126,24 @@ func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePo
 	return stop, nil
 }
 
-// EstablishSSHTunnel establishes an SSH tunnel with port forwarding from the master node to the same port of client, running the test
-// It finds a free local port starting from remotePort and creates the tunnel
+// EstablishSSHTunnel establishes an SSH tunnel with port forwarding from the master node to the same port on the client
+// It uses the exact port specified in remotePort and fails immediately if the port is busy
 // Returns the tunnel info, local port and error if the tunnel fails to start
 func EstablishSSHTunnel(ctx context.Context, sshClient SSHClient, remotePort string) (*TunnelInfo, error) {
-	// Find a free local port starting from remotePort
-	remotePortInt := 1024
-	if parsed, err := strconv.Atoi(remotePort); err == nil {
-		remotePortInt = parsed
-	}
-
-	localPort, err := netpkg.FindFreePort(remotePortInt)
+	// Parse remote port to integer
+	remotePortInt, err := strconv.Atoi(remotePort)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find free port: %w", err)
+		return nil, fmt.Errorf("invalid remote port %s: %w", remotePort, err)
 	}
 
 	// Start the SSH tunnel with context
-	stopFunc, err := sshClient.StartTunnel(ctx, strconv.Itoa(localPort), remotePort)
+	stopFunc, err := sshClient.StartTunnel(ctx, remotePort, remotePort)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start SSH tunnel: %w", err)
+		return nil, fmt.Errorf("failed to start SSH tunnel on port %d (port may be busy): %w", remotePortInt, err)
 	}
 
 	tunnelInfo := &TunnelInfo{
-		LocalPort:  localPort,
+		LocalPort:  remotePortInt,
 		RemotePort: remotePortInt,
 		StopFunc:   stopFunc,
 	}
