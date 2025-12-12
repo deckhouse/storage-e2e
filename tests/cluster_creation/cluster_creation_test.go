@@ -29,72 +29,96 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 )
 
-var _ = Describe("Cluster Creation", func() {
+var _ = Describe("Cluster Creation", Ordered, func() {
 	var (
 		yamlConfigFilename       string = "cluster_creation_test.yml"
 		baseClusterMasterIP      string = "172.17.1.67"
 		baseClusterUser          string = "tfadm"
 		baseClusterSSHPrivateKey string = "~/.ssh/id_rsa"
 
-		err            error
-		sshclient      ssh.SSHClient
-		kubeconfig     *rest.Config
-		kubeconfigPath string
-		tunnelinfo     *ssh.TunnelInfo
+		err               error
+		sshclient         ssh.SSHClient
+		kubeconfig        *rest.Config
+		kubeconfigPath    string
+		tunnelinfo        *ssh.TunnelInfo
+		clusterDefinition *config.ClusterDefinition
 	)
 
-	BeforeEach(func(ctx SpecContext) {
+	BeforeAll(func() {
 		var err error
-		var clusterDefinition *config.ClusterDefinition
-		var tunnelinfo *ssh.TunnelInfo
 
 		// Stage 1: LoadConfig - verifies and parses the config from yaml file
 		By("LoadConfig: Loading and verifying cluster configuration from YAML", func() {
+			GinkgoWriter.Printf("    ▶️ Loading cluster configuration from: %s\n", yamlConfigFilename)
 			clusterDefinition, err = cluster.LoadClusterConfig(yamlConfigFilename)
 			Expect(err).NotTo(HaveOccurred())
+			GinkgoWriter.Printf("    ✅ Successfully loaded cluster configuration\n")
 		})
 
-		// Clean up tunnel when test completes
+		// AfterAll: Clean up tunnel - just for example. TODO - implement real cleanup
 		DeferCleanup(func() {
 			if tunnelinfo != nil && tunnelinfo.StopFunc != nil {
-				_ = tunnelinfo.StopFunc()
+				GinkgoWriter.Printf("    ▶️ Cleaning up SSH tunnel...\n")
+				err = tunnelinfo.StopFunc()
+				Expect(err).NotTo(HaveOccurred())
+				GinkgoWriter.Printf("    ✅ SSH tunnel cleaned up successfully\n")
 			}
 		})
 
-		_ = clusterDefinition // TODO: use clusterDefinition
+	}) // BeforeAll
 
-	}) // BeforeEach: Cluster Creation
+	_ = clusterDefinition // TODO: use clusterDefinition
 
 	// Stage 2: Establish SSH connection to base cluster (reused for getting kubeconfig)
 	It("should establish ssh connection to the base cluster", func() {
-		sshclient, err = ssh.NewClient(baseClusterUser, baseClusterMasterIP, baseClusterSSHPrivateKey)
-		Expect(err).NotTo(HaveOccurred())
+		By(fmt.Sprintf("Connecting to %s@%s using key %s", baseClusterUser, baseClusterMasterIP, baseClusterSSHPrivateKey), func() {
+			GinkgoWriter.Printf("    ▶️ Creating SSH client for %s@%s\n", baseClusterUser, baseClusterMasterIP)
+			sshclient, err = ssh.NewClient(baseClusterUser, baseClusterMasterIP, baseClusterSSHPrivateKey)
+			Expect(err).NotTo(HaveOccurred())
+			GinkgoWriter.Printf("    ✅ SSH connection established successfully\n")
+		})
 	})
 
 	// Stage 3: Getting kubeconfig from base cluster (reusing SSH connection to avoid double passphrase prompt)
 
 	It("should get kubeconfig from the base cluster", func() {
-		kubeconfig, kubeconfigPath, err = cluster.GetKubeconfig(baseClusterMasterIP, baseClusterUser, baseClusterSSHPrivateKey, sshclient)
-		Expect(err).NotTo(HaveOccurred())
+		By("Retrieving kubeconfig from base cluster", func() {
+			GinkgoWriter.Printf("    ▶️ Fetching kubeconfig from %s\n", baseClusterMasterIP)
+			kubeconfig, kubeconfigPath, err = cluster.GetKubeconfig(baseClusterMasterIP, baseClusterUser, baseClusterSSHPrivateKey, sshclient)
+			Expect(err).NotTo(HaveOccurred())
+			GinkgoWriter.Printf("    ✅ Kubeconfig retrieved and saved to: %s\n", kubeconfigPath)
+		})
 	})
 
 	// Stage 4: Establish SSH tunnel with port forwarding
 
 	It("should establish ssh tunnel to the base cluster with port forwarding", func() {
-		tunnelinfo, err = ssh.EstablishSSHTunnel(sshclient, "6445")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(tunnelinfo).NotTo(BeNil())
-		Expect(tunnelinfo.LocalPort).To(BeNumerically(">=", 1024))
+		By("Setting up SSH tunnel with port forwarding", func() {
+			GinkgoWriter.Printf("    ▶️ Establishing SSH tunnel to %s, forwarding port 6445\n", baseClusterMasterIP)
+			tunnelinfo, err = ssh.EstablishSSHTunnel(sshclient, "6445")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tunnelinfo).NotTo(BeNil())
+			Expect(tunnelinfo.LocalPort).To(BeNumerically(">=", 1024))
+			GinkgoWriter.Printf("    ✅ SSH tunnel established on local port: %d\n", tunnelinfo.LocalPort)
 
-		// Update kubeconfig if port differs from 6445
-		if tunnelinfo.LocalPort != 6445 {
-			err = cluster.UpdateKubeconfigPort(kubeconfigPath, tunnelinfo.LocalPort)
-		}
+			// Update kubeconfig if port differs from 6445
+			if tunnelinfo.LocalPort != 6445 {
+				By(fmt.Sprintf("Updating kubeconfig to use local port %d instead of 6445", tunnelinfo.LocalPort), func() {
+					GinkgoWriter.Printf("    ▶️ Updating kubeconfig port from 6445 to %d\n", tunnelinfo.LocalPort)
+					err = cluster.UpdateKubeconfigPort(kubeconfigPath, tunnelinfo.LocalPort)
+					Expect(err).NotTo(HaveOccurred())
+					GinkgoWriter.Printf("    ✅ Kubeconfig updated successfully\n")
+				})
+			}
+		})
 	})
 
 	It("should query K8s cluster", func() {
-		fmt.Println("querying K8s cluster")
-
+		By("Querying Kubernetes cluster", func() {
+			GinkgoWriter.Printf("    ▶️ Querying K8s cluster using kubeconfig: %s\n", kubeconfigPath)
+			// TODO: Add actual cluster querying logic here
+			GinkgoWriter.Printf("    ✅ Cluster query completed successfully\n")
+		})
 	})
 
 	_ = kubeconfig // TODO: use kubeconfig

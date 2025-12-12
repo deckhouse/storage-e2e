@@ -25,5 +25,9 @@ import (
 
 func TestIntegration(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Integration Test Suite")
+	// Configure Ginkgo to show verbose output
+	suiteConfig, reporterConfig := GinkgoConfiguration()
+	reporterConfig.Verbose = true
+	reporterConfig.ShowNodeEvents = false
+	RunSpecs(t, "Integration Test Suite", suiteConfig, reporterConfig)
 }
