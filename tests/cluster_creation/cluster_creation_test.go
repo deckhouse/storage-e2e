@@ -59,14 +59,32 @@ var _ = Describe("Cluster Creation", Ordered, func() {
 			GinkgoWriter.Printf("    ✅ Successfully loaded cluster configuration\n")
 		})
 
-		// AfterAll: Clean up tunnel - just for example. TODO - implement real cleanup
+		// DeferCleanup: Clean up all resources in reverse order of creation (it's a synonym for AfterAll)
 		DeferCleanup(func() {
+			// Step 1: Stop SSH tunnel (must be done before closing SSH client)
 			if tunnelinfo != nil && tunnelinfo.StopFunc != nil {
-				GinkgoWriter.Printf("    ▶️ Cleaning up SSH tunnel...\n")
-				err = tunnelinfo.StopFunc()
-				Expect(err).NotTo(HaveOccurred())
-				GinkgoWriter.Printf("    ✅ SSH tunnel cleaned up successfully\n")
+				GinkgoWriter.Printf("    ▶️ Stopping SSH tunnel on local port %d...\n", tunnelinfo.LocalPort)
+				err := tunnelinfo.StopFunc()
+				if err != nil {
+					GinkgoWriter.Printf("    ⚠️  Warning: Failed to stop SSH tunnel: %v\n", err)
+				} else {
+					GinkgoWriter.Printf("    ✅ SSH tunnel stopped successfully\n")
+				}
 			}
+
+			// Step 2: Close SSH client connection
+			if sshclient != nil {
+				GinkgoWriter.Printf("    ▶️ Closing SSH client connection...\n")
+				err := sshclient.Close()
+				if err != nil {
+					GinkgoWriter.Printf("    ⚠️  Warning: Failed to close SSH client: %v\n", err)
+				} else {
+					GinkgoWriter.Printf("    ✅ SSH client closed successfully\n")
+				}
+			}
+
+			// Note: kubeconfig and kubeconfigPath are just config/file paths, no cleanup needed
+			// The kubeconfig file is stored in temp/ directory and can be kept for debugging
 		})
 
 	}) // BeforeAll
