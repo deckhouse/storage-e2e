@@ -92,13 +92,15 @@ func createSSHConfig(user, keyPath string) (*ssh.ClientConfig, error) {
 		return nil, fmt.Errorf("unable to read private key %s: %w", expandedKeyPath, err)
 	}
 
+	// Always try parsing without passphrase first
 	signer, err := ssh.ParsePrivateKey(key)
 	if err != nil {
+		// Only if the error specifically indicates passphrase protection, try with passphrase
 		if !strings.Contains(err.Error(), "ssh: this private key is passphrase protected") {
 			return nil, fmt.Errorf("unable to parse private key: %w", err)
 		}
 
-		// Try to get passphrase from environment variable first
+		// Key is passphrase-protected, get passphrase
 		var pass []byte
 		if envPass := os.Getenv("SSH_PASSPHRASE"); envPass != "" {
 			pass = []byte(envPass)

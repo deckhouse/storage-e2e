@@ -158,6 +158,37 @@ func validateNode(node config.ClusterNode, isMaster bool) error {
 	return nil
 }
 
+// expandPath expands ~ to home directory and resolves symlinks if present
+func expandPath(path string) (string, error) {
+	var expandedPath string
+
+	// Expand ~ to home directory
+	if strings.HasPrefix(path, "~") {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to get home directory: %w", err)
+		}
+
+		if path == "~" {
+			expandedPath = homeDir
+		} else {
+			expandedPath = filepath.Join(homeDir, strings.TrimPrefix(path, "~/"))
+		}
+	} else {
+		expandedPath = path
+	}
+
+	// Resolve symlinks if present (usually it won't be a symlink)
+	// If resolution fails (e.g., path doesn't exist or is not a symlink), use the expanded path
+	resolvedPath, err := filepath.EvalSymlinks(expandedPath)
+	if err != nil {
+		// Path might not exist yet or might not be a symlink - use expanded path as-is
+		return expandedPath, nil
+	}
+
+	return resolvedPath, nil
+}
+
 // GetKubeconfig connects to the master node via SSH, retrieves kubeconfig from /etc/kubernetes/admin.conf,
 // and returns a rest.Config that can be used with Kubernetes clients.
 // If sshClient is provided, it will be used instead of creating a new connection.
@@ -177,13 +208,6 @@ func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*re
 		defer sshClient.Close()
 	}
 
-	// Read kubeconfig from /etc/kubernetes/admin.conf
-	ctx := context.Background()
-	kubeconfigContent, err := sshClient.Exec(ctx, "sudo cat /etc/kubernetes/admin.conf")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read kubeconfig from master: %w", err)
-	}
-
 	// Get the test file name from the caller
 	_, callerFile, _, ok := runtime.Caller(1)
 	if !ok {
@@ -191,25 +215,62 @@ func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*re
 	}
 	testFileName := strings.TrimSuffix(filepath.Base(callerFile), filepath.Ext(callerFile))
 
-	// Determine the temp directory path relative to e2e-tests
-	// callerFile is in tests/ directory, so we go up one level to reach e2e-tests/
-	e2eTestsDir := filepath.Join(filepath.Dir(callerFile), "..")
-	tempDir := filepath.Join(e2eTestsDir, "temp", testFileName)
+	// Determine the temp directory path in the repo root
+	// callerFile is in tests/{test-dir}/, so we go up two levels to reach repo root
+	callerDir := filepath.Dir(callerFile)
+	repoRootPath := filepath.Join(callerDir, "..", "..")
+	// Resolve the .. parts to get absolute path
+	repoRoot, err := filepath.Abs(repoRootPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve repo root path: %w", err)
+	}
+	tempDir := filepath.Join(repoRoot, "temp", testFileName)
 
 	// Create temp directory if it doesn't exist
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create temp directory %s: %w", tempDir, err)
 	}
 
-	// Create kubeconfig file in temp directory
-	kubeconfigPath := filepath.Join(tempDir, fmt.Sprintf("kubeconfig-%s.yaml", masterIP))
+	// Create kubeconfig file path in temp directory
+	kubeconfigPath := filepath.Join(tempDir, fmt.Sprintf("kubeconfig-%s.yml", masterIP))
+
+	var kubeconfigContent []byte
+
+	// Try to read kubeconfig from /etc/kubernetes/admin.conf via SSH
+	ctx := context.Background()
+	kubeconfigContentStr, err := sshClient.Exec(ctx, "sudo -n cat /etc/kubernetes/admin.conf")
+	if err != nil {
+		// SSH retrieval failed (likely due to sudo password requirement)
+		// Try to use KUBE_CONFIG_PATH if set, otherwise notify user
+		if config.KubeConfigPath != "" {
+			// Expand path to handle ~ and resolve symlinks if present
+			resolvedPath, err := expandPath(config.KubeConfigPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to expand KUBE_CONFIG_PATH (%s): %w", config.KubeConfigPath, err)
+			}
+			// Read kubeconfig content from the provided file
+			kubeconfigContent, err = os.ReadFile(resolvedPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read kubeconfig from KUBE_CONFIG_PATH (%s): %w", resolvedPath, err)
+			}
+		} else {
+			// KUBE_CONFIG_PATH not set, notify user and fail
+			return nil, fmt.Errorf("failed to read kubeconfig from master (this may occur if sudo requires a password). "+
+				"Please download the kubeconfig file manually and provide its full path via KUBE_CONFIG_PATH environment variable. "+
+				"Original error: %w", err)
+		}
+	} else {
+		// SSH succeeded - use the content from SSH
+		kubeconfigContent = []byte(kubeconfigContentStr)
+	}
+
+	// Write kubeconfig content to temp file (always copy to temp, regardless of source)
 	kubeconfigFile, err := os.Create(kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubeconfig file %s: %w", kubeconfigPath, err)
 	}
 
-	// Write kubeconfig content to file
-	if _, err := kubeconfigFile.Write([]byte(kubeconfigContent)); err != nil {
+	if _, err := kubeconfigFile.Write(kubeconfigContent); err != nil {
 		kubeconfigFile.Close()
 		return nil, fmt.Errorf("failed to write kubeconfig to file: %w", err)
 	}
@@ -217,7 +278,7 @@ func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*re
 		return nil, fmt.Errorf("failed to close kubeconfig file: %w", err)
 	}
 
-	// Build rest.Config from the kubeconfig file
+	// Build rest.Config from the kubeconfig file in temp directory
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)

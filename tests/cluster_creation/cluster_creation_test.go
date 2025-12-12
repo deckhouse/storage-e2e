@@ -32,9 +32,9 @@ import (
 var _ = Describe("Cluster Creation", func() {
 	var (
 		yamlConfigFilename       string = "cluster_creation_test.yml"
-		baseClusterMasterIP      string = "10.0.0.181"
-		baseClusterUser          string = "w-ansible"
-		baseClusterSSHPrivateKey string = "~/.ssh/aya_rsa"
+		baseClusterMasterIP      string = "172.17.1.67"
+		baseClusterUser          string = "tfadm"
+		baseClusterSSHPrivateKey string = "~/.ssh/id_rsa"
 	)
 
 	BeforeEach(func(ctx SpecContext) {
@@ -59,6 +59,10 @@ var _ = Describe("Cluster Creation", func() {
 		By("Get kubeconfig: Getting kubeconfig from the base cluster", func() {
 			kubeconfig, err = cluster.GetKubeconfig(baseClusterMasterIP, baseClusterUser, baseClusterSSHPrivateKey, sshClient)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		By("Establishing ssh tunnel to the base cluster with 6445 port forwarding", func() {
+
 		})
 
 		_ = sshClient         // TODO: use sshClient
