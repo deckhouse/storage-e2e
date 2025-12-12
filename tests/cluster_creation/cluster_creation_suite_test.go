@@ -21,7 +21,15 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/deckhouse/storage-e2e/internal/config"
 )
+
+var _ = BeforeSuite(func() {
+	// Validate that CLUSTER_CREATE_MODE is set and has a valid value
+	err := config.ValidateClusterCreateMode()
+	Expect(err).NotTo(HaveOccurred(), "CLUSTER_CREATE_MODE environment variable must be set to either 'alwaysUseExisting' or 'alwaysCreateNew'")
+})
 
 func TestIntegration(t *testing.T) {
 	RegisterFailHandler(Fail)

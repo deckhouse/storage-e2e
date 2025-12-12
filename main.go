@@ -16,21 +16,13 @@ limitations under the License.
 
 package main
 
-import (
-	"flag"
-	"fmt"
-	"os"
-
-	"github.com/deckhouse/storage-e2e/internal/config"
-)
-
 func main() {
-	// config.ParseFlags() // TODO - investigate flag parsing with go test later.
-
-	// Validate that at least one of the flags is set
-	if (!config.AlwaysUseExisting() && !config.AlwaysCreateNew()) || (config.AlwaysUseExisting() && config.AlwaysCreateNew()) {
-		fmt.Fprintf(os.Stderr, "Error: Either --always-use-existing or --always-create-new must be set, but not both\n\n")
-		flag.Usage()
-		os.Exit(1)
-	}
+	// // Validate that CLUSTER_CREATE_MODE is set and has a valid value
+	// if err := config.ValidateClusterCreateMode(); err != nil {
+	// 	fmt.Fprintf(os.Stderr, "Error: %v\n\n", err)
+	// 	fmt.Fprintf(os.Stderr, "Please set CLUSTER_CREATE_MODE environment variable:\n")
+	// 	fmt.Fprintf(os.Stderr, "  export CLUSTER_CREATE_MODE='%s'  # Use existing cluster\n", config.ClusterCreateModeAlwaysUseExisting)
+	// 	fmt.Fprintf(os.Stderr, "  export CLUSTER_CREATE_MODE='%s'  # Create new cluster\n", config.ClusterCreateModeAlwaysCreateNew)
+	// 	os.Exit(1)
+	// }
 }

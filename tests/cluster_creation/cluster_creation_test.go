@@ -32,7 +32,7 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 )
 
-var _ = Describe("Cluster Creation", Ordered, func() {
+var _ = Describe("Cluster Creation Test", Ordered, func() {
 	var (
 		yamlConfigFilename       string = "cluster_creation_test.yml"
 		baseClusterMasterIP      string = "172.17.1.67"

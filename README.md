@@ -10,6 +10,11 @@
 # Passphrase of the private key used to connect to the base cluster
 export SSH_PASSPHRASE='passphrase'
 
+# Cluster creation mode - must be set to either 'alwaysUseExisting' or 'alwaysCreateNew'
+export CLUSTER_CREATE_MODE='alwaysUseExisting'  # Use existing cluster
+# OR
+export CLUSTER_CREATE_MODE='alwaysCreateNew'    # Create new cluster
+
 # Used in case if the code cannot obtain kubeconfig from master itself because e.g. password is required in sudo 
 export KUBE_CONFIG_PATH='/path/to/kubeconfig/file' 
 ```
