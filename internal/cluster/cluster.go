@@ -193,7 +193,7 @@ func expandPath(path string) (string, error) {
 // and returns a rest.Config that can be used with Kubernetes clients, along with the path to the kubeconfig file.
 // If sshClient is provided, it will be used instead of creating a new connection.
 // If sshClient is nil, a new connection will be created and closed automatically.
-func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*rest.Config, string, error) {
+func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClient ssh.SSHClient) (*rest.Config, string, error) {
 	// Create SSH client if not provided
 	shouldClose := false
 	if sshClient == nil {
@@ -237,7 +237,6 @@ func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*re
 	var kubeconfigContent []byte
 
 	// Try to read kubeconfig from /etc/kubernetes/admin.conf via SSH
-	ctx := context.Background()
 	kubeconfigContentStr, err := sshClient.Exec(ctx, "sudo -n cat /etc/kubernetes/admin.conf")
 	if err != nil {
 		// SSH retrieval failed (likely due to sudo password requirement)

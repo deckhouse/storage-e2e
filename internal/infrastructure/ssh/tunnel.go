@@ -17,10 +17,11 @@ limitations under the License.
 package ssh
 
 import (
+	"context"
 	"fmt"
-	"io"
 	netstd "net"
 	"strconv"
+	"time"
 
 	netpkg "github.com/deckhouse/storage-e2e/internal/infrastructure/net"
 	"golang.org/x/crypto/ssh"
@@ -28,7 +29,12 @@ import (
 
 // StartTunnel starts an SSH tunnel with port forwarding from local to remote
 // It returns a function to stop the tunnel and an error if the tunnel fails to start
-func StartTunnel(sshClient *ssh.Client, localPort, remotePort string) (func() error, error) {
+func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePort string) (func() error, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("context error before starting tunnel: %w", err)
+	}
+
 	listener, err := netstd.Listen("tcp", "127.0.0.1:"+localPort)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on local port %s: %w", localPort, err)
@@ -39,18 +45,35 @@ func StartTunnel(sshClient *ssh.Client, localPort, remotePort string) (func() er
 	go func() {
 		defer listener.Close()
 		for {
-			// Check if we should stop before accepting
+			// Check context and stop channel
 			select {
+			case <-ctx.Done():
+				return
 			case <-stopChan:
 				return
 			default:
 			}
 
-			// Set a deadline for Accept to allow periodic checking of stopChan
+			// Set deadline for Accept based on context deadline if available
+			if tcpListener, ok := listener.(*netstd.TCPListener); ok {
+				if deadline, ok := ctx.Deadline(); ok {
+					if err := tcpListener.SetDeadline(deadline); err != nil {
+						// If setting deadline fails, continue without it
+					}
+				} else {
+					// Set a short deadline to allow periodic context checking
+					if err := tcpListener.SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+						// If setting deadline fails, continue without it
+					}
+				}
+			}
+
 			localConn, err := listener.Accept()
 			if err != nil {
 				// Listener closed or error occurred
 				select {
+				case <-ctx.Done():
+					return
 				case <-stopChan:
 					return
 				default:
@@ -68,19 +91,30 @@ func StartTunnel(sshClient *ssh.Client, localPort, remotePort string) (func() er
 				}
 				defer remoteConn.Close()
 
-				// Copy data bidirectionally
+				// Copy data bidirectionally with context support
 				done := make(chan struct{}, 2)
 				go func() {
-					io.Copy(localConn, remoteConn)
+					_, _ = copyWithContext(ctx, localConn, remoteConn)
 					done <- struct{}{}
 				}()
 				go func() {
-					io.Copy(remoteConn, localConn)
+					_, _ = copyWithContext(ctx, remoteConn, localConn)
 					done <- struct{}{}
 				}()
 
-				// Wait for either direction to finish
-				<-done
+				// Wait for either direction to finish or context cancellation
+				select {
+				case <-ctx.Done():
+					return
+				case <-done:
+					// One direction finished, wait for the other
+					select {
+					case <-ctx.Done():
+						return
+					case <-done:
+						// Both directions finished
+					}
+				}
 			}()
 		}
 	}()
@@ -96,7 +130,7 @@ func StartTunnel(sshClient *ssh.Client, localPort, remotePort string) (func() er
 // EstablishSSHTunnel establishes an SSH tunnel with port forwarding from the master node to the same port of client, running the test
 // It finds a free local port starting from remotePort and creates the tunnel
 // Returns the tunnel info, local port and error if the tunnel fails to start
-func EstablishSSHTunnel(sshClient SSHClient, remotePort string) (*TunnelInfo, error) {
+func EstablishSSHTunnel(ctx context.Context, sshClient SSHClient, remotePort string) (*TunnelInfo, error) {
 	// Find a free local port starting from remotePort
 	remotePortInt := 1024
 	if parsed, err := strconv.Atoi(remotePort); err == nil {
@@ -108,8 +142,8 @@ func EstablishSSHTunnel(sshClient SSHClient, remotePort string) (*TunnelInfo, er
 		return nil, fmt.Errorf("failed to find free port: %w", err)
 	}
 
-	// Start the SSH tunnel
-	stopFunc, err := sshClient.StartTunnel(strconv.Itoa(localPort), remotePort)
+	// Start the SSH tunnel with context
+	stopFunc, err := sshClient.StartTunnel(ctx, strconv.Itoa(localPort), remotePort)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start SSH tunnel: %w", err)
 	}

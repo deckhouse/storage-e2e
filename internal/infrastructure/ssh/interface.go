@@ -25,7 +25,7 @@ type SSHClient interface {
 
 	// StartTunnel starts an SSH tunnel with port forwarding from local to remote
 	// It returns a function to stop the tunnel and an error if the tunnel fails to start
-	StartTunnel(localPort, remotePort string) (stop func() error, err error)
+	StartTunnel(ctx context.Context, localPort, remotePort string) (stop func() error, err error)
 
 	// Exec executes a command on the remote host
 	Exec(ctx context.Context, cmd string) (string, error)

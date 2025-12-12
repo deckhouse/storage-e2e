@@ -106,7 +106,9 @@ var _ = Describe("Cluster Creation", Ordered, func() {
 	It("should get kubeconfig from the base cluster", func() {
 		By("Retrieving kubeconfig from base cluster", func() {
 			GinkgoWriter.Printf("    ▶️ Fetching kubeconfig from %s\n", baseClusterMasterIP)
-			kubeconfig, kubeconfigPath, err = cluster.GetKubeconfig(baseClusterMasterIP, baseClusterUser, baseClusterSSHPrivateKey, sshclient)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			kubeconfig, kubeconfigPath, err = cluster.GetKubeconfig(ctx, baseClusterMasterIP, baseClusterUser, baseClusterSSHPrivateKey, sshclient)
 			Expect(err).NotTo(HaveOccurred())
 			GinkgoWriter.Printf("    ✅ Kubeconfig retrieved and saved to: %s\n", kubeconfigPath)
 		})
@@ -117,7 +119,8 @@ var _ = Describe("Cluster Creation", Ordered, func() {
 	It("should establish ssh tunnel to the base cluster with port forwarding", func() {
 		By("Setting up SSH tunnel with port forwarding", func() {
 			GinkgoWriter.Printf("    ▶️ Establishing SSH tunnel to %s, forwarding port 6445\n", baseClusterMasterIP)
-			tunnelinfo, err = ssh.EstablishSSHTunnel(sshclient, "6445")
+			ctx := context.Background()
+			tunnelinfo, err = ssh.EstablishSSHTunnel(ctx, sshclient, "6445")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tunnelinfo).NotTo(BeNil())
 			Expect(tunnelinfo.LocalPort).To(BeNumerically(">=", 1024))

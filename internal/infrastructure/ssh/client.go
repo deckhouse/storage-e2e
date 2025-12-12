@@ -37,6 +37,46 @@ type client struct {
 	sshClient *ssh.Client
 }
 
+// copyWithContext copies data from src to dst with context cancellation support
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (written int64, err error) {
+	buf := make([]byte, 32*1024)
+	for {
+		// Check context before each read
+		select {
+		case <-ctx.Done():
+			return written, ctx.Err()
+		default:
+		}
+
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = fmt.Errorf("invalid write result")
+				}
+			}
+			written += int64(nw)
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				err = er
+			}
+			break
+		}
+	}
+	return written, err
+}
+
 // readPassword reads a password from the terminal
 func readPassword(prompt string) ([]byte, error) {
 	fmt.Fprint(os.Stderr, prompt)
@@ -146,7 +186,12 @@ func (c *client) Create(user, host, keyPath string) (SSHClient, error) {
 
 // StartTunnel starts an SSH tunnel with port forwarding from local to remote
 // It returns a function to stop the tunnel and an error if the tunnel fails to start
-func (c *client) StartTunnel(localPort, remotePort string) (func() error, error) {
+func (c *client) StartTunnel(ctx context.Context, localPort, remotePort string) (func() error, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("context error before starting tunnel: %w", err)
+	}
+
 	listener, err := net.Listen("tcp", "127.0.0.1:"+localPort)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on local port %s: %w", localPort, err)
@@ -157,18 +202,28 @@ func (c *client) StartTunnel(localPort, remotePort string) (func() error, error)
 	go func() {
 		defer listener.Close()
 		for {
-			// Check if we should stop before accepting
+			// Check context and stop channel
 			select {
+			case <-ctx.Done():
+				return
 			case <-stopChan:
 				return
 			default:
 			}
 
-			// Set a deadline for Accept to allow periodic checking of stopChan
+			// Set deadline for Accept based on context deadline if available
+			if deadline, ok := ctx.Deadline(); ok {
+				if err := listener.(*net.TCPListener).SetDeadline(deadline); err != nil {
+					// If setting deadline fails, continue without it
+				}
+			}
+
 			localConn, err := listener.Accept()
 			if err != nil {
 				// Listener closed or error occurred
 				select {
+				case <-ctx.Done():
+					return
 				case <-stopChan:
 					return
 				default:
@@ -186,19 +241,30 @@ func (c *client) StartTunnel(localPort, remotePort string) (func() error, error)
 				}
 				defer remoteConn.Close()
 
-				// Copy data bidirectionally
+				// Copy data bidirectionally with context support
 				done := make(chan struct{}, 2)
 				go func() {
-					io.Copy(localConn, remoteConn)
+					_, _ = copyWithContext(ctx, localConn, remoteConn)
 					done <- struct{}{}
 				}()
 				go func() {
-					io.Copy(remoteConn, localConn)
+					_, _ = copyWithContext(ctx, remoteConn, localConn)
 					done <- struct{}{}
 				}()
 
-				// Wait for either direction to finish
-				<-done
+				// Wait for either direction to finish or context cancellation
+				select {
+				case <-ctx.Done():
+					return
+				case <-done:
+					// One direction finished, wait for the other
+					select {
+					case <-ctx.Done():
+						return
+					case <-done:
+						// Both directions finished
+					}
+				}
 			}()
 		}
 	}()
@@ -213,15 +279,32 @@ func (c *client) StartTunnel(localPort, remotePort string) (func() error, error)
 
 // Exec executes a command on the remote host
 func (c *client) Exec(ctx context.Context, cmd string) (string, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("context error before execution: %w", err)
+	}
+
 	session, err := c.sshClient.NewSession()
 	if err != nil {
 		return "", fmt.Errorf("failed to create SSH session: %w", err)
 	}
 	defer session.Close()
 
+	// Note: session.CombinedOutput doesn't support context directly,
+	// but we check context before and after the call
+	// For better cancellation support, consider using session.Start() with context-aware goroutines
 	output, err := session.CombinedOutput(cmd)
 	if err != nil {
+		// Check if context was cancelled during execution
+		if ctx.Err() != nil {
+			return string(output), fmt.Errorf("context cancelled: %w", ctx.Err())
+		}
 		return string(output), fmt.Errorf("command failed: %w", err)
+	}
+
+	// Check context after execution
+	if err := ctx.Err(); err != nil {
+		return string(output), fmt.Errorf("context cancelled: %w", err)
 	}
 
 	return string(output), nil
@@ -238,6 +321,11 @@ func (c *client) ExecFatal(ctx context.Context, cmd string) string {
 
 // Upload uploads a local file to the remote host
 func (c *client) Upload(ctx context.Context, localPath, remotePath string) error {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context error before upload: %w", err)
+	}
+
 	sftpClient, err := sftp.NewClient(c.sshClient)
 	if err != nil {
 		return fmt.Errorf("failed to create SFTP client: %w", err)
@@ -256,7 +344,8 @@ func (c *client) Upload(ctx context.Context, localPath, remotePath string) error
 	}
 	defer remoteFile.Close()
 
-	_, err = io.Copy(remoteFile, localFile)
+	// Use context-aware copy
+	_, err = copyWithContext(ctx, remoteFile, localFile)
 	if err != nil {
 		return fmt.Errorf("failed to copy file: %w", err)
 	}
