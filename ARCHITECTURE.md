@@ -11,151 +11,10 @@ This document provides a deep analysis of the current `testkit_v2` codebase stru
 
 ---
 
-## 1. Current Structure Analysis
+
+## 1. Target Architecture
 
 ### 1.1 Package Structure
-
-**Critical Finding**: All code is currently in a single package `integration`:
-- `testkit_v2/tests/*` - All test files
-- `testkit_v2/util/*` - All utility files
-
-This monolith package design causes:
-- No encapsulation boundaries
-- Global state scattered across files
-- Hidden circular dependencies
-- Difficulty in testing components in isolation
-- Hard to understand code flow and dependencies
-
-### 1.2 File Organization
-
-#### Test Files (`testkit_v2/tests/`)
-```
-tests/
-├── 00_healthcheck_test.go          # Basic cluster health checks
-├── 01_sds_nc_test.go               # LVG (LVM Volume Group) operations
-├── 03_sds_lv_test.go               # PVC (Persistent Volume Claim) operations
-├── 05_sds_node_configurator_test.go # Comprehensive LVM tests (thick/thin)
-├── 99_finalizer_test.go            # Cleanup tests
-├── tools.go                         # Shared test utilities
-└── data-exporter/
-    └── base_test.go                # Base test for data exporter feature
-```
-
-#### Utility Files (`testkit_v2/util/`)
-```
-util/
-├── env.go                          # Environment config, flags, cluster types
-├── filter.go                       # Filter/Where interfaces
-├── kube_cluster_definitions.go    # Cluster definition types (NEW)
-├── kube_cluster.go                # Cluster singleton/cache
-├── kube_deckhouse_modules.go      # Deckhouse module management
-├── kube_deploy.go                 # Deployment/Service operations
-├── kube_modules.go                # Custom CRDs (SSHCredentials, StaticInstance)
-├── kube_node.go                   # Node operations, execution
-├── kube_secret.go                 # SSH credentials CRUD
-├── kube_storage.go                # Storage (BD, LVG, PVC, SC)
-├── kube_tester.go                 # Test execution helpers
-├── kube_vm_cluster.go             # VM cluster creation, Deckhouse install
-├── kube_vm.go                     # VM, VD, VMBD operations
-├── kube.go                        # Core Kubernetes client setup
-├── log.go                         # Logging utilities
-├── ssh.go                         # SSH client operations
-└── tools.go                       # Utility functions (retry, random)
-```
-
-### 1.3 Dependency Graph
-
-```
-Tests (integration package)
-  └─> util package (imported as "github.com/deckhouse/sds-e2e/util")
-        └─> Actually same package! Only different directory structure
-
-Current Dependencies:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-kube_cluster.go (singleton/cache)
-  ├─> env.go (envInit, global vars)
-  ├─> kube.go (InitKCluster)
-  └─> ssh.go (GetSshClient, tunnel creation)
-
-kube.go (core client setup)
-  ├─> kube_modules.go (D8SchemeBuilder)
-  └─> Multiple Kubernetes API imports
-
-kube_storage.go (storage operations)
-  ├─> kube.go (KCluster type)
-  ├─> filter.go (filters)
-  └─> tools.go (RetrySec)
-
-kube_node.go (node operations)
-  ├─> kube.go (KCluster type)
-  ├─> kube_modules.go (StaticInstance CRD)
-  ├─> filter.go (filters)
-  └─> ssh.go (ExecNodeSsh)
-
-kube_vm_cluster.go (cluster creation)
-  ├─> env.go (global vars)
-  ├─> kube.go (InitKCluster)
-  ├─> kube_vm.go (VM operations)
-  ├─> kube_node.go (AddStaticNodes)
-  ├─> ssh.go (SSH operations)
-  └─> tools.go (retry utilities)
-
-kube_vm.go (VM operations)
-  ├─> kube.go (KCluster type)
-  ├─> filter.go (filters)
-  └─> tools.go (hashMd5)
-
-All files → env.go (global state!)
-All files → log.go (logging)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-### 1.4 Major Architectural Problems
-
-#### Problem 1: Global State Everywhere
-- `env.go` contains ~50 global variables
-- Package-level variables in multiple files (`clrCache`, `mx`, etc.)
-- No dependency injection
-- Hard to test in isolation
-- Race conditions possible
-
-#### Problem 2: God Object (`KCluster`)
-- `KCluster` struct has 60+ methods
-- Violates Single Responsibility Principle
-- Methods span multiple domains:
-  - Kubernetes API operations
-  - Node management
-  - Storage operations
-  - VM operations
-  - Module management
-  - Deployment management
-
-#### Problem 3: Mixed Concerns
-- Business logic mixed with infrastructure
-- Test utilities mixed with production code
-- Configuration mixed with execution
-- No clear separation of layers
-
-#### Problem 4: Poor Encapsulation
-- Everything in one package = no private boundaries
-- Internal implementation details exposed
-- Can't hide complexity behind interfaces
-
-#### Problem 5: Circular Dependencies (Hidden)
-- Files import each other indirectly
-- Hidden cycles through globals
-- `env.go` → everything, everything → `env.go`
-
-#### Problem 6: Testing Difficulties
-- Can't mock dependencies (globals)
-- Hard to create isolated test scenarios
-- Test files use same package = can access internals incorrectly
-
----
-
-## 2. Target Architecture
-
-### 2.1 Package Structure
 
 ```
 testkit_v2/
@@ -166,7 +25,7 @@ testkit_v2/
 │   ├── config/                    # Configuration management
 │   │   ├── env.go                # Environment variables
 │   │   ├── flags.go              # CLI flags
-│   │   ├── cluster_types.go      # Cluster type definitions
+│   │   ├── types.go                # Cluster type definitions
 │   │   └── images.go             # OS image definitions
 │   │
 │   ├── cluster/                   # Cluster management

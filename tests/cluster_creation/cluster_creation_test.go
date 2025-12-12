@@ -19,14 +19,14 @@ package integration
 import (
 	"fmt"
 
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
 	"k8s.io/client-go/rest"
 
-	// "github.com/deckhouse/sds-e2e-tests/pkg/cluster"
-	"github.com/deckhouse/sds-e2e-tests/internal/config"
-	"github.com/deckhouse/sds-e2e-tests/internal/infrastructure/ssh"
-	"github.com/deckhouse/sds-e2e-tests/pkg/testkit/cluster"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/deckhouse/storage-e2e/internal/cluster"
+	"github.com/deckhouse/storage-e2e/internal/config"
+	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 )
 
 var _ = Describe("Cluster Creation", func() {

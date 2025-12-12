@@ -47,19 +47,6 @@ type OSType struct {
 	KernelVersion string
 }
 
-var (
-	OSTypeMap = map[string]OSType{
-		"Ubuntu 22.04 6.2.0-39-generic": {
-			ImageURL:      "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
-			KernelVersion: "6.2.0-39-generic",
-		},
-		"Ubuntu 24.04 6.8.0-53-generic": {
-			ImageURL:      "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-			KernelVersion: "6.8.0-53-generic",
-		},
-	}
-)
-
 // AuthMethod represents the authentication method
 type AuthMethod string
 

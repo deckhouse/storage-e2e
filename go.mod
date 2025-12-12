@@ -1,4 +1,4 @@
-module github.com/deckhouse/sds-e2e-tests
+module github.com/deckhouse/storage-e2e
 
 go 1.24.2
 
