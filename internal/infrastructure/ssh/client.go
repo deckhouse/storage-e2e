@@ -37,11 +37,6 @@ type client struct {
 	sshClient *ssh.Client
 }
 
-// NewFactory creates a new SSH factory
-func NewFactory() SSHFactory {
-	return &factory{}
-}
-
 // readPassword reads a password from the terminal
 func readPassword(prompt string) ([]byte, error) {
 	fmt.Fprint(os.Stderr, prompt)
@@ -149,49 +144,71 @@ func (c *client) Create(user, host, keyPath string) (SSHClient, error) {
 	return &client{sshClient: sshClient}, nil
 }
 
-// CreateForward creates an SSH client with port forwarding
-func (c *client) CreateForward(user, host, keyPath string, localPort, remotePort string) (SSHClient, error) {
-	// First create a regular connection
-	baseClient, err := c.Create(user, host, keyPath)
+// StartTunnel starts an SSH tunnel with port forwarding from local to remote
+// It returns a function to stop the tunnel and an error if the tunnel fails to start
+func (c *client) StartTunnel(localPort, remotePort string) (func() error, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:"+localPort)
 	if err != nil {
-		return nil, err
-	}
-
-	// Set up port forwarding
-	baseClientImpl := baseClient.(*client)
-	listener, err := net.Listen("tcp", "localhost:"+localPort)
-	if err != nil {
-		baseClientImpl.Close()
 		return nil, fmt.Errorf("failed to listen on local port %s: %w", localPort, err)
 	}
 
+	stopChan := make(chan struct{})
+
 	go func() {
+		defer listener.Close()
 		for {
+			// Check if we should stop before accepting
+			select {
+			case <-stopChan:
+				return
+			default:
+			}
+
+			// Set a deadline for Accept to allow periodic checking of stopChan
 			localConn, err := listener.Accept()
 			if err != nil {
-				return
-			}
-
-			remoteConn, err := baseClientImpl.sshClient.Dial("tcp", "localhost:"+remotePort)
-			if err != nil {
-				localConn.Close()
-				continue
+				// Listener closed or error occurred
+				select {
+				case <-stopChan:
+					return
+				default:
+					// Continue if not stopped
+					continue
+				}
 			}
 
 			go func() {
-				io.Copy(localConn, remoteConn)
-				localConn.Close()
-				remoteConn.Close()
-			}()
-			go func() {
-				io.Copy(remoteConn, localConn)
-				localConn.Close()
-				remoteConn.Close()
+				defer localConn.Close()
+				remoteConn, err := c.sshClient.Dial("tcp", "127.0.0.1:"+remotePort)
+				if err != nil {
+					// Connection failed, just return - the error will be visible to the client
+					return
+				}
+				defer remoteConn.Close()
+
+				// Copy data bidirectionally
+				done := make(chan struct{}, 2)
+				go func() {
+					io.Copy(localConn, remoteConn)
+					done <- struct{}{}
+				}()
+				go func() {
+					io.Copy(remoteConn, localConn)
+					done <- struct{}{}
+				}()
+
+				// Wait for either direction to finish
+				<-done
 			}()
 		}
 	}()
 
-	return baseClient, nil
+	stop := func() error {
+		close(stopChan)
+		return listener.Close()
+	}
+
+	return stop, nil
 }
 
 // Exec executes a command on the remote host
@@ -259,12 +276,4 @@ func (c *client) Close() error {
 func NewClient(user, host, keyPath string) (SSHClient, error) {
 	var c client
 	return c.Create(user, host, keyPath)
-}
-
-// factory implements Factory interface
-type factory struct{}
-
-// CreateClient creates a new SSH client
-func (f *factory) CreateClient(user, host, keyPath string) (SSHClient, error) {
-	return NewClient(user, host, keyPath)
 }

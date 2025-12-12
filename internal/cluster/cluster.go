@@ -190,17 +190,17 @@ func expandPath(path string) (string, error) {
 }
 
 // GetKubeconfig connects to the master node via SSH, retrieves kubeconfig from /etc/kubernetes/admin.conf,
-// and returns a rest.Config that can be used with Kubernetes clients.
+// and returns a rest.Config that can be used with Kubernetes clients, along with the path to the kubeconfig file.
 // If sshClient is provided, it will be used instead of creating a new connection.
 // If sshClient is nil, a new connection will be created and closed automatically.
-func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*rest.Config, error) {
+func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*rest.Config, string, error) {
 	// Create SSH client if not provided
 	shouldClose := false
 	if sshClient == nil {
 		var err error
 		sshClient, err = ssh.NewClient(user, masterIP, keyPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create SSH client: %w", err)
+			return nil, "", fmt.Errorf("failed to create SSH client: %w", err)
 		}
 		shouldClose = true
 	}
@@ -211,7 +211,7 @@ func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*re
 	// Get the test file name from the caller
 	_, callerFile, _, ok := runtime.Caller(1)
 	if !ok {
-		return nil, fmt.Errorf("failed to get caller file information")
+		return nil, "", fmt.Errorf("failed to get caller file information")
 	}
 	testFileName := strings.TrimSuffix(filepath.Base(callerFile), filepath.Ext(callerFile))
 
@@ -222,13 +222,13 @@ func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*re
 	// Resolve the .. parts to get absolute path
 	repoRoot, err := filepath.Abs(repoRootPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve repo root path: %w", err)
+		return nil, "", fmt.Errorf("failed to resolve repo root path: %w", err)
 	}
 	tempDir := filepath.Join(repoRoot, "temp", testFileName)
 
 	// Create temp directory if it doesn't exist
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create temp directory %s: %w", tempDir, err)
+		return nil, "", fmt.Errorf("failed to create temp directory %s: %w", tempDir, err)
 	}
 
 	// Create kubeconfig file path in temp directory
@@ -246,16 +246,16 @@ func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*re
 			// Expand path to handle ~ and resolve symlinks if present
 			resolvedPath, err := expandPath(config.KubeConfigPath)
 			if err != nil {
-				return nil, fmt.Errorf("failed to expand KUBE_CONFIG_PATH (%s): %w", config.KubeConfigPath, err)
+				return nil, "", fmt.Errorf("failed to expand KUBE_CONFIG_PATH (%s): %w", config.KubeConfigPath, err)
 			}
 			// Read kubeconfig content from the provided file
 			kubeconfigContent, err = os.ReadFile(resolvedPath)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read kubeconfig from KUBE_CONFIG_PATH (%s): %w", resolvedPath, err)
+				return nil, "", fmt.Errorf("failed to read kubeconfig from KUBE_CONFIG_PATH (%s): %w", resolvedPath, err)
 			}
 		} else {
 			// KUBE_CONFIG_PATH not set, notify user and fail
-			return nil, fmt.Errorf("failed to read kubeconfig from master (this may occur if sudo requires a password). "+
+			return nil, "", fmt.Errorf("failed to read kubeconfig from master (this may occur if sudo requires a password). "+
 				"Please download the kubeconfig file manually and provide its full path via KUBE_CONFIG_PATH environment variable. "+
 				"Original error: %w", err)
 		}
@@ -267,22 +267,71 @@ func GetKubeconfig(masterIP, user, keyPath string, sshClient ssh.SSHClient) (*re
 	// Write kubeconfig content to temp file (always copy to temp, regardless of source)
 	kubeconfigFile, err := os.Create(kubeconfigPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create kubeconfig file %s: %w", kubeconfigPath, err)
+		return nil, "", fmt.Errorf("failed to create kubeconfig file %s: %w", kubeconfigPath, err)
 	}
 
 	if _, err := kubeconfigFile.Write(kubeconfigContent); err != nil {
 		kubeconfigFile.Close()
-		return nil, fmt.Errorf("failed to write kubeconfig to file: %w", err)
+		return nil, "", fmt.Errorf("failed to write kubeconfig to file: %w", err)
 	}
 	if err := kubeconfigFile.Close(); err != nil {
-		return nil, fmt.Errorf("failed to close kubeconfig file: %w", err)
+		return nil, "", fmt.Errorf("failed to close kubeconfig file: %w", err)
 	}
 
 	// Build rest.Config from the kubeconfig file in temp directory
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build config from kubeconfig: %w", err)
+		return nil, "", fmt.Errorf("failed to build config from kubeconfig: %w", err)
 	}
 
-	return config, nil
+	return config, kubeconfigPath, nil
+}
+
+// UpdateKubeconfigPort updates the kubeconfig file to use the specified local port
+// It replaces the server URL with 127.0.0.1:port
+func UpdateKubeconfigPort(kubeconfigPath string, localPort int) error {
+	content, err := os.ReadFile(kubeconfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to read kubeconfig file: %w", err)
+	}
+
+	contentStr := string(content)
+	// Replace server URL with localhost and new port
+	// Common patterns: server: https://<ip>:6445 or server: https://127.0.0.1:6445
+	// Also handle:    server: https://<ip>:6443 (standard k8s port)
+	lines := strings.Split(contentStr, "\n")
+	updated := false
+	for i, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmedLine, "server:") {
+			// Replace the entire server URL with 127.0.0.1:port
+			// Pattern: server: https://<host>:<port>
+			if strings.Contains(trimmedLine, "https://") {
+				// Find the URL part and replace it
+				urlStart := strings.Index(trimmedLine, "https://")
+				if urlStart != -1 {
+					// Replace the URL with localhost:port
+					// Preserve any indentation before "server:"
+					indent := ""
+					for j := 0; j < len(line) && (line[j] == ' ' || line[j] == '\t'); j++ {
+						indent += string(line[j])
+					}
+					newURL := fmt.Sprintf("https://127.0.0.1:%d", localPort)
+					lines[i] = indent + "server: " + newURL
+					updated = true
+				}
+			}
+		}
+	}
+
+	if !updated {
+		return fmt.Errorf("could not find server URL in kubeconfig to update")
+	}
+
+	newContent := strings.Join(lines, "\n")
+	if err := os.WriteFile(kubeconfigPath, []byte(newContent), 0600); err != nil {
+		return fmt.Errorf("failed to write updated kubeconfig: %w", err)
+	}
+
+	return nil
 }

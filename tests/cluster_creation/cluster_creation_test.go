@@ -35,13 +35,18 @@ var _ = Describe("Cluster Creation", func() {
 		baseClusterMasterIP      string = "172.17.1.67"
 		baseClusterUser          string = "tfadm"
 		baseClusterSSHPrivateKey string = "~/.ssh/id_rsa"
+
+		err            error
+		sshclient      ssh.SSHClient
+		kubeconfig     *rest.Config
+		kubeconfigPath string
+		tunnelinfo     *ssh.TunnelInfo
 	)
 
 	BeforeEach(func(ctx SpecContext) {
 		var err error
 		var clusterDefinition *config.ClusterDefinition
-		var kubeconfig *rest.Config
-		var sshClient ssh.SSHClient
+		var tunnelinfo *ssh.TunnelInfo
 
 		// Stage 1: LoadConfig - verifies and parses the config from yaml file
 		By("LoadConfig: Loading and verifying cluster configuration from YAML", func() {
@@ -49,31 +54,49 @@ var _ = Describe("Cluster Creation", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		// Stage 2: Establish SSH connection to base cluster (reused for getting kubeconfig)
-		By("Establishing ssh connection to the base cluster", func() {
-			sshClient, err = ssh.NewClient(baseClusterUser, baseClusterMasterIP, baseClusterSSHPrivateKey)
-			Expect(err).NotTo(HaveOccurred())
+		// Clean up tunnel when test completes
+		DeferCleanup(func() {
+			if tunnelinfo != nil && tunnelinfo.StopFunc != nil {
+				_ = tunnelinfo.StopFunc()
+			}
 		})
 
-		// Stage 3: Getting kubeconfig from base cluster (reusing SSH connection to avoid double passphrase prompt)
-		By("Get kubeconfig: Getting kubeconfig from the base cluster", func() {
-			kubeconfig, err = cluster.GetKubeconfig(baseClusterMasterIP, baseClusterUser, baseClusterSSHPrivateKey, sshClient)
-			Expect(err).NotTo(HaveOccurred())
-		})
-
-		By("Establishing ssh tunnel to the base cluster with 6445 port forwarding", func() {
-
-		})
-
-		_ = sshClient         // TODO: use sshClient
 		_ = clusterDefinition // TODO: use clusterDefinition
-		_ = kubeconfig        // TODO: use kubeconfig
+
 	}) // BeforeEach: Cluster Creation
 
-	It("should create a test cluster", func() {
-		By("Creating a test cluster", func() {
-			fmt.Println("Creating a test cluster")
+	// Stage 2: Establish SSH connection to base cluster (reused for getting kubeconfig)
+	It("should establish ssh connection to the base cluster", func() {
+		sshclient, err = ssh.NewClient(baseClusterUser, baseClusterMasterIP, baseClusterSSHPrivateKey)
+		Expect(err).NotTo(HaveOccurred())
+	})
 
-		})
-	}) // It: should create a test cluster
+	// Stage 3: Getting kubeconfig from base cluster (reusing SSH connection to avoid double passphrase prompt)
+
+	It("should get kubeconfig from the base cluster", func() {
+		kubeconfig, kubeconfigPath, err = cluster.GetKubeconfig(baseClusterMasterIP, baseClusterUser, baseClusterSSHPrivateKey, sshclient)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	// Stage 4: Establish SSH tunnel with port forwarding
+
+	It("should establish ssh tunnel to the base cluster with port forwarding", func() {
+		tunnelinfo, err = ssh.EstablishSSHTunnel(sshclient, "6445")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tunnelinfo).NotTo(BeNil())
+		Expect(tunnelinfo.LocalPort).To(BeNumerically(">=", 1024))
+
+		// Update kubeconfig if port differs from 6445
+		if tunnelinfo.LocalPort != 6445 {
+			err = cluster.UpdateKubeconfigPort(kubeconfigPath, tunnelinfo.LocalPort)
+		}
+	})
+
+	It("should query K8s cluster", func() {
+		fmt.Println("querying K8s cluster")
+
+	})
+
+	_ = kubeconfig // TODO: use kubeconfig
+
 }) // Describe: Cluster Creation

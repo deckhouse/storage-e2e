@@ -23,8 +23,9 @@ type SSHClient interface {
 	// Create creates a new SSH client
 	Create(user, host, keyPath string) (SSHClient, error)
 
-	// CreateForward creates an SSH client with port forwarding
-	CreateForward(user, host, keyPath string, localPort, remotePort string) (SSHClient, error)
+	// StartTunnel starts an SSH tunnel with port forwarding from local to remote
+	// It returns a function to stop the tunnel and an error if the tunnel fails to start
+	StartTunnel(localPort, remotePort string) (stop func() error, err error)
 
 	// Exec executes a command on the remote host
 	Exec(ctx context.Context, cmd string) (string, error)
@@ -37,9 +38,4 @@ type SSHClient interface {
 
 	// Close closes the SSH connection
 	Close() error
-}
-
-// Factory provides a way to create SSH clients
-type SSHFactory interface {
-	CreateClient(user, host, keyPath string) (SSHClient, error)
 }
