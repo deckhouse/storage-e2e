@@ -22,7 +22,7 @@ export KUBE_CONFIG_PATH='/path/to/kubeconfig/file'
 #### Running a test example
 
 ```bash
-go test -v ./tests/cluster_creation -count=1
+go test -v ./tests/cluster-creation-by-steps -count=1
 # count=1 prevents go test from using cached test results
 ```
 

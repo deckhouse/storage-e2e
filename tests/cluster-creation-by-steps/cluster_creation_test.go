@@ -32,9 +32,9 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 )
 
-var _ = Describe("Cluster Creation Test", Ordered, func() {
+var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 	var (
-		yamlConfigFilename       string = "cluster_creation_test.yml"
+		yamlConfigFilename       string = "cluster_config.yml"
 		baseClusterMasterIP      string = "10.0.0.181"
 		baseClusterUser          string = "w-ansible"
 		baseClusterSSHPrivateKey string = "~/.ssh/id_rsa"
