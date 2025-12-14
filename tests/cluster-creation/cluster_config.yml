@@ -1,4 +1,4 @@
-# Test nested cluster config definition
+# Test nested cluster configuration
 clusterDefinition:
   masters: # Master nodes configuration
     - hostname: "master-1"
@@ -45,6 +45,7 @@ clusterDefinition:
     registryRepo: "dev-registry.deckhouse.io/sys/deckhouse-oss"
     namespace: "e2e-nested-1"
     storageClass: "nfs-storage-class"
+    # Module configuration
     modules:
       - name: "snapshot-controller"
         version: 1

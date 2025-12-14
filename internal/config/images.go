@@ -37,6 +37,52 @@ var OSTypeMap = map[string]OSType{
 }
 
 /*
+#cloud-config
+package_update: true
+packages:
+  - tmux
+  - htop
+  - qemu-guest-agent
+  - iputils-ping
+  - stress-ng
+  - jq
+  - yq
+  - rsync
+  - fio
+  - curl
+
+ssh_pwauth: true
+users:
+  - name: cloud
+    # passwd: cloud
+    passwd: $6$rounds=4096$vln/.aPHBOI7BMYR$bBMkqQvuGs5Gyd/1H5DP4m9HjQSy.kgrxpaGEHwkX7KEFV8BS.HZWPitAtZ2Vd8ZqIZRqmlykRCagTgPejt1i.
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    chpasswd: {expire: False}
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDJ4lrUhqV/ymWyK7rWtx7ulyrUWQqZejmn2pR6/2mxTl+TPUQEYEZKLjt9xtgvOYsfHARRWsoF7URNZdg6LI/HuxMK6kz5ohwrP6GB4XngL7vfyZdefiV6OVK+Fsdw6WgH7Cr5myIc8Sv6gumcDYfT9xX0pcGipRZD9qaHkm34U9jhT6U1QRIgG0Po31HAA6JmKEFZ/0S715McYKTTx3aIFzrm5kxCmNCtk19oMZDOCdYhScVGcZKeaP/PLF7fpvajaWLySwKFfRj1HYnaX1rgmpINNpiWXsq+7D53a7/LUpTIvERYD31fh8YW72hilS8rWbymILZhQFRlTtma0kVY7T5qsvvBmP2da4T5Jn+DqZPI0Ey24eiVO7G8uk0gjZOW8YF5t0OJuVL/0lCBQo3RkIBjg9aR60zaJypVlXRZmYwm4attEjSFOU+4Hymu79NdeJNQhTCAxnCF5NC7OZ7ETtGzEt2L8s2t5w2jRiaDyDzKHeWAgXx7DLYdfqRIO+ETJj5Vmzl/c+R9t0UXNQpTuZjiutukTwVGe+ho/74HuXClUrs6qPkR125KjEHcME+EXuHEkwaCgDGJsCfiecjwFv30E//iPk0weJ3K3wFTyqf2vFixcMDgbkwOjgGqZ005blCfuN+FJ1NbqNLe3YhBymOpLFkB0/DhImqfF4kS6w== korolevn@nikita.korolev-macbook
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC5U6cSKbJOlgfNa7nhMT/J4PNAXmbfHH6/CA9p53qSmwAgV+shkbS7uEj9W4RxM6Q4dKJeRMLyzHj+76y98OBQ9Sb1PJ0fCDLabZR/NeCWy9m/7Lq2Ti3QMOoBkJurL4+T26edDQfhkivywaSOfrcxDiponDEwcqTQRs2rXQSC0tW0lvQrbYUFOjJZ425OOqUm7KUxuOoNeynLTlS4OerVk0fjTa5EtBuDCbpob47NMYtR+JP4PWOw4H9qyli6kegrW3UqamHpFQAAN+UN0x+KSraHfrF/78HO5IET1BpdHOzP5TAqRNVJySxzVOEl2Nau7cEJiHtqHeaP6/mwO4E699BXNtxWatXxT5dSNxdTwhH7FlpA176h04h5sAooIu3zcA3ItzC78wIrdq7ussDqEQfFcneCIqlMpBI6V/lh+e12uvuj3+PRe6Fekr0DC2QR3+rJsueW7huWHlEXEwrilXy3eVYWIRX+Dihrxd/7KLmnLpBW0hwaWZxTdQflwo7AmJgGD2CAWcKXY1vB6BFsO6Q2MOPlMn+Kejq0YFqguMkIiEMCKKbIkBMeyUdnn03ETaQjAJaANJTcO+RcfP0RVV1C116ePdFu6FumVvSK22pU78p4eIyH1WPpFq4akl2ZFpHVgPQVeO0Yz2TRRjM6Jo9QnaT+XxBi02gpCTY5CQ== user@default
+write_files:
+  - path: /etc/ssh/sshd_config.d/allow_tcp_forwarding.conf
+    content: |
+      # Разрешить TCP forwarding
+      AllowTcpForwarding yes
+
+runcmd:
+  - systemctl restart ssh
+
+  # - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+  # - add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  # - apt-get update -y
+  # - apt-get install -y docker-ce docker-ce-cli containerd.io
+  # - systemctl start docker
+  # - systemctl enable docker
+
+final_message: "🔥🔥🔥 The system is finally up, after $UPTIME seconds 🔥🔥🔥"
+*/
+
+/*
 #!/bin/bash
 
 # ============================================================================

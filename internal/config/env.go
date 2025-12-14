@@ -25,6 +25,10 @@ var (
 
 	// ClusterCreateMode specifies the cluster creation mode. Must be set to either "alwaysUseExisting" or "alwaysCreateNew"
 	ClusterCreateMode = os.Getenv("CLUSTER_CREATE_MODE")
+
+	// AutoGenerateVMNames specifies whether to auto-generate VM names or use provided in config.
+	//  Default is "false". If set to "true", the VM names suffix in kubernetes style will be added to VM names set in cluster config.
+	AutoGenerateVMNames = os.Getenv("AUTO_GENERATE_VM_NAMES") // TODO implement this in cluster.LoadClusterConfig function.
 )
 
 // ValidateClusterCreateMode validates that CLUSTER_CREATE_MODE is set and has a valid value
