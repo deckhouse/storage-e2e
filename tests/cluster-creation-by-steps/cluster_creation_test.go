@@ -167,6 +167,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 			defer cancel()
 
+			// Create virtualization client
 			GinkgoWriter.Printf("    ▶️ Creating virtualization client\n")
 			virtClient, err = virtualization.NewClient(ctx, kubeconfig)
 			Expect(err).NotTo(HaveOccurred())
