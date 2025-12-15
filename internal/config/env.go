@@ -29,6 +29,10 @@ var (
 	// AutoGenerateVMNames specifies whether to auto-generate VM names or use provided in config.
 	//  Default is "false". If set to "true", the VM names suffix in kubernetes style will be added to VM names set in cluster config.
 	AutoGenerateVMNames = os.Getenv("AUTO_GENERATE_VM_NAMES") // TODO implement this in cluster.LoadClusterConfig function.
+
+	// TestClusterCleanup specifies whether to remove the test cluster after tests complete.
+	// Default is "false". If set to "true" or "True", the test cluster will be cleaned up after tests.
+	TestClusterCleanup = os.Getenv("TEST_CLUSTER_CLEANUP")
 )
 
 // ValidateClusterCreateMode validates that CLUSTER_CREATE_MODE is set and has a valid value
