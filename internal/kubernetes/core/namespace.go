@@ -16,5 +16,54 @@ limitations under the License.
 
 package core
 
-// TODO: Implement namespace operations
+import (
+	"context"
+	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+)
+
+// NamespaceClient provides operations on Namespace resources
+type NamespaceClient interface {
+	Get(ctx context.Context, name string) (*corev1.Namespace, error)
+	Create(ctx context.Context, name string) (*corev1.Namespace, error)
+}
+
+type namespaceClient struct {
+	client kubernetes.Interface
+}
+
+// NewNamespaceClient creates a new namespace client from a rest.Config
+func NewNamespaceClient(config *rest.Config) (NamespaceClient, error) {
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
+	}
+	return &namespaceClient{client: clientset}, nil
+}
+
+// Get retrieves a namespace by name
+func (c *namespaceClient) Get(ctx context.Context, name string) (*corev1.Namespace, error) {
+	ns, err := c.client.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get namespace %s: %w", name, err)
+	}
+	return ns, nil
+}
+
+// Create creates a new namespace
+func (c *namespaceClient) Create(ctx context.Context, name string) (*corev1.Namespace, error) {
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+	}
+	created, err := c.client.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create namespace %s: %w", name, err)
+	}
+	return created, nil
+}

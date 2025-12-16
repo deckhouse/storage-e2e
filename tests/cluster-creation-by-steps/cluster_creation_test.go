@@ -32,14 +32,15 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/pkg/cluster"
+	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 )
 
 var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 	var (
 		yamlConfigFilename       string = "cluster_config.yml"
-		baseClusterMasterIP      string = "10.0.0.181"
-		baseClusterUser          string = "w-ansible"
+		baseClusterMasterIP      string = "94.26.231.181"
+		baseClusterUser          string = "a.yakubov"
 		baseClusterSSHPrivateKey string = "~/.ssh/id_rsa"
 
 		err               error
@@ -159,6 +160,21 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			Expect(module).NotTo(BeNil())
 			Expect(module.Status.Phase).To(Equal("Ready"), "Module status phase should be Ready")
 			GinkgoWriter.Printf("    ✅ Module %s retrieved successfully with status: %s\n", module.Name, module.Status.Phase)
+		})
+	})
+
+	It("should ensure test namespace exists", func() {
+		By("Checking and creating test namespace if needed", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			namespace := clusterDefinition.DKPParameters.Namespace
+			GinkgoWriter.Printf("    ▶️ Ensuring namespace %s exists\n", namespace)
+
+			ns, err := kubernetes.CreateNamespaceIfNotExists(ctx, kubeconfig, namespace)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
+			Expect(ns).NotTo(BeNil())
+			GinkgoWriter.Printf("    ✅ Namespace %s is ready\n", namespace)
 		})
 	})
 

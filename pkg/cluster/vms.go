@@ -19,9 +19,7 @@ package cluster
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strings"
-	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -65,42 +63,25 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 		vmNames = append(vmNames, node.Hostname)
 	}
 
-	// Check if any VMs with these names already exist
-	existingVMs, err := virtClient.VirtualMachines().List(ctx, namespace)
+	// Check for conflicts in all resources before creating anything
+	conflicts, err := checkResourceConflicts(ctx, virtClient, namespace, vmNodes)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to list existing VMs: %w", err)
+		return nil, nil, fmt.Errorf("failed to check for resource conflicts: %w", err)
 	}
 
-	existingVMNames := make(map[string]bool)
-	for _, vm := range existingVMs {
-		existingVMNames[vm.Name] = true
-	}
-
-	conflictingVMs := make([]string, 0)
-	for _, vmName := range vmNames {
-		if existingVMNames[vmName] {
-			conflictingVMs = append(conflictingVMs, vmName)
+	// If any conflicts exist, fail with a detailed error message
+	if len(conflicts.VMs) > 0 || len(conflicts.VirtualDisks) > 0 || len(conflicts.ClusterVirtualImages) > 0 {
+		conflictMessages := make([]string, 0)
+		if len(conflicts.VMs) > 0 {
+			conflictMessages = append(conflictMessages, fmt.Sprintf("VirtualMachines: %v", conflicts.VMs))
 		}
-	}
-
-	// Handle conflicts
-	if len(conflictingVMs) > 0 {
-		if config.AutoGenerateVMNames != "true" && config.AutoGenerateVMNames != "True" {
-			return nil, nil, fmt.Errorf("virtual machines with the following names already exist in namespace %s: %v. Set AUTO_GENERATE_VM_NAMES=true to auto-generate unique names", namespace, conflictingVMs)
+		if len(conflicts.VirtualDisks) > 0 {
+			conflictMessages = append(conflictMessages, fmt.Sprintf("VirtualDisks: %v", conflicts.VirtualDisks))
 		}
-
-		// Generate suffix and update clusterDefinition
-		suffix := generateRandomSuffix()
-		updateClusterDefinitionHostnames(clusterDef, suffix)
-		// Update vmNodes with new names
-		for i := range vmNodes {
-			vmNodes[i].Hostname = vmNodes[i].Hostname + suffix
+		if len(conflicts.ClusterVirtualImages) > 0 {
+			conflictMessages = append(conflictMessages, fmt.Sprintf("ClusterVirtualImages: %v", conflicts.ClusterVirtualImages))
 		}
-		// Update vmNames
-		vmNames = make([]string, 0, len(vmNodes))
-		for _, node := range vmNodes {
-			vmNames = append(vmNames, node.Hostname)
-		}
+		return nil, nil, fmt.Errorf("the following VM-related resources already exist (CLUSTER_CREATE_MODE=%s): %s", config.ClusterCreateMode, strings.Join(conflictMessages, ", "))
 	}
 
 	// Create all VMs
@@ -131,6 +112,87 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 	return vmNames, resources, nil
 }
 
+// resourceConflicts tracks conflicts in different resource types
+type resourceConflicts struct {
+	VMs                  []string
+	VirtualDisks         []string
+	ClusterVirtualImages []string
+}
+
+// checkResourceConflicts checks for conflicts in all VM-related resources
+func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Client, namespace string, vmNodes []config.ClusterNode) (*resourceConflicts, error) {
+	conflicts := &resourceConflicts{
+		VMs:                  make([]string, 0),
+		VirtualDisks:         make([]string, 0),
+		ClusterVirtualImages: make([]string, 0),
+	}
+
+	// Collect all resource names we plan to create
+	vmNames := make([]string, 0, len(vmNodes))
+	systemDiskNames := make([]string, 0, len(vmNodes))
+	cvmiNamesSet := make(map[string]bool)
+
+	for _, node := range vmNodes {
+		vmName := node.Hostname
+		vmNames = append(vmNames, vmName)
+		systemDiskName := fmt.Sprintf("%s-system", vmName)
+		systemDiskNames = append(systemDiskNames, systemDiskName)
+
+		// Get CVMI name from image URL
+		cvmiName := getCVMINameFromImageURL(node.OSType.ImageURL)
+		cvmiNamesSet[cvmiName] = true
+	}
+
+	// Check for conflicting VirtualMachines
+	existingVMs, err := virtClient.VirtualMachines().List(ctx, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list existing VMs: %w", err)
+	}
+	existingVMNames := make(map[string]bool)
+	for _, vm := range existingVMs {
+		existingVMNames[vm.Name] = true
+	}
+	for _, vmName := range vmNames {
+		if existingVMNames[vmName] {
+			conflicts.VMs = append(conflicts.VMs, vmName)
+		}
+	}
+
+	// Check for conflicting VirtualDisks
+	existingVDs, err := virtClient.VirtualDisks().List(ctx, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list existing VirtualDisks: %w", err)
+	}
+	existingVDNames := make(map[string]bool)
+	for _, vd := range existingVDs {
+		existingVDNames[vd.Name] = true
+	}
+	for _, diskName := range systemDiskNames {
+		if existingVDNames[diskName] {
+			conflicts.VirtualDisks = append(conflicts.VirtualDisks, diskName)
+		}
+	}
+
+	// Check for conflicting ClusterVirtualImages (cluster-scoped, no namespace)
+	cvmiNames := make([]string, 0, len(cvmiNamesSet))
+	for name := range cvmiNamesSet {
+		cvmiNames = append(cvmiNames, name)
+	}
+	for _, cvmiName := range cvmiNames {
+		_, err := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
+		if err == nil {
+			// CVMI exists
+			conflicts.ClusterVirtualImages = append(conflicts.ClusterVirtualImages, cvmiName)
+		} else if !errors.IsNotFound(err) {
+			// Some other error occurred
+			return nil, fmt.Errorf("failed to check ClusterVirtualImage %s: %w", cvmiName, err)
+		}
+		// If IsNotFound, the CVMI doesn't exist, which is fine
+	}
+
+	return conflicts, nil
+}
+
 // getVMNodes extracts all VM nodes from cluster definition
 func getVMNodes(clusterDef *config.ClusterDefinition) []config.ClusterNode {
 	var vmNodes []config.ClusterNode
@@ -154,36 +216,6 @@ func getVMNodes(clusterDef *config.ClusterDefinition) []config.ClusterNode {
 	return vmNodes
 }
 
-// updateClusterDefinitionHostnames updates hostnames in clusterDefinition with the given suffix
-func updateClusterDefinitionHostnames(clusterDef *config.ClusterDefinition, suffix string) {
-	for i := range clusterDef.Masters {
-		if clusterDef.Masters[i].HostType == config.HostTypeVM {
-			clusterDef.Masters[i].Hostname = clusterDef.Masters[i].Hostname + suffix
-		}
-	}
-
-	for i := range clusterDef.Workers {
-		if clusterDef.Workers[i].HostType == config.HostTypeVM {
-			clusterDef.Workers[i].Hostname = clusterDef.Workers[i].Hostname + suffix
-		}
-	}
-
-	if clusterDef.Setup != nil && clusterDef.Setup.HostType == config.HostTypeVM {
-		clusterDef.Setup.Hostname = clusterDef.Setup.Hostname + suffix
-	}
-}
-
-// generateRandomSuffix generates a random suffix of 6 lowercase letters
-func generateRandomSuffix() string {
-	const letters = "abcdefghijklmnopqrstuvwxyz"
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	suffix := make([]byte, 6)
-	for i := range suffix {
-		suffix[i] = letters[r.Intn(len(letters))]
-	}
-	return "-" + string(suffix)
-}
-
 // createVM creates a virtual machine with all required dependencies
 // Returns the CVMI name that was used/created
 func createVM(ctx context.Context, virtClient *virtualization.Client, namespace string, node config.ClusterNode, storageClass string) (string, error) {
@@ -193,6 +225,9 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 	cvmiName := getCVMINameFromImageURL(node.OSType.ImageURL)
 	cvmi, err := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
 	if err != nil {
+		if !errors.IsNotFound(err) {
+			return "", fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, err)
+		}
 		// CVMI doesn't exist, create it
 		cvmi = &v1alpha2.ClusterVirtualImage{
 			ObjectMeta: metav1.ObjectMeta{
@@ -213,69 +248,86 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 		}
 	}
 
-	// 2. Create system VirtualDisk
+	// 2. Create system VirtualDisk (check if it exists first)
 	systemDiskName := fmt.Sprintf("%s-system", vmName)
-	systemDisk := &v1alpha2.VirtualDisk{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      systemDiskName,
-			Namespace: namespace,
-		},
-		Spec: v1alpha2.VirtualDiskSpec{
-			PersistentVolumeClaim: v1alpha2.VirtualDiskPersistentVolumeClaim{
-				Size:         resource.NewQuantity(int64(node.DiskSize)*1024*1024*1024, resource.BinarySI),
-				StorageClass: &storageClass,
+	_, err = virtClient.VirtualDisks().Get(ctx, namespace, systemDiskName)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return "", fmt.Errorf("failed to check VirtualDisk %s: %w", systemDiskName, err)
+		}
+		// VirtualDisk doesn't exist, create it
+		systemDisk := &v1alpha2.VirtualDisk{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      systemDiskName,
+				Namespace: namespace,
 			},
-			DataSource: &v1alpha2.VirtualDiskDataSource{
-				Type: "ObjectRef",
-				ObjectRef: &v1alpha2.VirtualDiskObjectRef{
-					Kind: "ClusterVirtualImage",
-					Name: cvmi.Name,
+			Spec: v1alpha2.VirtualDiskSpec{
+				PersistentVolumeClaim: v1alpha2.VirtualDiskPersistentVolumeClaim{
+					Size:         resource.NewQuantity(int64(node.DiskSize)*1024*1024*1024, resource.BinarySI),
+					StorageClass: &storageClass,
+				},
+				DataSource: &v1alpha2.VirtualDiskDataSource{
+					Type: "ObjectRef",
+					ObjectRef: &v1alpha2.VirtualDiskObjectRef{
+						Kind: "ClusterVirtualImage",
+						Name: cvmi.Name,
+					},
 				},
 			},
-		},
+		}
+		err = virtClient.VirtualDisks().Create(ctx, systemDisk)
+		if err != nil {
+			return "", fmt.Errorf("failed to create system VirtualDisk %s: %w", systemDiskName, err)
+		}
 	}
-	err = virtClient.VirtualDisks().Create(ctx, systemDisk)
-	if err != nil {
-		return "", fmt.Errorf("failed to create system VirtualDisk %s: %w", systemDiskName, err)
-	}
+	// If VirtualDisk already exists, we'll use it
 
-	// 3. Create VirtualMachine
-	memoryQuantity := resource.MustParse(fmt.Sprintf("%dGi", node.RAM))
-	vm := &v1alpha2.VirtualMachine{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      vmName,
-			Namespace: namespace,
-			Labels:    map[string]string{"vm": "linux", "service": "v1"},
-		},
-		Spec: v1alpha2.VirtualMachineSpec{
-			VirtualMachineClassName:  "generic",
-			EnableParavirtualization: true,
-			RunPolicy:                v1alpha2.RunPolicy("AlwaysOn"),
-			OsType:                   v1alpha2.OsType("Generic"),
-			Bootloader:               v1alpha2.BootloaderType("BIOS"),
-			CPU: v1alpha2.CPUSpec{
-				Cores:        node.CPU,
-				CoreFraction: "100%",
+	// 3. Create VirtualMachine (check if it exists first)
+	_, err = virtClient.VirtualMachines().Get(ctx, namespace, vmName)
+	if err != nil {
+		if !errors.IsNotFound(err) {
+			return "", fmt.Errorf("failed to check VirtualMachine %s: %w", vmName, err)
+		}
+		// VirtualMachine doesn't exist, create it
+		memoryQuantity := resource.MustParse(fmt.Sprintf("%dGi", node.RAM))
+		vm := &v1alpha2.VirtualMachine{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      vmName,
+				Namespace: namespace,
+				Labels:    map[string]string{"vm": "linux", "service": "v1"},
 			},
-			Memory: v1alpha2.MemorySpec{
-				Size: memoryQuantity,
-			},
-			BlockDeviceRefs: []v1alpha2.BlockDeviceSpecRef{
-				{
-					Kind: v1alpha2.DiskDevice,
-					Name: systemDiskName,
+			Spec: v1alpha2.VirtualMachineSpec{
+				VirtualMachineClassName:  "generic",
+				EnableParavirtualization: true,
+				RunPolicy:                v1alpha2.RunPolicy("AlwaysOn"),
+				OsType:                   v1alpha2.OsType("Generic"),
+				Bootloader:               v1alpha2.BootloaderType("BIOS"),
+				LiveMigrationPolicy:      v1alpha2.LiveMigrationPolicy("PreferSafe"),
+				CPU: v1alpha2.CPUSpec{
+					Cores:        node.CPU,
+					CoreFraction: "100%",
+				},
+				Memory: v1alpha2.MemorySpec{
+					Size: memoryQuantity,
+				},
+				BlockDeviceRefs: []v1alpha2.BlockDeviceSpecRef{
+					{
+						Kind: v1alpha2.DiskDevice,
+						Name: systemDiskName,
+					},
+				},
+				Provisioning: &v1alpha2.Provisioning{
+					Type:     "UserData",
+					UserData: generateCloudInitUserData(vmName, node.Auth.SSHKey),
 				},
 			},
-			Provisioning: &v1alpha2.Provisioning{
-				Type:     "UserData",
-				UserData: generateCloudInitUserData(vmName, node.Auth.SSHKey),
-			},
-		},
+		}
+		err = virtClient.VirtualMachines().Create(ctx, vm)
+		if err != nil {
+			return "", fmt.Errorf("failed to create VirtualMachine %s: %w", vmName, err)
+		}
 	}
-	err = virtClient.VirtualMachines().Create(ctx, vm)
-	if err != nil {
-		return "", fmt.Errorf("failed to create VirtualMachine %s: %w", vmName, err)
-	}
+	// If VirtualMachine already exists, we'll skip creation
 
 	return cvmiName, nil
 }
