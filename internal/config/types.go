@@ -69,8 +69,6 @@ type DKPParameters struct {
 	ServiceSubnetCIDR string          `yaml:"serviceSubnetCIDR"`
 	ClusterDomain     string          `yaml:"clusterDomain"`
 	RegistryRepo      string          `yaml:"registryRepo"`
-	Namespace         string          `yaml:"namespace"`
-	StorageClass      string          `yaml:"storageClass"`
 	Modules           []*ModuleConfig `yaml:"modules,omitempty"`
 }
 
@@ -83,13 +81,13 @@ type ClusterDefinition struct {
 }
 
 // ModuleConfig defines a Deckhouse module configuration
-type ModuleConfig struct { // TODO amarkov: I suggest allow user to specify ModulePullOverride version, to run tests on MR/PR during development process.
+type ModuleConfig struct {
 	Name               string         `yaml:"name"`
 	Version            int            `yaml:"version"`
 	Enabled            bool           `yaml:"enabled"`
 	Settings           map[string]any `yaml:"settings,omitempty"`
 	Dependencies       []string       `yaml:"dependencies,omitempty"`       // Names of modules that must be enabled before this one
-	ModulePullOverride string         `yaml:"modulePullOverride,omitempty"` // Override the module pull branch or tag (e.g. "main", "pr123", "mr41")
+	ModulePullOverride string         `yaml:"modulePullOverride,omitempty"` // Override the module pull branch or tag (e.g. "main", "pr123", "mr41"). Main is defailt value.
 }
 
 const (

@@ -30,13 +30,12 @@ clusterDefinition:
     serviceSubnetCIDR: "10.225.0.0/16"
     clusterDomain: "cluster.local"
     registryRepo: "dev-registry.deckhouse.io/sys/deckhouse-oss"
-    namespace: "e2e-nested-1" # TODO Move to a higher level
-    storageClass: "rsc-test-r2-local" # TODO Move to a higher level
     # Module configuration
     modules:
       - name: "snapshot-controller" # TODO add MPO
         version: 1
         enabled: true
+        modulePullOverride: "main" # imageTag for ModulePullOverride. Main is default value. Default value is used if not specified.
         dependencies: []
       - name: "sds-local-volume"
         version: 1

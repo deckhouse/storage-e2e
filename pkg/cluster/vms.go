@@ -43,11 +43,11 @@ type VMResources struct {
 // and returns the list of VM names that were created along with resource tracking info.
 func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Client, clusterDef *config.ClusterDefinition) ([]string, *VMResources, error) {
 	// Check CLUSTER_CREATE_MODE
-	if config.ClusterCreateMode != config.ClusterCreateModeAlwaysCreateNew {
-		return nil, nil, fmt.Errorf("CLUSTER_CREATE_MODE must be set to '%s'. Current value: '%s'. Using existing cluster currently is not supported", config.ClusterCreateModeAlwaysCreateNew, config.ClusterCreateMode)
+	if config.TestClusterCreateMode != config.ClusterCreateModeAlwaysCreateNew {
+		return nil, nil, fmt.Errorf("CLUSTER_CREATE_MODE must be set to '%s'. Current value: '%s'. Using existing cluster currently is not supported", config.ClusterCreateModeAlwaysCreateNew, config.TestClusterCreateMode)
 	}
 
-	namespace := clusterDef.DKPParameters.Namespace
+	namespace := config.TestClusterNamespace
 
 	// Get all VM nodes from cluster definition
 	vmNodes := getVMNodes(clusterDef)
@@ -81,11 +81,11 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 		if len(conflicts.ClusterVirtualImages) > 0 {
 			conflictMessages = append(conflictMessages, fmt.Sprintf("ClusterVirtualImages: %v", conflicts.ClusterVirtualImages))
 		}
-		return nil, nil, fmt.Errorf("the following VM-related resources already exist (CLUSTER_CREATE_MODE=%s): %s", config.ClusterCreateMode, strings.Join(conflictMessages, ", "))
+		return nil, nil, fmt.Errorf("the following VM-related resources already exist (CLUSTER_CREATE_MODE=%s): %s", config.TestClusterCreateMode, strings.Join(conflictMessages, ", "))
 	}
 
 	// Create all VMs
-	storageClass := clusterDef.DKPParameters.StorageClass
+	storageClass := config.TestClusterStorageClass
 	for _, node := range vmNodes {
 		cvmiName, err := createVM(ctx, virtClient, namespace, node, storageClass)
 		if err != nil {

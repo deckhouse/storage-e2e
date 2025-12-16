@@ -164,7 +164,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			namespace := clusterDefinition.DKPParameters.Namespace
+			namespace := config.TestClusterNamespace
 			GinkgoWriter.Printf("    ▶️ Ensuring namespace %s exists\n", namespace)
 
 			ns, err := kubernetes.CreateNamespaceIfNotExists(ctx, kubeconfig, namespace)
@@ -186,7 +186,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			Expect(virtClient).NotTo(BeNil())
 			GinkgoWriter.Printf("    ✅ Virtualization client initialized successfully\n")
 
-			namespace := clusterDefinition.DKPParameters.Namespace
+			namespace := config.TestClusterNamespace
 			GinkgoWriter.Printf("    ▶️ Creating VMs in namespace: %s\n", namespace)
 
 			// Create virtual machines
