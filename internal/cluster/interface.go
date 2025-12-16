@@ -27,7 +27,6 @@ type Cluster interface {
 	// Nodes() NodeClient
 	// Pods() PodClient
 	// Storage() StorageClient
-	// Virtualization() VirtualizationClient
 	// Deckhouse() DeckhouseClient
 
 	Close() error

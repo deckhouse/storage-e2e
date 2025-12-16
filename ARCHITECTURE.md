@@ -154,7 +154,7 @@ type Cluster interface {
     Nodes() NodeClient
     Pods() PodClient
     Storage() StorageClient
-    Virtualization() VirtualizationClient // TODO asergunov: Is the VirtualizationClient this one? https://github.com/deckhouse/virtualization/blob/main/api/client/kubeclient/client.go#L53
+    Virtualization() VirtualizationClient
     Deckhouse() DeckhouseClient
     
     // Lifecycle

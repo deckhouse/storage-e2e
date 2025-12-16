@@ -8,7 +8,7 @@ clusterDefinition:
       cpu: 4
       ram: 8
       diskSize: 30
-  workers: # Worker nodes configuration // TODO implement logic allowing to deploy different number of workes and masters with the same config.
+  workers: # Worker nodes configuration // TODO implement logic allowing to deploy different number of workers and masters with the same config.
     - hostname: "worker-1"
       hostType: "vm"
       role: "worker"
