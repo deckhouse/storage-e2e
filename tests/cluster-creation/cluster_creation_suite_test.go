@@ -26,9 +26,8 @@ import (
 )
 
 var _ = BeforeSuite(func() {
-	// Validate that CLUSTER_CREATE_MODE is set and has a valid value
-	err := config.ValidateClusterCreateMode()
-	Expect(err).NotTo(HaveOccurred(), "CLUSTER_CREATE_MODE environment variable must be set to either 'alwaysUseExisting' or 'alwaysCreateNew'")
+	err := config.ValidateEnvironment()
+	Expect(err).NotTo(HaveOccurred())
 })
 
 func TestIntegration(t *testing.T) {

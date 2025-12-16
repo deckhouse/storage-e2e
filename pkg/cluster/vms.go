@@ -318,7 +318,7 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				},
 				Provisioning: &v1alpha2.Provisioning{
 					Type:     "UserData",
-					UserData: generateCloudInitUserData(vmName, node.Auth.SSHKey),
+					UserData: generateCloudInitUserData(vmName, config.VMSSHPublicKey),
 				},
 			},
 		}

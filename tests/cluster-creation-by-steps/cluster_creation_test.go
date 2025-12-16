@@ -38,10 +38,10 @@ import (
 
 var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 	var (
-		yamlConfigFilename       string = "cluster_config.yml"
-		baseClusterMasterIP      string = "94.26.231.181"
-		baseClusterUser          string = "a.yakubov"
-		baseClusterSSHPrivateKey string = "~/.ssh/id_rsa"
+		yamlConfigFilename       string = config.YAMLConfigFilename
+		baseClusterMasterIP      string = config.SSHHost
+		baseClusterUser          string = config.SSHUser
+		baseClusterSSHPrivateKey string = config.SSHKeyPath
 
 		err               error
 		sshclient         ssh.SSHClient

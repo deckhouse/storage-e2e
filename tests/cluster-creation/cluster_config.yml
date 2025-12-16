@@ -5,22 +5,14 @@ clusterDefinition:
       hostType: "vm"
       role: "master"
       osType: "Ubuntu 22.04 6.2.0-39-generic"
-      auth:
-        method: "ssh-key"
-        user: "user"
-        sshKey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC8WyGvnBNQp+v6CUweF1QYCRtR7Do/IA8IA2uMd2HuBsddFrc5xYon2ZtEvypZC4Vm1CzgcgUm9UkHgxytKEB4zOOWkmqFP62OSLNyuWMaFEW1fb0EDenup6B5SrjnA8ckm4Hf2NSLvwW9yS98TfN3nqPOPJKfQsN+OTiCerTtNyXjca//ppuGKsQd99jG7SqE9aDQ3sYCXatM53SXqhxS2nTew82bmzVmKXDxcIzVrS9f+2WmXIdY2cKo2I352yKWOIp1Nk0uji8ozLPHFQGvbAG8DGG1KNVcBl2qYUcttmCpN+iXEcGqyn/atUVJJMnZXGtp0fiL1rMLqAd/bb6TFNzZFSsS+zqGesxqLePe32vLCQ3xursP3BRZkrScM+JzIqevfP63INHJEZfYlUf4Ic+gfliS2yA1LwhU7hD4LSVXMQynlF9WeGjuv6ZYxmO8hC6IWCqWnIUqKUiGtvBSPXwsZo7wgljBr4ykJgBzS9MjZ0fzz1JKe80tH6clpjIOn6ReBPwQBq2zmDDrpa5GVqqqjXhRQuA0AfpHdhs5UKxs1PBr7/PTLA7PI39xkOAE/Zj1TYQ2dmqvpskshi7AtBStjinQBAlLXysLSHBtO+3+PLAYcMZMVfb0bVqfGGludO2prvXrrWWTku0eOsA5IRahrRdGhv5zhKgFV7cwUQ== ayakubov@MacBook-Pro-Alexey.local"
       cpu: 4
       ram: 8
       diskSize: 30
-  workers: # Worker nodes configuration
+  workers: # Worker nodes configuration // TODO implement logic allowing to deploy different number of workes and masters with the same config.
     - hostname: "worker-1"
       hostType: "vm"
       role: "worker"
       osType: "Ubuntu 22.04 6.2.0-39-generic"
-      auth:
-        method: "ssh-key"
-        user: "user"
-        sshKey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC8WyGvnBNQp+v6CUweF1QYCRtR7Do/IA8IA2uMd2HuBsddFrc5xYon2ZtEvypZC4Vm1CzgcgUm9UkHgxytKEB4zOOWkmqFP62OSLNyuWMaFEW1fb0EDenup6B5SrjnA8ckm4Hf2NSLvwW9yS98TfN3nqPOPJKfQsN+OTiCerTtNyXjca//ppuGKsQd99jG7SqE9aDQ3sYCXatM53SXqhxS2nTew82bmzVmKXDxcIzVrS9f+2WmXIdY2cKo2I352yKWOIp1Nk0uji8ozLPHFQGvbAG8DGG1KNVcBl2qYUcttmCpN+iXEcGqyn/atUVJJMnZXGtp0fiL1rMLqAd/bb6TFNzZFSsS+zqGesxqLePe32vLCQ3xursP3BRZkrScM+JzIqevfP63INHJEZfYlUf4Ic+gfliS2yA1LwhU7hD4LSVXMQynlF9WeGjuv6ZYxmO8hC6IWCqWnIUqKUiGtvBSPXwsZo7wgljBr4ykJgBzS9MjZ0fzz1JKe80tH6clpjIOn6ReBPwQBq2zmDDrpa5GVqqqjXhRQuA0AfpHdhs5UKxs1PBr7/PTLA7PI39xkOAE/Zj1TYQ2dmqvpskshi7AtBStjinQBAlLXysLSHBtO+3+PLAYcMZMVfb0bVqfGGludO2prvXrrWWTku0eOsA5IRahrRdGhv5zhKgFV7cwUQ== ayakubov@MacBook-Pro-Alexey.local"
       cpu: 2
       ram: 6
       diskSize: 30
@@ -28,10 +20,6 @@ clusterDefinition:
       hostType: "vm"
       role: "worker"
       osType: "Ubuntu 22.04 6.2.0-39-generic"
-      auth:
-        method: "ssh-key"
-        user: "user"
-        sshKey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC8WyGvnBNQp+v6CUweF1QYCRtR7Do/IA8IA2uMd2HuBsddFrc5xYon2ZtEvypZC4Vm1CzgcgUm9UkHgxytKEB4zOOWkmqFP62OSLNyuWMaFEW1fb0EDenup6B5SrjnA8ckm4Hf2NSLvwW9yS98TfN3nqPOPJKfQsN+OTiCerTtNyXjca//ppuGKsQd99jG7SqE9aDQ3sYCXatM53SXqhxS2nTew82bmzVmKXDxcIzVrS9f+2WmXIdY2cKo2I352yKWOIp1Nk0uji8ozLPHFQGvbAG8DGG1KNVcBl2qYUcttmCpN+iXEcGqyn/atUVJJMnZXGtp0fiL1rMLqAd/bb6TFNzZFSsS+zqGesxqLePe32vLCQ3xursP3BRZkrScM+JzIqevfP63INHJEZfYlUf4Ic+gfliS2yA1LwhU7hD4LSVXMQynlF9WeGjuv6ZYxmO8hC6IWCqWnIUqKUiGtvBSPXwsZo7wgljBr4ykJgBzS9MjZ0fzz1JKe80tH6clpjIOn6ReBPwQBq2zmDDrpa5GVqqqjXhRQuA0AfpHdhs5UKxs1PBr7/PTLA7PI39xkOAE/Zj1TYQ2dmqvpskshi7AtBStjinQBAlLXysLSHBtO+3+PLAYcMZMVfb0bVqfGGludO2prvXrrWWTku0eOsA5IRahrRdGhv5zhKgFV7cwUQ== ayakubov@MacBook-Pro-Alexey.local"
       cpu: 2
       ram: 6
       diskSize: 30
@@ -41,13 +29,12 @@ clusterDefinition:
     podSubnetCIDR: "10.112.0.0/16"
     serviceSubnetCIDR: "10.225.0.0/16"
     clusterDomain: "cluster.local"
-    licenseKey: ""
     registryRepo: "dev-registry.deckhouse.io/sys/deckhouse-oss"
-    namespace: "e2e-nested-1"
-    storageClass: "nfs-storage-class"
+    namespace: "e2e-nested-1" # TODO Move to a higher level
+    storageClass: "rsc-test-r2-local" # TODO Move to a higher level
     # Module configuration
     modules:
-      - name: "snapshot-controller"
+      - name: "snapshot-controller" # TODO add MPO
         version: 1
         enabled: true
         dependencies: []

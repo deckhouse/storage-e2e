@@ -22,15 +22,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/pkg/cluster"
 )
 
 var _ = Describe("Cluster Creation Test", Ordered, func() {
 	var (
-		yamlConfigFilename       string = "cluster_config.yml"
-		baseClusterMasterIP      string = "10.0.0.181"
-		baseClusterUser          string = "w-ansible"
-		baseClusterSSHPrivateKey string = "~/.ssh/id_rsa"
+		yamlConfigFilename string = config.YAMLConfigFilename
 
 		testClusterResources *cluster.TestClusterResources
 		ctx                  context.Context = context.Background()
@@ -57,9 +55,6 @@ var _ = Describe("Cluster Creation Test", Ordered, func() {
 			testClusterResources, err = cluster.CreateTestCluster(
 				ctx,
 				yamlConfigFilename,
-				baseClusterMasterIP,
-				baseClusterUser,
-				baseClusterSSHPrivateKey,
 			)
 			Expect(err).NotTo(HaveOccurred(), "CreateTestCluster should succeed")
 			Expect(testClusterResources).NotTo(BeNil(), "TestClusterResources should not be nil")

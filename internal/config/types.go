@@ -47,22 +47,6 @@ type OSType struct {
 	KernelVersion string
 }
 
-// AuthMethod represents the authentication method
-type AuthMethod string
-
-const (
-	AuthMethodSSHKey  AuthMethod = "ssh-key"
-	AuthMethodSSHPass AuthMethod = "ssh-password"
-)
-
-// NodeAuth contains authentication information for a node
-type NodeAuth struct {
-	Method   AuthMethod `yaml:"method"`
-	User     string     `yaml:"user"`
-	SSHKey   string     `yaml:"sshKey"`             // Public key (value like "ssh-rsa ...", path to .pub file, or empty for default)
-	Password string     `yaml:"password,omitempty"` // Password (if using password auth)
-}
-
 // ClusterNode defines a single node in the cluster
 type ClusterNode struct {
 	Hostname  string      `yaml:"hostname"`
@@ -70,7 +54,6 @@ type ClusterNode struct {
 	OSType    OSType      `yaml:"osType"`              // Required for VM, optional for bare-metal (custom unmarshaler handles string -> OSType conversion)
 	HostType  HostType    `yaml:"hostType"`
 	Role      ClusterRole `yaml:"role"`
-	Auth      NodeAuth    `yaml:"auth"`
 	// VM-specific fields (only used when HostType == HostTypeVM)
 	CPU      int `yaml:"cpu"`      // Required for VM
 	RAM      int `yaml:"ram"`      // Required for VM, in GB
@@ -85,7 +68,6 @@ type DKPParameters struct {
 	PodSubnetCIDR     string          `yaml:"podSubnetCIDR"`
 	ServiceSubnetCIDR string          `yaml:"serviceSubnetCIDR"`
 	ClusterDomain     string          `yaml:"clusterDomain"`
-	LicenseKey        string          `yaml:"licenseKey"`
 	RegistryRepo      string          `yaml:"registryRepo"`
 	Namespace         string          `yaml:"namespace"`
 	StorageClass      string          `yaml:"storageClass"`
@@ -121,16 +103,15 @@ const (
 func (n *ClusterNode) UnmarshalYAML(value *yaml.Node) error {
 	// Temporary struct with OSType as string for unmarshaling
 	type clusterNodeTmp struct {
-		Hostname  string   `yaml:"hostname"`
-		IPAddress string   `yaml:"ipAddress,omitempty"`
-		OSType    string   `yaml:"osType"`
-		HostType  string   `yaml:"hostType"`
-		Role      string   `yaml:"role"`
-		Auth      NodeAuth `yaml:"auth"`
-		CPU       int      `yaml:"cpu"`
-		RAM       int      `yaml:"ram"`
-		DiskSize  int      `yaml:"diskSize"`
-		Prepared  bool     `yaml:"prepared,omitempty"`
+		Hostname  string `yaml:"hostname"`
+		IPAddress string `yaml:"ipAddress,omitempty"`
+		OSType    string `yaml:"osType"`
+		HostType  string `yaml:"hostType"`
+		Role      string `yaml:"role"`
+		CPU       int    `yaml:"cpu"`
+		RAM       int    `yaml:"ram"`
+		DiskSize  int    `yaml:"diskSize"`
+		Prepared  bool   `yaml:"prepared,omitempty"`
 	}
 
 	var tmp clusterNodeTmp
@@ -156,24 +137,12 @@ func (n *ClusterNode) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("unknown osType: %s", tmp.OSType)
 	}
 
-	// Convert AuthMethod
-	authMethod := AuthMethod(tmp.Auth.Method)
-	if authMethod != AuthMethodSSHKey && authMethod != AuthMethodSSHPass {
-		return fmt.Errorf("invalid auth method: %s", tmp.Auth.Method)
-	}
-
 	// Assign to actual struct
 	n.Hostname = tmp.Hostname
 	n.IPAddress = tmp.IPAddress
 	n.OSType = osType
 	n.HostType = hostType
 	n.Role = role
-	n.Auth = NodeAuth{
-		Method:   authMethod,
-		User:     tmp.Auth.User,
-		SSHKey:   tmp.Auth.SSHKey,
-		Password: tmp.Auth.Password,
-	}
 	n.CPU = tmp.CPU
 	n.RAM = tmp.RAM
 	n.DiskSize = tmp.DiskSize

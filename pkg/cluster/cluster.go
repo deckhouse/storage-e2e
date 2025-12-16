@@ -44,12 +44,10 @@ type TestClusterResources struct {
 // 4. Establishing SSH tunnel with port forwarding
 //
 // It returns all the resources needed to interact with the cluster.
+// SSH credentials are obtained from environment variables via config functions.
 func CreateTestCluster(
 	ctx context.Context,
 	yamlConfigFilename string,
-	baseClusterMasterIP string,
-	baseClusterUser string,
-	baseClusterSSHPrivateKey string,
 ) (*TestClusterResources, error) {
 	// Stage 1: Load cluster configuration from YAML
 	clusterDefinition, err := internalcluster.LoadClusterConfig(yamlConfigFilename)
@@ -57,8 +55,13 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("failed to load cluster configuration: %w", err)
 	}
 
+	// Get SSH credentials from environment variables
+	sshHost := config.SSHHost
+	sshUser := config.SSHUser
+	sshKeyPath := config.SSHKeyPath
+
 	// Stage 2: Establish SSH connection to base cluster
-	sshClient, err := ssh.NewClient(baseClusterUser, baseClusterMasterIP, baseClusterSSHPrivateKey)
+	sshClient, err := ssh.NewClient(sshUser, sshHost, sshKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SSH client: %w", err)
 	}
@@ -70,9 +73,9 @@ func CreateTestCluster(
 
 	kubeconfig, kubeconfigPath, err := internalcluster.GetKubeconfig(
 		kubeconfigCtx,
-		baseClusterMasterIP,
-		baseClusterUser,
-		baseClusterSSHPrivateKey,
+		sshHost,
+		sshUser,
+		sshKeyPath,
 		sshClient,
 	)
 	if err != nil {

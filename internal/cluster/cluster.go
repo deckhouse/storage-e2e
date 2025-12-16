@@ -143,18 +143,6 @@ func validateNode(node config.ClusterNode, isMaster bool) error {
 		}
 	}
 
-	if node.Auth.User == "" {
-		return fmt.Errorf("auth.user is required")
-	}
-
-	if node.Auth.Method == config.AuthMethodSSHKey && node.Auth.SSHKey == "" {
-		return fmt.Errorf("auth.sshKey is required when using ssh-key authentication")
-	}
-
-	if node.Auth.Method == config.AuthMethodSSHPass && node.Auth.Password == "" {
-		return fmt.Errorf("auth.password is required when using ssh-password authentication")
-	}
-
 	return nil
 }
 
