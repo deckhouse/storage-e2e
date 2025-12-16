@@ -30,10 +30,10 @@ var (
 
 	// KubeConfigPath is the path to a kubeconfig file. If SSH retrieval fails (e.g., sudo requires password),
 	// this path will be used as a fallback. If not set and SSH fails, the user will be notified to download
-	// the kubeconfig manually and set this environment variable.
+	// the kubeconfig manually and set this environment variable, test will fail.
 	KubeConfigPath = os.Getenv("KUBE_CONFIG_PATH")
 
-	// TestClusterCreateMode specifies the cluster creation mode. Must be set to either "alwaysUseExisting" or "alwaysCreateNew"
+	// TestClusterCreateMode specifies the cluster creation mode. Must be set to either "alwaysUseExisting" or "alwaysCreateNew". If not set, test will fail.
 	TestClusterCreateMode = os.Getenv("TEST_CLUSTER_CREATE_MODE")
 
 	// TestClusterCleanup specifies whether to remove the test cluster after tests complete.

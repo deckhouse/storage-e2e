@@ -33,6 +33,12 @@ var _ = Describe("Cluster Creation Test", Ordered, func() {
 	)
 
 	BeforeAll(func() {
+		By("Validating environment variables", func() {
+			GinkgoWriter.Printf("    ▶️ Validating environment variables\n")
+			err := config.ValidateEnvironment()
+			Expect(err).NotTo(HaveOccurred())
+			GinkgoWriter.Printf("    ✅ Environment variables validated successfully\n")
+		})
 		// DeferCleanup: Clean up all resources in reverse order of creation - analog of AfterAll() in Ginkgo
 		DeferCleanup(func() {
 			if testClusterResources != nil {

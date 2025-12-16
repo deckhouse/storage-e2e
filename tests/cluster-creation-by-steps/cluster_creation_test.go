@@ -50,7 +50,12 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 	)
 
 	BeforeAll(func() {
-		var err error
+		By("Validating environment variables", func() {
+			GinkgoWriter.Printf("    ▶️ Validating environment variables\n")
+			err := config.ValidateEnvironment()
+			Expect(err).NotTo(HaveOccurred())
+			GinkgoWriter.Printf("    ✅ Environment variables validated successfully\n")
+		})
 
 		// Stage 1: LoadConfig - verifies and parses the config from yaml file
 		By("LoadConfig: Loading and verifying cluster configuration from YAML", func() {

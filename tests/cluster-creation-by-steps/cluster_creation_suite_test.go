@@ -21,14 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/deckhouse/storage-e2e/internal/config"
 )
-
-var _ = BeforeSuite(func() {
-	err := config.ValidateEnvironment()
-	Expect(err).NotTo(HaveOccurred())
-})
 
 func TestIntegration(t *testing.T) {
 	RegisterFailHandler(Fail)
