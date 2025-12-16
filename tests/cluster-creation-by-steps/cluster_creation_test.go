@@ -38,11 +38,6 @@ import (
 
 var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 	var (
-		yamlConfigFilename       string = config.YAMLConfigFilename
-		baseClusterMasterIP      string = config.SSHHost
-		baseClusterUser          string = config.SSHUser
-		baseClusterSSHPrivateKey string = config.SSHKeyPath
-
 		err               error
 		sshclient         ssh.SSHClient
 		kubeconfig        *rest.Config
@@ -59,6 +54,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 
 		// Stage 1: LoadConfig - verifies and parses the config from yaml file
 		By("LoadConfig: Loading and verifying cluster configuration from YAML", func() {
+			yamlConfigFilename := config.YAMLConfigFilename
 			GinkgoWriter.Printf("    ▶️ Loading cluster configuration from: %s\n", yamlConfigFilename)
 			clusterDefinition, err = internalcluster.LoadClusterConfig(yamlConfigFilename)
 			Expect(err).NotTo(HaveOccurred())
@@ -114,9 +110,9 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 
 	// Stage 2: Establish SSH connection to base cluster (reused for getting kubeconfig)
 	It("should establish ssh connection to the base cluster", func() {
-		By(fmt.Sprintf("Connecting to %s@%s using key %s", baseClusterUser, baseClusterMasterIP, baseClusterSSHPrivateKey), func() {
-			GinkgoWriter.Printf("    ▶️ Creating SSH client for %s@%s\n", baseClusterUser, baseClusterMasterIP)
-			sshclient, err = ssh.NewClient(baseClusterUser, baseClusterMasterIP, baseClusterSSHPrivateKey)
+		By(fmt.Sprintf("Connecting to %s@%s using key %s", config.SSHUser, config.SSHHost, config.SSHKeyPath), func() {
+			GinkgoWriter.Printf("    ▶️ Creating SSH client for %s@%s\n", config.SSHUser, config.SSHHost)
+			sshclient, err = ssh.NewClient(config.SSHUser, config.SSHHost, config.SSHKeyPath)
 			Expect(err).NotTo(HaveOccurred())
 			GinkgoWriter.Printf("    ✅ SSH connection established successfully\n")
 		})
@@ -126,10 +122,10 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 
 	It("should get kubeconfig from the base cluster", func() {
 		By("Retrieving kubeconfig from base cluster", func() {
-			GinkgoWriter.Printf("    ▶️ Fetching kubeconfig from %s\n", baseClusterMasterIP)
+			GinkgoWriter.Printf("    ▶️ Fetching kubeconfig from %s\n", config.SSHHost)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			kubeconfig, kubeconfigPath, err = internalcluster.GetKubeconfig(ctx, baseClusterMasterIP, baseClusterUser, baseClusterSSHPrivateKey, sshclient)
+			kubeconfig, kubeconfigPath, err = internalcluster.GetKubeconfig(ctx, config.SSHHost, config.SSHUser, config.SSHKeyPath, sshclient)
 			Expect(err).NotTo(HaveOccurred())
 			GinkgoWriter.Printf("    ✅ Kubeconfig retrieved and saved to: %s\n", kubeconfigPath)
 		})
@@ -139,7 +135,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 
 	It("should establish ssh tunnel to the base cluster with port forwarding", func() {
 		By("Setting up SSH tunnel with port forwarding", func() {
-			GinkgoWriter.Printf("    ▶️ Establishing SSH tunnel to %s, forwarding port 6445\n", baseClusterMasterIP)
+			GinkgoWriter.Printf("    ▶️ Establishing SSH tunnel to %s, forwarding port 6445\n", config.SSHHost)
 			ctx := context.Background()
 			tunnelinfo, err = ssh.EstablishSSHTunnel(ctx, sshclient, "6445")
 			Expect(err).NotTo(HaveOccurred())

@@ -28,8 +28,6 @@ import (
 
 var _ = Describe("Cluster Creation Test", Ordered, func() {
 	var (
-		yamlConfigFilename string = config.YAMLConfigFilename
-
 		testClusterResources *cluster.TestClusterResources
 		ctx                  context.Context = context.Background()
 	)
@@ -52,6 +50,7 @@ var _ = Describe("Cluster Creation Test", Ordered, func() {
 		By("Creating test cluster connection", func() {
 			GinkgoWriter.Printf("    ▶️ Creating test cluster connection\n")
 			var err error
+			yamlConfigFilename := config.YAMLConfigFilename
 			testClusterResources, err = cluster.CreateTestCluster(
 				ctx,
 				yamlConfigFilename,
