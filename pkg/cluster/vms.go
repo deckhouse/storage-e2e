@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -32,10 +33,11 @@ import (
 
 // VMResources tracks VM-related resources created for a test cluster
 type VMResources struct {
-	VirtClient *virtualization.Client
-	Namespace  string
-	VMNames    []string
-	CVMINames  []string
+	VirtClient  *virtualization.Client
+	Namespace   string
+	VMNames     []string
+	CVMINames   []string
+	SetupVMName string // Name of the setup VM (always created)
 }
 
 // CreateVirtualMachines creates virtual machines from cluster definition.
@@ -54,6 +56,14 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 	if len(vmNodes) == 0 {
 		return nil, nil, fmt.Errorf("no VM nodes found in cluster definition")
 	}
+
+	// Always add the default setup VM with a unique suffix
+	setupVM := config.DefaultSetupVM
+	// Generate unique suffix using timestamp
+	suffix := fmt.Sprintf("%d", time.Now().Unix())
+	setupVM.Hostname = setupVM.Hostname + suffix
+	vmNodes = append(vmNodes, setupVM)
+	setupVMName := setupVM.Hostname // Store the generated name for later use
 
 	// Track CVMI names that we create or use
 	cvmiNamesMap := make(map[string]bool)
@@ -102,11 +112,14 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 		cvmiNames = append(cvmiNames, name)
 	}
 
+	// Track setup VM separately
+	// The setup VM is always created, so it will exist in vmNames
 	resources := &VMResources{
-		VirtClient: virtClient,
-		Namespace:  namespace,
-		VMNames:    vmNames,
-		CVMINames:  cvmiNames,
+		VirtClient:  virtClient,
+		Namespace:   namespace,
+		VMNames:     vmNames,
+		CVMINames:   cvmiNames,
+		SetupVMName: setupVMName, // setupVMName was set above when creating setupVM
 	}
 
 	return vmNames, resources, nil
@@ -464,19 +477,16 @@ func CleanupVMResources(ctx context.Context, resources *VMResources) error {
 	return nil
 }
 
-// GetSetupNode returns the setup node from cluster definition, or the first worker if setup is not set
-func GetSetupNode(clusterDef *config.ClusterDefinition) (*config.ClusterNode, error) {
-	// If setup node is explicitly set, return it
-	if clusterDef.Setup != nil {
-		return clusterDef.Setup, nil
+// GetSetupNode returns the setup VM node from VMResources.
+// The setup node is always a separate VM with a unique name (bootstrap-node-<suffix>).
+func GetSetupNode(vmResources *VMResources) (*config.ClusterNode, error) {
+	if vmResources == nil {
+		return nil, fmt.Errorf("VMResources cannot be nil")
 	}
-
-	// Otherwise, return the first worker
-	if len(clusterDef.Workers) == 0 {
-		return nil, fmt.Errorf("no setup node specified and no workers available")
-	}
-
-	return &clusterDef.Workers[0], nil
+	// Find the setup VM node by hostname
+	setupVM := config.DefaultSetupVM
+	setupVM.Hostname = vmResources.SetupVMName
+	return &setupVM, nil
 }
 
 // GetVMIPAddress gets the IP address of a VM by querying its status
@@ -493,4 +503,30 @@ func GetVMIPAddress(ctx context.Context, virtClient *virtualization.Client, name
 	}
 
 	return vm.Status.IPAddress, nil
+}
+
+// CleanupSetupVM deletes the setup VM and its associated resources.
+// This should be called after the test cluster bootstrap is complete.
+func CleanupSetupVM(ctx context.Context, resources *VMResources) error {
+	if resources == nil {
+		return fmt.Errorf("resources cannot be nil")
+	}
+
+	namespace := resources.Namespace
+	setupVMName := resources.SetupVMName
+
+	// Step 1: Delete the setup VM
+	err := resources.VirtClient.VirtualMachines().Delete(ctx, namespace, setupVMName)
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete setup VM %s/%s: %w", namespace, setupVMName, err)
+	}
+
+	// Step 2: Delete the setup VM's system disk
+	systemDiskName := fmt.Sprintf("%s-system", setupVMName)
+	err = resources.VirtClient.VirtualDisks().Delete(ctx, namespace, systemDiskName)
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete setup VM system disk %s/%s: %w", namespace, systemDiskName, err)
+	}
+
+	return nil
 }

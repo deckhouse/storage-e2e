@@ -15,18 +15,31 @@ const (
 )
 
 var (
+
+	// ENVIRONMENT VARIABLES DEFINITIONS
+
 	// YAMLConfigFilename is the filename of the YAML configuration file
-	YAMLConfigFilename = os.Getenv("YAML_CONFIG_FILENAME")
+	YAMLConfigFilename             = os.Getenv("YAML_CONFIG_FILENAME")
+	YAMLConfigFilenameDefaultValue = "cluster_config.yml"
 
 	// SSH credentials to connect to BASE cluster
 	SSHPassphrase = os.Getenv("SSH_PASSPHRASE")
-	SSHUser       = os.Getenv("SSH_USER")
-	SSHKeyPath    = os.Getenv("SSH_KEY_PATH")
-	SSHHost       = os.Getenv("SSH_HOST")
+
+	SSHUser             = os.Getenv("SSH_USER")
+	SSHUserDefaultValue = "a.yakubov"
+
+	SSHKeyPath             = os.Getenv("SSH_KEY_PATH")
+	SSHKeyPathDefaultValue = "~/.ssh/id_rsa"
+
+	SSHHost             = os.Getenv("SSH_HOST")
+	SSHHostDefaultValue = "94.26.231.181"
 
 	// SSH credentials to deploy to VM
-	VMSSHUser      = os.Getenv("SSH_VM_USER")
-	VMSSHPublicKey = os.Getenv("SSH_VM_PUBLIC_KEY")
+	VMSSHUser             = os.Getenv("SSH_VM_USER")
+	VMSSHUserDefaultValue = "cloud"
+
+	VMSSHPublicKey             = os.Getenv("SSH_VM_PUBLIC_KEY")
+	VMSSHPublicKeyDefaultValue = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC8WyGvnBNQp+v6CUweF1QYCRtR7Do/IA8IA2uMd2HuBsddFrc5xYon2ZtEvypZC4Vm1CzgcgUm9UkHgxytKEB4zOOWkmqFP62OSLNyuWMaFEW1fb0EDenup6B5SrjnA8ckm4Hf2NSLvwW9yS98TfN3nqPOPJKfQsN+OTiCerTtNyXjca//ppuGKsQd99jG7SqE9aDQ3sYCXatM53SXqhxS2nTew82bmzVmKXDxcIzVrS9f+2WmXIdY2cKo2I352yKWOIp1Nk0uji8ozLPHFQGvbAG8DGG1KNVcBl2qYUcttmCpN+iXEcGqyn/atUVJJMnZXGtp0fiL1rMLqAd/bb6TFNzZFSsS+zqGesxqLePe32vLCQ3xursP3BRZkrScM+JzIqevfP63INHJEZfYlUf4Ic+gfliS2yA1LwhU7hD4LSVXMQynlF9WeGjuv6ZYxmO8hC6IWCqWnIUqKUiGtvBSPXwsZo7wgljBr4ykJgBzS9MjZ0fzz1JKe80tH6clpjIOn6ReBPwQBq2zmDDrpa5GVqqqjXhRQuA0AfpHdhs5UKxs1PBr7/PTLA7PI39xkOAE/Zj1TYQ2dmqvpskshi7AtBStjinQBAlLXysLSHBtO+3+PLAYcMZMVfb0bVqfGGludO2prvXrrWWTku0eOsA5IRahrRdGhv5zhKgFV7cwUQ== ayakubov@MacBook-Pro-Alexey.local"
 
 	// KubeConfigPath is the path to a kubeconfig file. If SSH retrieval fails (e.g., sudo requires password),
 	// this path will be used as a fallback. If not set and SSH fails, the user will be notified to download
@@ -38,58 +51,65 @@ var (
 
 	// TestClusterCleanup specifies whether to remove the test cluster after tests complete.
 	// Default is "false". If set to "true" or "True", the test cluster will be cleaned up after tests.
-	TestClusterCleanup = os.Getenv("TEST_CLUSTER_CLEANUP")
+	TestClusterCleanup             = os.Getenv("TEST_CLUSTER_CLEANUP")
+	TestClusterCleanupDefaultValue = "false"
 
 	// TestClusterNamespace specifies the namespace for DKP cluster deployment
-	TestClusterNamespace = os.Getenv("TEST_CLUSTER_NAMESPACE")
+	TestClusterNamespace             = os.Getenv("TEST_CLUSTER_NAMESPACE")
+	TestClusterNamespaceDefaultValue = "e2e-test-cluster"
 
 	// TestClusterStorageClass specifies the storage class for DKP cluster deployment
-	TestClusterStorageClass = os.Getenv("TEST_CLUSTER_STORAGE_CLASS")
+	TestClusterStorageClass             = os.Getenv("TEST_CLUSTER_STORAGE_CLASS")
+	TestClusterStorageClassDefaultValue = "rsc-test-r2-local"
 
 	// DKPLicenseKey specifies the DKP license key for cluster deployment
 	DKPLicenseKey = os.Getenv("DKP_LICENSE_KEY")
+
+	// CONFIGURATION VARIABLES DEFINITIONS
+
+	// DefaultSetupVM is the default VM configuration of the node that is used for bootstrap of test cluster.
+	// This VM is always created separately and should be deleted after cluster bootstrap.
+	DefaultSetupVM = ClusterNode{
+		Hostname: "bootstrap-node-",
+		HostType: HostTypeVM,
+		Role:     ClusterRoleSetup,
+		OSType:   OSTypeMap["Ubuntu 22.04 6.2.0-39-generic"],
+		CPU:      2,
+		RAM:      4,
+		DiskSize: 20,
+	}
 )
 
 func ValidateEnvironment() error {
 	// Default values for environment variables
 	if YAMLConfigFilename == "" {
-		YAMLConfigFilename = "cluster_config.yml"
+		YAMLConfigFilename = YAMLConfigFilenameDefaultValue
 	}
 
-	if TestClusterCleanup != "true" && TestClusterCleanup != "True" {
-		TestClusterCleanup = "false"
+	if TestClusterCleanup == "" || TestClusterCleanup != "true" && TestClusterCleanup != "True" {
+		TestClusterCleanup = TestClusterCleanupDefaultValue
 	}
 
 	if SSHKeyPath == "" {
-		SSHKeyPath = "~/.ssh/id_rsa"
+		SSHKeyPath = SSHKeyPathDefaultValue
 	}
 	if SSHUser == "" {
-		SSHUser = "a.yakubov"
+		SSHUser = SSHUserDefaultValue
 	}
 	if SSHHost == "" {
-		SSHHost = "94.26.231.181"
+		SSHHost = SSHHostDefaultValue
 	}
 	if VMSSHUser == "" {
-		VMSSHUser = "cloud"
+		VMSSHUser = VMSSHUserDefaultValue
 	}
 	if VMSSHPublicKey == "" {
-		VMSSHPublicKey = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC8WyGvnBNQp+v6CUweF1QYCRtR7Do/IA8IA2uMd2HuBsddFrc5xYon2ZtEvypZC4Vm1CzgcgUm9UkHgxytKEB4zOOWkmqFP62OSLNyuWMaFEW1fb0EDenup6B5SrjnA8ckm4Hf2NSLvwW9yS98TfN3nqPOPJKfQsN+OTiCerTtNyXjca//ppuGKsQd99jG7SqE9aDQ3sYCXatM53SXqhxS2nTew82bmzVmKXDxcIzVrS9f+2WmXIdY2cKo2I352yKWOIp1Nk0uji8ozLPHFQGvbAG8DGG1KNVcBl2qYUcttmCpN+iXEcGqyn/atUVJJMnZXGtp0fiL1rMLqAd/bb6TFNzZFSsS+zqGesxqLePe32vLCQ3xursP3BRZkrScM+JzIqevfP63INHJEZfYlUf4Ic+gfliS2yA1LwhU7hD4LSVXMQynlF9WeGjuv6ZYxmO8hC6IWCqWnIUqKUiGtvBSPXwsZo7wgljBr4ykJgBzS9MjZ0fzz1JKe80tH6clpjIOn6ReBPwQBq2zmDDrpa5GVqqqjXhRQuA0AfpHdhs5UKxs1PBr7/PTLA7PI39xkOAE/Zj1TYQ2dmqvpskshi7AtBStjinQBAlLXysLSHBtO+3+PLAYcMZMVfb0bVqfGGludO2prvXrrWWTku0eOsA5IRahrRdGhv5zhKgFV7cwUQ== ayakubov@MacBook-Pro-Alexey.local"
+		VMSSHPublicKey = VMSSHPublicKeyDefaultValue
 	}
 	if TestClusterNamespace == "" {
-		TestClusterNamespace = "e2e-test-cluster"
+		TestClusterNamespace = TestClusterNamespaceDefaultValue
 	}
 	if TestClusterStorageClass == "" {
-		TestClusterStorageClass = "rsc-test-r2-local"
-	}
-
-	if TestClusterCleanup == "" {
-		TestClusterCleanup = "false"
-	}
-
-	if TestClusterCleanup != "true" && TestClusterCleanup != "True" {
-		TestClusterCleanup = "false"
-	} else {
-		TestClusterCleanup = "true"
+		TestClusterStorageClass = TestClusterStorageClassDefaultValue
 	}
 
 	// There are no default values for these variables and they must be set! Otherwise, the test will fail.
