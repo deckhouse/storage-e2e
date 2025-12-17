@@ -12,14 +12,21 @@ clusterDefinition:
     - hostname: "worker-1"
       hostType: "vm"
       role: "worker"
-      osType: "Ubuntu 22.04 6.2.0-39-generic"
+      osType: "RedOS 8.0 6.6.26-1.red80.x86_64"
       cpu: 2
       ram: 6
       diskSize: 30
     - hostname: "worker-2"
       hostType: "vm"
       role: "worker"
-      osType: "Ubuntu 22.04 6.2.0-39-generic"
+      osType: "RedOS 7.3.6 5.15.78-2.el7.3.x86_64"
+      cpu: 2
+      ram: 6
+      diskSize: 30
+    - hostname: "worker-3"
+      hostType: "vm"
+      role: "worker"
+      osType: "Ubuntu 24.04 6.8.0-53-generic"
       cpu: 2
       ram: 6
       diskSize: 30

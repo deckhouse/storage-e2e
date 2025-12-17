@@ -126,7 +126,7 @@ func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePo
 	return stop, nil
 }
 
-// EstablishSSHTunnel establishes an SSH tunnel with port forwarding from the master node to the same port on the client
+// EstablishSSHTunnel establishes an SSH tunnel with port forwarding from remote node to local port on the client
 // It uses the exact port specified in remotePort and fails immediately if the port is busy
 // Returns the tunnel info, local port and error if the tunnel fails to start
 func EstablishSSHTunnel(ctx context.Context, sshClient SSHClient, remotePort string) (*TunnelInfo, error) {
@@ -137,6 +137,7 @@ func EstablishSSHTunnel(ctx context.Context, sshClient SSHClient, remotePort str
 	}
 
 	// Start the SSH tunnel with context
+	// --== NOTE! If sshClient was created with NewClientWithJumpHost, it already handles jump host routing ==--
 	stopFunc, err := sshClient.StartTunnel(ctx, remotePort, remotePort)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start SSH tunnel on port %d (port may be busy): %w", remotePortInt, err)

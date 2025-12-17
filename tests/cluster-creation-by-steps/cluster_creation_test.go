@@ -40,9 +40,11 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 	var (
 		err               error
 		sshclient         ssh.SSHClient
+		setupSSHClient    ssh.SSHClient
 		kubeconfig        *rest.Config
 		kubeconfigPath    string
 		tunnelinfo        *ssh.TunnelInfo
+		setupTunnelInfo   *ssh.TunnelInfo
 		clusterDefinition *config.ClusterDefinition
 		module            *deckhouse.Module
 		virtClient        *virtualization.Client
@@ -68,29 +70,51 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 
 		// DeferCleanup: Clean up all resources in reverse order of creation (it's a synonym for AfterAll)
 		DeferCleanup(func() {
-			// Step 1: Stop SSH tunnel (must be done before closing SSH client)
+			// Step 1: Stop setup SSH tunnel (must be done before closing SSH client)
+			if setupTunnelInfo != nil && setupTunnelInfo.StopFunc != nil {
+				GinkgoWriter.Printf("    ▶️ Stopping setup SSH tunnel on local port %d...\n", setupTunnelInfo.LocalPort)
+				err := setupTunnelInfo.StopFunc()
+				if err != nil {
+					GinkgoWriter.Printf("    ⚠️  Warning: Failed to stop setup SSH tunnel: %v\n", err)
+				} else {
+					GinkgoWriter.Printf("    ✅ Setup SSH tunnel stopped successfully\n")
+				}
+			}
+
+			// Step 2: Close setup SSH client connection
+			if setupSSHClient != nil {
+				GinkgoWriter.Printf("    ▶️ Closing setup SSH client connection...\n")
+				err := setupSSHClient.Close()
+				if err != nil {
+					GinkgoWriter.Printf("    ⚠️  Warning: Failed to close setup SSH client: %v\n", err)
+				} else {
+					GinkgoWriter.Printf("    ✅ Setup SSH client closed successfully\n")
+				}
+			}
+
+			// Step 3: Stop base cluster SSH tunnel (must be done before closing SSH client)
 			if tunnelinfo != nil && tunnelinfo.StopFunc != nil {
-				GinkgoWriter.Printf("    ▶️ Stopping SSH tunnel on local port %d...\n", tunnelinfo.LocalPort)
+				GinkgoWriter.Printf("    ▶️ Stopping base cluster SSH tunnel on local port %d...\n", tunnelinfo.LocalPort)
 				err := tunnelinfo.StopFunc()
 				if err != nil {
-					GinkgoWriter.Printf("    ⚠️  Warning: Failed to stop SSH tunnel: %v\n", err)
+					GinkgoWriter.Printf("    ⚠️  Warning: Failed to stop base cluster SSH tunnel: %v\n", err)
 				} else {
-					GinkgoWriter.Printf("    ✅ SSH tunnel stopped successfully\n")
+					GinkgoWriter.Printf("    ✅ Base cluster SSH tunnel stopped successfully\n")
 				}
 			}
 
-			// Step 2: Close SSH client connection
+			// Step 4: Close base cluster SSH client connection
 			if sshclient != nil {
-				GinkgoWriter.Printf("    ▶️ Closing SSH client connection...\n")
+				GinkgoWriter.Printf("    ▶️ Closing base cluster SSH client connection...\n")
 				err := sshclient.Close()
 				if err != nil {
-					GinkgoWriter.Printf("    ⚠️  Warning: Failed to close SSH client: %v\n", err)
+					GinkgoWriter.Printf("    ⚠️  Warning: Failed to close base cluster SSH client: %v\n", err)
 				} else {
-					GinkgoWriter.Printf("    ✅ SSH client closed successfully\n")
+					GinkgoWriter.Printf("    ✅ Base cluster SSH client closed successfully\n")
 				}
 			}
 
-			// Step 3: Cleanup test cluster VMs if enabled
+			// Step 5: Cleanup test cluster VMs if enabled
 			// Note: vmResources is set in the test below, so we capture it in the closure
 			vmRes := vmResources
 			if config.TestClusterCleanup == "true" || config.TestClusterCleanup == "True" {
@@ -214,6 +238,53 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 				GinkgoWriter.Printf("    ✅ VM %s is Running\n", vmName)
 			}
 			GinkgoWriter.Printf("    ✅ All VMs are Running\n")
+		})
+	})
+
+	It("should establish SSH connection to setup node through base cluster master", func() {
+		By("Stopping current SSH tunnel to base cluster", func() {
+			if tunnelinfo != nil && tunnelinfo.StopFunc != nil {
+				GinkgoWriter.Printf("    ▶️ Stopping SSH tunnel on local port %d...\n", tunnelinfo.LocalPort)
+				err := tunnelinfo.StopFunc()
+				Expect(err).NotTo(HaveOccurred())
+				GinkgoWriter.Printf("    ✅ SSH tunnel stopped successfully\n")
+				tunnelinfo = nil
+			}
+		})
+
+		By("Obtaining SSH client for setting up tunnel to setup-node through base cluster master", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			namespace := config.TestClusterNamespace
+			setupNode, _ := cluster.GetSetupNode(clusterDefinition)
+
+			// Get setup node IP address
+			setupNodeIP, err := cluster.GetVMIPAddress(ctx, virtClient, namespace, setupNode.Hostname)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(setupNodeIP).NotTo(BeEmpty())
+
+			// Create SSH client with jump host (base cluster master)
+			GinkgoWriter.Printf("    ▶️ Creating SSH client to %s@%s through jump host %s@%s\n",
+				config.VMSSHUser, setupNodeIP, config.SSHUser, config.SSHHost)
+			setupSSHClient, err = ssh.NewClientWithJumpHost(
+				config.SSHUser, config.SSHHost, config.SSHKeyPath, // jump host
+				config.VMSSHUser, setupNodeIP, config.SSHKeyPath, // target host
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(setupSSHClient).NotTo(BeNil())
+			GinkgoWriter.Printf("    ✅ SSH connection to setup node established successfully\n")
+		})
+
+		By("Establishing SSH tunnel with port forwarding from setup node", func() {
+			ctx := context.Background()
+			GinkgoWriter.Printf("    ▶️ Establishing SSH tunnel to setup node, forwarding port 6445\n")
+			// setupSSHClient already has jump host connection built in, so we can use EstablishSSHTunnel directly
+			setupTunnelInfo, err = ssh.EstablishSSHTunnel(ctx, setupSSHClient, "6445")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(setupTunnelInfo).NotTo(BeNil())
+			Expect(setupTunnelInfo.LocalPort).To(Equal(6445), "Local port should be exactly 6445")
+			GinkgoWriter.Printf("    ✅ SSH tunnel established on local port: %d\n", setupTunnelInfo.LocalPort)
 		})
 	})
 

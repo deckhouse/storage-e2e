@@ -333,6 +333,8 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 }
 
 // getCVMINameFromImageURL extracts a CVMI name from an image URL
+// The name must follow RFC 1123 subdomain rules: lowercase alphanumeric, hyphens, dots
+// Must start and end with alphanumeric character
 func getCVMINameFromImageURL(imageURL string) string {
 	// Extract filename from URL and use it as base name
 	parts := strings.Split(imageURL, "/")
@@ -340,9 +342,22 @@ func getCVMINameFromImageURL(imageURL string) string {
 	// Remove extension
 	name := strings.TrimSuffix(filename, ".img")
 	name = strings.TrimSuffix(name, ".qcow2")
-	// Make it Kubernetes-friendly (lowercase, replace dots with hyphens)
+	// Make it Kubernetes-friendly (lowercase, replace invalid characters)
 	name = strings.ToLower(name)
+	// Replace underscores and dots with hyphens (Kubernetes allows hyphens but not underscores)
+	name = strings.ReplaceAll(name, "_", "-")
 	name = strings.ReplaceAll(name, ".", "-")
+	// Remove any consecutive hyphens
+	for strings.Contains(name, "--") {
+		name = strings.ReplaceAll(name, "--", "-")
+	}
+	// Ensure it starts and ends with alphanumeric character (RFC 1123 requirement)
+	// Remove leading/trailing hyphens
+	name = strings.Trim(name, "-")
+	// If empty after trimming, use a default name
+	if name == "" {
+		name = "image"
+	}
 	return name
 }
 
@@ -447,4 +462,35 @@ func CleanupVMResources(ctx context.Context, resources *VMResources) error {
 	}
 
 	return nil
+}
+
+// GetSetupNode returns the setup node from cluster definition, or the first worker if setup is not set
+func GetSetupNode(clusterDef *config.ClusterDefinition) (*config.ClusterNode, error) {
+	// If setup node is explicitly set, return it
+	if clusterDef.Setup != nil {
+		return clusterDef.Setup, nil
+	}
+
+	// Otherwise, return the first worker
+	if len(clusterDef.Workers) == 0 {
+		return nil, fmt.Errorf("no setup node specified and no workers available")
+	}
+
+	return &clusterDef.Workers[0], nil
+}
+
+// GetVMIPAddress gets the IP address of a VM by querying its status
+// It waits for the VM to have an IP address assigned
+func GetVMIPAddress(ctx context.Context, virtClient *virtualization.Client, namespace, vmName string) (string, error) {
+	vm, err := virtClient.VirtualMachines().Get(ctx, namespace, vmName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get VM %s/%s: %w", namespace, vmName, err)
+	}
+
+	// Get IP from VM status.IPAddress field
+	if vm.Status.IPAddress == "" {
+		return "", fmt.Errorf("VM %s/%s does not have an IP address in status yet", namespace, vmName)
+	}
+
+	return vm.Status.IPAddress, nil
 }

@@ -23,6 +23,15 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// var _ = BeforeSuite(func() {
+// 	By("Validating environment variables", func() {
+// 		GinkgoWriter.Printf("    ▶️ Validating environment variables\n")
+// 		err := config.ValidateEnvironment()
+// 		Expect(err).NotTo(HaveOccurred())
+// 		GinkgoWriter.Printf("    ✅ Environment variables validated successfully\n")
+// 	})
+// })
+
 func TestIntegration(t *testing.T) {
 	RegisterFailHandler(Fail)
 	// Configure Ginkgo to show verbose output

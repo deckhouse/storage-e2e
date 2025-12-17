@@ -366,3 +366,267 @@ func NewClient(user, host, keyPath string) (SSHClient, error) {
 	var c client
 	return c.Create(user, host, keyPath)
 }
+
+// NewClientWithJumpHost creates a new SSH client that connects through a jump host
+// It first connects to the jump host, then establishes a connection to the target host through it
+func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHost, targetKeyPath string) (SSHClient, error) {
+	// Create SSH config for jump host
+	jumpConfig, err := createSSHConfig(jumpUser, jumpKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSH config for jump host: %w", err)
+	}
+
+	// Ensure jump host has port if not specified
+	jumpAddr := jumpHost
+	if !strings.Contains(jumpAddr, ":") {
+		jumpAddr = jumpAddr + ":22"
+	}
+
+	// Connect to jump host
+	jumpClient, err := ssh.Dial("tcp", jumpAddr, jumpConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to jump host %s@%s: %w", jumpUser, jumpAddr, err)
+	}
+
+	// Create SSH config for target host
+	targetConfig, err := createSSHConfig(targetUser, targetKeyPath)
+	if err != nil {
+		jumpClient.Close()
+		return nil, fmt.Errorf("failed to create SSH config for target host: %w", err)
+	}
+
+	// Ensure target host has port if not specified
+	targetAddr := targetHost
+	if !strings.Contains(targetAddr, ":") {
+		targetAddr = targetAddr + ":22"
+	}
+
+	// Connect to target host through jump host
+	targetConn, err := jumpClient.Dial("tcp", targetAddr)
+	if err != nil {
+		jumpClient.Close()
+		return nil, fmt.Errorf("failed to dial target host %s@%s through jump host: %w", targetUser, targetAddr, err)
+	}
+
+	// Establish SSH connection over the forwarded connection
+	targetClientConn, targetChans, targetReqs, err := ssh.NewClientConn(targetConn, targetAddr, targetConfig)
+	if err != nil {
+		jumpClient.Close()
+		return nil, fmt.Errorf("failed to establish SSH connection to target host: %w", err)
+	}
+
+	// Create SSH client for target host
+	targetClient := ssh.NewClient(targetClientConn, targetChans, targetReqs)
+
+	// Return a client that wraps both connections
+	// When closing, we need to close both connections
+	return &jumpHostClient{
+		jumpClient:   jumpClient,
+		targetClient: targetClient,
+	}, nil
+}
+
+// jumpHostClient wraps both jump host and target client connections
+type jumpHostClient struct {
+	jumpClient   *ssh.Client
+	targetClient *ssh.Client
+}
+
+// Create creates a new SSH client (not used for jump host client)
+func (c *jumpHostClient) Create(user, host, keyPath string) (SSHClient, error) {
+	return nil, fmt.Errorf("Create not supported for jump host client")
+}
+
+// StartTunnel starts an SSH tunnel with port forwarding from local to remote
+func (c *jumpHostClient) StartTunnel(ctx context.Context, localPort, remotePort string) (func() error, error) {
+	// Use the target client's StartTunnel method
+	// We need to access the underlying client's StartTunnel
+	// Since we can't directly call it, we'll implement it here
+	return startTunnelOnClient(ctx, c.targetClient, localPort, remotePort)
+}
+
+// startTunnelOnClient starts a tunnel on a raw ssh.Client
+func startTunnelOnClient(ctx context.Context, sshClient *ssh.Client, localPort, remotePort string) (func() error, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("context error before starting tunnel: %w", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:"+localPort)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on local port %s: %w", localPort, err)
+	}
+
+	stopChan := make(chan struct{})
+
+	go func() {
+		defer listener.Close()
+		for {
+			// Check context and stop channel
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopChan:
+				return
+			default:
+			}
+
+			// Set deadline for Accept based on context deadline if available
+			if deadline, ok := ctx.Deadline(); ok {
+				if tcpListener, ok := listener.(*net.TCPListener); ok {
+					if err := tcpListener.SetDeadline(deadline); err != nil {
+						// If setting deadline fails, continue without it
+					}
+				}
+			}
+
+			localConn, err := listener.Accept()
+			if err != nil {
+				// Listener closed or error occurred
+				select {
+				case <-ctx.Done():
+					return
+				case <-stopChan:
+					return
+				default:
+					// Continue if not stopped
+					continue
+				}
+			}
+
+			go func() {
+				defer localConn.Close()
+				remoteConn, err := sshClient.Dial("tcp", "127.0.0.1:"+remotePort)
+				if err != nil {
+					// Connection failed, just return - the error will be visible to the client
+					return
+				}
+				defer remoteConn.Close()
+
+				// Copy data bidirectionally with context support
+				done := make(chan struct{}, 2)
+				go func() {
+					_, _ = copyWithContext(ctx, localConn, remoteConn)
+					done <- struct{}{}
+				}()
+				go func() {
+					_, _ = copyWithContext(ctx, remoteConn, localConn)
+					done <- struct{}{}
+				}()
+
+				// Wait for either direction to finish or context cancellation
+				select {
+				case <-ctx.Done():
+					return
+				case <-done:
+					// One direction finished, wait for the other
+					select {
+					case <-ctx.Done():
+						return
+					case <-done:
+						// Both directions finished
+					}
+				}
+			}()
+		}
+	}()
+
+	stop := func() error {
+		close(stopChan)
+		return listener.Close()
+	}
+
+	return stop, nil
+}
+
+// Exec executes a command on the remote host
+func (c *jumpHostClient) Exec(ctx context.Context, cmd string) (string, error) {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("context error before execution: %w", err)
+	}
+
+	session, err := c.targetClient.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	defer session.Close()
+
+	output, err := session.CombinedOutput(cmd)
+	if err != nil {
+		// Check if context was cancelled during execution
+		if ctx.Err() != nil {
+			return string(output), fmt.Errorf("context cancelled: %w", ctx.Err())
+		}
+		return string(output), fmt.Errorf("command failed: %w", err)
+	}
+
+	// Check context after execution
+	if err := ctx.Err(); err != nil {
+		return string(output), fmt.Errorf("context cancelled: %w", err)
+	}
+
+	return string(output), nil
+}
+
+// ExecFatal executes a command and returns error if it fails
+func (c *jumpHostClient) ExecFatal(ctx context.Context, cmd string) string {
+	output, err := c.Exec(ctx, cmd)
+	if err != nil {
+		panic(fmt.Sprintf("ExecFatal failed for command '%s': %v\nOutput: %s", cmd, err, output))
+	}
+	return output
+}
+
+// Upload uploads a local file to the remote host
+func (c *jumpHostClient) Upload(ctx context.Context, localPath, remotePath string) error {
+	// Check context before starting
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context error before upload: %w", err)
+	}
+
+	sftpClient, err := sftp.NewClient(c.targetClient)
+	if err != nil {
+		return fmt.Errorf("failed to create SFTP client: %w", err)
+	}
+	defer sftpClient.Close()
+
+	localFile, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open local file %s: %w", localPath, err)
+	}
+	defer localFile.Close()
+
+	remoteFile, err := sftpClient.Create(remotePath)
+	if err != nil {
+		return fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
+	}
+	defer remoteFile.Close()
+
+	// Use context-aware copy
+	_, err = copyWithContext(ctx, remoteFile, localFile)
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %w", err)
+	}
+
+	return nil
+}
+
+// Close closes both SSH connections
+func (c *jumpHostClient) Close() error {
+	var errs []error
+	if c.targetClient != nil {
+		if err := c.targetClient.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if c.jumpClient != nil {
+		if err := c.jumpClient.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("errors closing connections: %v", errs)
+	}
+	return nil
+}

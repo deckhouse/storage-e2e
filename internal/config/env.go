@@ -98,13 +98,13 @@ func ValidateEnvironment() error {
 	}
 
 	if TestClusterCreateMode == "" {
-		return fmt.Errorf("CLUSTER_CREATE_MODE environment variable is required but not set. "+
+		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE environment variable is required but not set. "+
 			"Please set it to either '%s' or '%s'",
 			ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew)
 	}
 
 	if TestClusterCreateMode != ClusterCreateModeAlwaysUseExisting && TestClusterCreateMode != ClusterCreateModeAlwaysCreateNew {
-		return fmt.Errorf("CLUSTER_CREATE_MODE has invalid value '%s'. "+
+		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE has invalid value '%s'. "+
 			"Must be either '%s' or '%s'",
 			TestClusterCreateMode, ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew)
 	}
