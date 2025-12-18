@@ -25,7 +25,9 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -34,7 +36,10 @@ import (
 
 // client implements Client interface
 type client struct {
-	sshClient *ssh.Client
+	sshClient       *ssh.Client
+	keepaliveCtx    context.Context
+	keepaliveCancel context.CancelFunc
+	keepaliveWg     sync.WaitGroup
 }
 
 // copyWithContext copies data from src to dst with context cancellation support
@@ -181,7 +186,45 @@ func (c *client) Create(user, host, keyPath string) (SSHClient, error) {
 		return nil, fmt.Errorf("failed to connect to %s@%s: %w", user, addr, err)
 	}
 
-	return &client{sshClient: sshClient}, nil
+	// Start keepalive mechanism (equivalent to ServerAliveInterval=60)
+	keepaliveCtx, keepaliveCancel := context.WithCancel(context.Background())
+	newClient := &client{
+		sshClient:       sshClient,
+		keepaliveCtx:    keepaliveCtx,
+		keepaliveCancel: keepaliveCancel,
+	}
+	newClient.startKeepalive()
+
+	return newClient, nil
+}
+
+// startKeepalive starts a goroutine that sends keepalive requests every 60 seconds
+// This prevents SSH connections from timing out due to inactivity.
+// Note: golang.org/x/crypto/ssh doesn't have a built-in keepalive parameter,
+// so we implement it manually using SendRequest with "keepalive@openssh.com"
+// (equivalent to ServerAliveInterval=60 in SSH config)
+func (c *client) startKeepalive() {
+	c.keepaliveWg.Add(1)
+	go func() {
+		defer c.keepaliveWg.Done()
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-c.keepaliveCtx.Done():
+				return
+			case <-ticker.C:
+				// Send keepalive request using standard OpenSSH keepalive request type
+				// This is equivalent to ServerAliveInterval in SSH config
+				_, _, err := c.sshClient.SendRequest("keepalive@openssh.com", true, nil)
+				if err != nil {
+					// Connection is closed, stop sending keepalives
+					return
+				}
+			}
+		}
+	}()
 }
 
 // StartTunnel starts an SSH tunnel with port forwarding from local to remote
@@ -355,6 +398,11 @@ func (c *client) Upload(ctx context.Context, localPath, remotePath string) error
 
 // Close closes the SSH connection
 func (c *client) Close() error {
+	// Stop keepalive goroutine
+	if c.keepaliveCancel != nil {
+		c.keepaliveCancel()
+		c.keepaliveWg.Wait()
+	}
 	if c.sshClient != nil {
 		return c.sshClient.Close()
 	}

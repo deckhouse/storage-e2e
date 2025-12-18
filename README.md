@@ -9,14 +9,19 @@ High-level test that creates a complete test cluster from a YAML configuration f
 
 ### cluster-creation-by-steps
 Step-by-step test that creates a test cluster incrementally, validating each stage:
-1. Environment validation
-2. Cluster configuration loading
-3. SSH connection establishment
-4. Kubeconfig retrieval
-5. SSH tunnel setup
-6. Virtualization module readiness check
-7. Namespace creation
-8. Virtual machine creation and provisioning
+
+1. Environment validation - Validates required environment variables are set
+2. Cluster configuration loading - Loads and parses cluster definition from YAML file
+3. SSH connection establishment to base cluster - Connects to base cluster via SSH
+4. Kubeconfig retrieval from base cluster - Fetches kubeconfig file from base cluster
+5. SSH tunnel setup with port forwarding - Establishes tunnel to access Kubernetes API
+6. Virtualization module readiness check - Verifies virtualization module is Ready
+7. Test namespace creation - Creates test namespace if it doesn't exist
+8. Virtual machine creation and provisioning - Creates VMs and waits for them to become Running
+9. SSH connection establishment to setup node (through base cluster master) - Connects to setup node via jump host
+10. Docker installation on setup node - Installs Docker (required for DKP bootstrap)
+11. Bootstrap configuration preparation - Prepares bootstrap config from template with cluster-specific values
+12. Bootstrap files upload (private key and config.yml) to setup node - Uploads files needed for DKP bootstrap
 
 ## Environment Variables
 
@@ -26,7 +31,9 @@ Step-by-step test that creates a test cluster incrementally, validating each sta
   - `alwaysUseExisting` - Use existing cluster
   - `alwaysCreateNew` - Create new cluster
 
-- **`DKP_LICENSE_KEY`** - DKP license key for cluster deployment
+- **`DKP_LICENSE_KEY`** - DKP license key for cluster deployment (see license token at license.deckhouse.io)
+
+- **`REGISTRY_DOCKER_CFG`** - dockerRegistryCfg for downloading images from Deckhouse registry (see license.deckhouse.io)
 
 ### Optional (with defaults)
 
@@ -46,12 +53,29 @@ Step-by-step test that creates a test cluster incrementally, validating each sta
 
 - **`KUBE_CONFIG_PATH`** - Fallback path to kubeconfig file if SSH retrieval fails (no default)
 
+## Configuration Parameters
+
+These are code-level configuration constants defined in `internal/config/config.go`:
+
+- **`DefaultSetupVM`** - Default configuration for the setup/bootstrap VM node:
+  - Hostname prefix: `bootstrap-node-`
+  - Host type: VM
+  - Role: setup
+  - OS Type: Ubuntu 22.04 6.2.0-39-generic
+  - CPU: 2 cores
+  - RAM: 4 GB
+  - Disk size: 20 GB
+
+- **`VMsRunningTimeout`** - Timeout for waiting for all VMs to become Running state (default: `20 minutes`)
+
+**Note:** When running tests, use `-timeout` flag that is longer than `VMsRunningTimeout` to allow enough time for VM provisioning. For example, use `-timeout=25m` or `-timeout=60m` to ensure the test doesn't timeout prematurely.
+
 ## Running Tests
 
 ### Run all tests in a test suite
 
 ```bash
-go test -v ./tests/cluster-creation-by-steps -count=1
+go test -timeout=60m -v ./tests/cluster-creation-by-steps -count=1
 ```
 
 The `-count=1` flag prevents Go from using cached test results.
@@ -59,7 +83,7 @@ The `-count=1` flag prevents Go from using cached test results.
 ### Run a specific test
 
 ```bash
-go test -v ./tests/cluster-creation-by-steps -count=1 -ginkgo.focus="should create virtual machines"
+go test -timeout=60m -v ./tests/cluster-creation-by-steps -count=1 -ginkgo.focus="should create virtual machines"
 ```
 
 ### Example with environment variables
@@ -67,8 +91,9 @@ go test -v ./tests/cluster-creation-by-steps -count=1 -ginkgo.focus="should crea
 ```bash
 export TEST_CLUSTER_CREATE_MODE='alwaysCreateNew'
 export DKP_LICENSE_KEY='your-license-key'
+export REGISTRY_DOCKER_CFG='base64-encoded-docker-config-json'
 export SSH_PASSPHRASE='your-passphrase'
 export TEST_CLUSTER_CLEANUP='true'
 
-go test -v ./tests/cluster-creation-by-steps -count=1
+go test -timeout=60m -v ./tests/cluster-creation-by-steps -count=1
 ```

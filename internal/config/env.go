@@ -65,19 +65,8 @@ var (
 	// DKPLicenseKey specifies the DKP license key for cluster deployment
 	DKPLicenseKey = os.Getenv("DKP_LICENSE_KEY")
 
-	// CONFIGURATION VARIABLES DEFINITIONS
-
-	// DefaultSetupVM is the default VM configuration of the node that is used for bootstrap of test cluster.
-	// This VM is always created separately and should be deleted after cluster bootstrap.
-	DefaultSetupVM = ClusterNode{
-		Hostname: "bootstrap-node-",
-		HostType: HostTypeVM,
-		Role:     ClusterRoleSetup,
-		OSType:   OSTypeMap["Ubuntu 22.04 6.2.0-39-generic"],
-		CPU:      2,
-		RAM:      4,
-		DiskSize: 20,
-	}
+	// RegistryDockerCfg specifies the docker registry key to download images from Deckhouse registry.
+	RegistryDockerCfg = os.Getenv("REGISTRY_DOCKER_CFG")
 )
 
 func ValidateEnvironment() error {
@@ -115,6 +104,10 @@ func ValidateEnvironment() error {
 	// There are no default values for these variables and they must be set! Otherwise, the test will fail.
 	if DKPLicenseKey == "" {
 		return fmt.Errorf("DKP_LICENSE_KEY environment variable is required but not set. ")
+	}
+
+	if RegistryDockerCfg == "" {
+		return fmt.Errorf("REGISTRY_DOCKER_CFG environment variable is required but not set.")
 	}
 
 	if TestClusterCreateMode == "" {

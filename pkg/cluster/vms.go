@@ -36,8 +36,8 @@ type VMResources struct {
 	VirtClient  *virtualization.Client
 	Namespace   string
 	VMNames     []string
-	CVMINames   []string
-	SetupVMName string // Name of the setup VM (always created)
+	CVMINames   []string // ClusterVirtualImage names (cluster-scoped)
+	SetupVMName string   // Name of the setup VM (always created)
 }
 
 // CreateVirtualMachines creates virtual machines from cluster definition.
@@ -415,62 +415,19 @@ runcmd:
 `, sshPubKey, hostname)
 }
 
-// CleanupVMResources forcefully stops and deletes virtual machines, virtual disks, and cluster virtual images.
-// If a ClusterVirtualImage is in use by other resources, it will be skipped but VMs and VDs will still be deleted.
-func CleanupVMResources(ctx context.Context, resources *VMResources) error {
+// RemoveAllVMs forcefully stops and deletes virtual machines, virtual disks, and virtual images.
+// If a VirtualImage is in use by other resources, it will be skipped but VMs and VDs will still be deleted.
+func RemoveAllVMs(ctx context.Context, resources *VMResources) error {
 	if resources == nil {
 		return fmt.Errorf("resources cannot be nil")
 	}
 
-	// Step 1: Forcefully stop and delete Virtual Machines
+	// Delete all VMs using RemoveVM
 	for _, vmName := range resources.VMNames {
-		// Try to stop the VM by updating RunPolicy to Manual or by deleting directly
-		// Deletion will stop the VM automatically
-		err := resources.VirtClient.VirtualMachines().Delete(ctx, resources.Namespace, vmName)
-		if err != nil && !errors.IsNotFound(err) {
-			// Log but continue - we'll try to clean up other resources
-			fmt.Printf("Warning: Failed to delete VM %s/%s: %v\n", resources.Namespace, vmName, err)
-		}
-	}
-
-	// Step 2: Delete Virtual Disks
-	// Delete system disks for our VMs
-	for _, vmName := range resources.VMNames {
-		systemDiskName := fmt.Sprintf("%s-system", vmName)
-		err := resources.VirtClient.VirtualDisks().Delete(ctx, resources.Namespace, systemDiskName)
-		if err != nil && !errors.IsNotFound(err) {
-			fmt.Printf("Warning: Failed to delete VirtualDisk %s/%s: %v\n", resources.Namespace, systemDiskName, err)
-		}
-	}
-
-	// Step 3: Check which ClusterVirtualImages are in use and delete those that aren't
-	// Get all VirtualDisks across all namespaces to check for CVMI usage
-	allVDisksAllNS, err := resources.VirtClient.VirtualDisks().List(ctx, "")
-	if err != nil {
-		fmt.Printf("Warning: Failed to list VirtualDisks across all namespaces: %v\n", err)
-		allVDisksAllNS = []v1alpha2.VirtualDisk{}
-	}
-
-	// Build a map of CVMI names that are in use
-	cvmiInUse := make(map[string]bool)
-	for _, vd := range allVDisksAllNS {
-		if vd.Spec.DataSource != nil && vd.Spec.DataSource.ObjectRef != nil {
-			if vd.Spec.DataSource.ObjectRef.Kind == "ClusterVirtualImage" {
-				cvmiInUse[vd.Spec.DataSource.ObjectRef.Name] = true
-			}
-		}
-	}
-
-	// Delete ClusterVirtualImages that are not in use
-	for _, cvmiName := range resources.CVMINames {
-		if cvmiInUse[cvmiName] {
-			fmt.Printf("Skipping deletion of ClusterVirtualImage %s: still in use by other resources\n", cvmiName)
-			continue
-		}
-
-		err := resources.VirtClient.ClusterVirtualImages().Delete(ctx, cvmiName)
-		if err != nil && !errors.IsNotFound(err) {
-			fmt.Printf("Warning: Failed to delete ClusterVirtualImage %s: %v\n", cvmiName, err)
+		err := RemoveVM(ctx, resources.VirtClient, resources.Namespace, vmName)
+		if err != nil {
+			// Log but continue - we'll try to clean up other VMs
+			fmt.Printf("Warning: Failed to remove VM %s/%s: %v\n", resources.Namespace, vmName, err)
 		}
 	}
 
@@ -505,8 +462,153 @@ func GetVMIPAddress(ctx context.Context, virtClient *virtualization.Client, name
 	return vm.Status.IPAddress, nil
 }
 
+// RemoveVM removes a VM and its associated VirtualDisks, then removes the ClusterVirtualImage if not used by other VMs.
+// It removes resources in order: VM -> VirtualDisks -> ClusterVirtualImage (if unused).
+func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace, vmName string) error {
+	// Step 1: Get VM to find associated VirtualDisks
+	vm, err := virtClient.VirtualMachines().Get(ctx, namespace, vmName)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// VM doesn't exist, nothing to clean up
+			return nil
+		}
+		return fmt.Errorf("failed to get VM %s/%s: %w", namespace, vmName, err)
+	}
+
+	// Collect VirtualDisk names from VM's BlockDeviceRefs
+	vdNames := make([]string, 0)
+	for _, bdRef := range vm.Spec.BlockDeviceRefs {
+		if bdRef.Kind == v1alpha2.DiskDevice {
+			vdNames = append(vdNames, bdRef.Name)
+		}
+	}
+
+	// Step 2: Collect ClusterVirtualImage names from VirtualDisks before deleting them
+	cvmiNamesSet := make(map[string]bool)
+	for _, vdName := range vdNames {
+		vd, err := virtClient.VirtualDisks().Get(ctx, namespace, vdName)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				continue // Already deleted
+			}
+			// Log but continue
+			fmt.Printf("Warning: Failed to get VirtualDisk %s/%s: %v\n", namespace, vdName, err)
+			continue
+		}
+
+		if vd.Spec.DataSource != nil && vd.Spec.DataSource.ObjectRef != nil {
+			if vd.Spec.DataSource.ObjectRef.Kind == "ClusterVirtualImage" {
+				cvmiNamesSet[vd.Spec.DataSource.ObjectRef.Name] = true
+			}
+		}
+	}
+
+	// Step 3: Delete the VM
+	err = virtClient.VirtualMachines().Delete(ctx, namespace, vmName)
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete VM %s/%s: %w", namespace, vmName, err)
+	}
+
+	// Step 3.5: Wait for VM to be fully deleted before deleting VirtualDisks
+	// Kubernetes deletion is asynchronous, so we need to wait until the VM is gone
+	for {
+		_, err := virtClient.VirtualMachines().Get(ctx, namespace, vmName)
+		if errors.IsNotFound(err) {
+			// VirtualMachine is fully deleted
+			break
+		}
+		if err != nil {
+			// Some other error occurred, log and break to avoid infinite loop
+			fmt.Printf("Warning: Error checking if VirtualMachine %s/%s is deleted: %v\n", namespace, vmName, err)
+			break
+		}
+		// Wait a bit before checking again
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for VM %s/%s to be deleted: %w", namespace, vmName, ctx.Err())
+		case <-time.After(5 * time.Second):
+			// Continue polling
+		}
+	}
+
+	// Step 4: Delete all VirtualDisks associated with this VM
+	deletedVDNames := make(map[string]bool)
+	for _, vdName := range vdNames {
+		err := virtClient.VirtualDisks().Delete(ctx, namespace, vdName)
+		if err != nil && !errors.IsNotFound(err) {
+			fmt.Printf("Warning: Failed to delete VirtualDisk %s/%s: %v\n", namespace, vdName, err)
+		} else {
+			deletedVDNames[vdName] = true
+		}
+	}
+
+	// Step 4.5: Wait for all VirtualDisks to be fully deleted before checking ClusterVirtualImage usage
+	// Poll until all VirtualDisks we deleted are no longer present
+	for len(deletedVDNames) > 0 {
+		allDeleted := true
+		for vdName := range deletedVDNames {
+			_, err := virtClient.VirtualDisks().Get(ctx, namespace, vdName)
+			if errors.IsNotFound(err) {
+				// VirtualDisk is fully deleted, remove from tracking
+				delete(deletedVDNames, vdName)
+			} else if err != nil {
+				// Some other error occurred, log and remove from tracking to avoid infinite loop
+				fmt.Printf("Warning: Error checking if VirtualDisk %s/%s is deleted: %v\n", namespace, vdName, err)
+				delete(deletedVDNames, vdName)
+			} else {
+				// VirtualDisk still exists
+				allDeleted = false
+			}
+		}
+		if allDeleted {
+			break
+		}
+		// Wait a bit before checking again
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for VirtualDisks to be deleted: %w", ctx.Err())
+		case <-time.After(5 * time.Second):
+			// Continue polling
+		}
+	}
+
+	// Step 5: Check if ClusterVirtualImages are still in use by other VirtualDisks in the namespace and delete if not
+	// Note: Since CVMI is cluster-scoped, it could be used by VDs in other namespaces too,
+	// but for simplicity we only check within the current namespace
+	allVDs, err := virtClient.VirtualDisks().List(ctx, namespace)
+	if err != nil {
+		fmt.Printf("Warning: Failed to list VirtualDisks to check ClusterVirtualImage usage: %v\n", err)
+		allVDs = []v1alpha2.VirtualDisk{}
+	}
+
+	// Build map of ClusterVirtualImages that are still in use
+	cvmiInUse := make(map[string]bool)
+	for _, vd := range allVDs {
+		if vd.Spec.DataSource != nil && vd.Spec.DataSource.ObjectRef != nil {
+			if vd.Spec.DataSource.ObjectRef.Kind == "ClusterVirtualImage" {
+				cvmiInUse[vd.Spec.DataSource.ObjectRef.Name] = true
+			}
+		}
+	}
+
+	// Delete ClusterVirtualImages that are not in use (cluster-scoped, no namespace)
+	for cvmiName := range cvmiNamesSet {
+		if cvmiInUse[cvmiName] {
+			continue // Still in use, skip deletion
+		}
+
+		err := virtClient.ClusterVirtualImages().Delete(ctx, cvmiName)
+		if err != nil && !errors.IsNotFound(err) {
+			fmt.Printf("Warning: Failed to delete ClusterVirtualImage %s: %v\n", cvmiName, err)
+		}
+	}
+
+	return nil
+}
+
 // CleanupSetupVM deletes the setup VM and its associated resources.
 // This should be called after the test cluster bootstrap is complete.
+// Deprecated: Use RemoveVM instead.
 func CleanupSetupVM(ctx context.Context, resources *VMResources) error {
 	if resources == nil {
 		return fmt.Errorf("resources cannot be nil")
@@ -515,18 +617,5 @@ func CleanupSetupVM(ctx context.Context, resources *VMResources) error {
 	namespace := resources.Namespace
 	setupVMName := resources.SetupVMName
 
-	// Step 1: Delete the setup VM
-	err := resources.VirtClient.VirtualMachines().Delete(ctx, namespace, setupVMName)
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete setup VM %s/%s: %w", namespace, setupVMName, err)
-	}
-
-	// Step 2: Delete the setup VM's system disk
-	systemDiskName := fmt.Sprintf("%s-system", setupVMName)
-	err = resources.VirtClient.VirtualDisks().Delete(ctx, namespace, systemDiskName)
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete setup VM system disk %s/%s: %w", namespace, systemDiskName, err)
-	}
-
-	return nil
+	return RemoveVM(ctx, resources.VirtClient, namespace, setupVMName)
 }

@@ -19,6 +19,9 @@ package integration
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/rest"
@@ -48,6 +51,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		module            *deckhouse.Module
 		virtClient        *virtualization.Client
 		vmResources       *cluster.VMResources
+		bootstrapConfig   string
 	)
 
 	BeforeAll(func() {
@@ -69,7 +73,36 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 
 		// DeferCleanup: Clean up all resources in reverse order of creation (it's a synonym for AfterAll)
 		DeferCleanup(func() {
-			// Step 1: Close setup SSH client connection
+			// Step 1: Cleanup setup VM (needs API access via SSH tunnel)
+			vmRes := vmResources
+			if vmRes != nil && vmRes.SetupVMName != "" {
+				GinkgoWriter.Printf("    ▶️ Removing setup VM %s...\n", vmRes.SetupVMName)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				err := cluster.RemoveVM(ctx, vmRes.VirtClient, vmRes.Namespace, vmRes.SetupVMName)
+				if err != nil {
+					GinkgoWriter.Printf("    ⚠️  Warning: Failed to remove setup VM: %v\n", err)
+				} else {
+					GinkgoWriter.Printf("    ✅ Setup VM removed successfully\n")
+				}
+			}
+
+			// Step 2: Cleanup test cluster VMs if enabled
+			if config.TestClusterCleanup == "true" || config.TestClusterCleanup == "True" {
+				if vmRes != nil {
+					GinkgoWriter.Printf("    ▶️ Cleaning up test cluster VMs...\n")
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+					defer cancel()
+					err := cluster.RemoveAllVMs(ctx, vmRes)
+					if err != nil {
+						GinkgoWriter.Printf("    ⚠️  Warning: Failed to cleanup test cluster VMs: %v\n", err)
+					} else {
+						GinkgoWriter.Printf("    ✅ Test cluster VMs cleaned up successfully\n")
+					}
+				}
+			}
+
+			// Step 3: Close setup SSH client connection (no longer needed after VM cleanup)
 			if setupSSHClient != nil {
 				GinkgoWriter.Printf("    ▶️ Closing setup SSH client connection...\n")
 				err := setupSSHClient.Close()
@@ -80,7 +113,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 				}
 			}
 
-			// Step 2: Stop base cluster SSH tunnel (must be done before closing SSH client)
+			// Step 4: Stop base cluster SSH tunnel (must be done before closing SSH client)
 			if tunnelinfo != nil && tunnelinfo.StopFunc != nil {
 				GinkgoWriter.Printf("    ▶️ Stopping base cluster SSH tunnel on local port %d...\n", tunnelinfo.LocalPort)
 				err := tunnelinfo.StopFunc()
@@ -91,7 +124,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 				}
 			}
 
-			// Step 3: Close base cluster SSH client connection
+			// Step 5: Close base cluster SSH client connection
 			if sshclient != nil {
 				GinkgoWriter.Printf("    ▶️ Closing base cluster SSH client connection...\n")
 				err := sshclient.Close()
@@ -101,31 +134,11 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 					GinkgoWriter.Printf("    ✅ Base cluster SSH client closed successfully\n")
 				}
 			}
-
-			// Step 4: Cleanup test cluster VMs if enabled
-			// Note: vmResources is set in the test below, so we capture it in the closure
-			vmRes := vmResources
-			if config.TestClusterCleanup == "true" || config.TestClusterCleanup == "True" {
-				if vmRes != nil {
-					GinkgoWriter.Printf("    ▶️ Cleaning up test cluster VMs...\n")
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-					defer cancel()
-					err := cluster.CleanupVMResources(ctx, vmRes)
-					if err != nil {
-						GinkgoWriter.Printf("    ⚠️  Warning: Failed to cleanup test cluster VMs: %v\n", err)
-					} else {
-						GinkgoWriter.Printf("    ✅ Test cluster VMs cleaned up successfully\n")
-					}
-				}
-			}
-
-			// Note: kubeconfig and kubeconfigPath are just config/file paths, no cleanup needed
-			// The kubeconfig file is stored in temp/ directory and can be kept for debugging
 		})
 
 	}) // BeforeAll
 
-	// Stage 2: Establish SSH connection to base cluster (reused for getting kubeconfig)
+	// Step 3: Establish SSH connection to base cluster (reused for getting kubeconfig)
 	It("should establish ssh connection to the base cluster", func() {
 		By(fmt.Sprintf("Connecting to %s@%s using key %s", config.SSHUser, config.SSHHost, config.SSHKeyPath), func() {
 			GinkgoWriter.Printf("    ▶️ Creating SSH client for %s@%s\n", config.SSHUser, config.SSHHost)
@@ -135,8 +148,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		})
 	})
 
-	// Stage 3: Getting kubeconfig from base cluster (reusing SSH connection to avoid double passphrase prompt)
-
+	// Step 4: Getting kubeconfig from base cluster (reusing SSH connection to avoid double passphrase prompt)
 	It("should get kubeconfig from the base cluster", func() {
 		By("Retrieving kubeconfig from base cluster", func() {
 			GinkgoWriter.Printf("    ▶️ Fetching kubeconfig from %s\n", config.SSHHost)
@@ -148,8 +160,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		})
 	})
 
-	// Stage 4: Establish SSH tunnel with port forwarding
-
+	// Step 5: Establish SSH tunnel with port forwarding to access Kubernetes API
 	It("should establish ssh tunnel to the base cluster with port forwarding", func() {
 		By("Setting up SSH tunnel with port forwarding", func() {
 			GinkgoWriter.Printf("    ▶️ Establishing SSH tunnel to %s, forwarding port 6445\n", config.SSHHost)
@@ -163,6 +174,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		})
 	})
 
+	// Step 6: Verify virtualization module is Ready before creating VMs
 	It("should make sure that virtualization module is Ready", func() {
 		By("Checking if virtualization module is Ready", func() {
 			GinkgoWriter.Printf("    ▶️ Getting module with timeout\n")
@@ -176,6 +188,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		})
 	})
 
+	// Step 7: Create test namespace if it doesn't exist
 	It("should ensure test namespace exists", func() {
 		By("Checking and creating test namespace if needed", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -191,6 +204,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		})
 	})
 
+	// Step 8: Create virtual machines and wait for them to become Running
 	It("should create virtual machines from cluster definition", func() {
 		By("Creating virtual machines", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
@@ -212,23 +226,33 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create virtual machines")
 			GinkgoWriter.Printf("    ✅ Created %d virtual machines: %v\n", len(vmNames), vmNames)
 
-			// Wait for all VMs to become Running
-			GinkgoWriter.Printf("    ▶️ Waiting for VMs to become Running (timeout: 10 minutes)\n")
-			for _, vmName := range vmNames {
-				Eventually(func() (v1alpha2.MachinePhase, error) {
+			GinkgoWriter.Printf("    ▶️ Waiting for all %d VMs to become Running (total timeout: %v)\n", len(vmNames), config.VMsRunningTimeout)
+			loggedRunning := make(map[string]bool)
+			Eventually(func() (bool, error) {
+				allRunning := true
+				for _, vmName := range vmNames {
 					vm, err := virtClient.VirtualMachines().Get(ctx, namespace, vmName)
 					if err != nil {
-						return "", err
+						return false, fmt.Errorf("failed to get VM %s: %w", vmName, err)
 					}
-					return vm.Status.Phase, nil
-				}).WithTimeout(10*time.Minute).WithPolling(10*time.Second).Should(Equal(v1alpha2.MachineRunning),
-					"VM %s should become Running within 10 minutes", vmName)
-				GinkgoWriter.Printf("    ✅ VM %s is Running\n", vmName)
-			}
-			GinkgoWriter.Printf("    ✅ All VMs are Running\n")
+					if vm.Status.Phase == v1alpha2.MachineRunning {
+						if !loggedRunning[vmName] {
+							GinkgoWriter.Printf("    ✅ VM %s is Running\n", vmName)
+							loggedRunning[vmName] = true
+						}
+					} else {
+						allRunning = false
+					}
+				}
+				return allRunning, nil
+			}).WithTimeout(config.VMsRunningTimeout).WithPolling(20*time.Second).Should(BeTrue(),
+				"All VMs should become Running within %v", config.VMsRunningTimeout)
+
+			GinkgoWriter.Printf("    ✅ All %d VMs are Running\n", len(vmNames))
 		})
 	})
 
+	// Step 9: Establish SSH connection to setup node through base cluster master (jump host)
 	It("should establish SSH connection to setup node through base cluster master", func() {
 		By("Stopping current SSH tunnel to base cluster", func() {
 			if tunnelinfo != nil && tunnelinfo.StopFunc != nil {
@@ -266,6 +290,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		})
 	})
 
+	// Step 10: Install Docker on setup node (required for DKP bootstrap)
 	It("should ensure Docker is installed on the setup node", func() {
 		By("Installing Docker on setup node", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -278,4 +303,62 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		})
 	})
 
+	// Step 11: Prepare bootstrap configuration file from template with cluster-specific values
+	It("should prepare bootstrap config for the setup node", func() {
+		By("Preparing bootstrap config for the setup node", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+
+			namespace := config.TestClusterNamespace
+
+			// Get IPs for all VMs (masters, workers, and setup node)
+			var vmIPs []string
+			allVMNames := append([]string{}, vmResources.VMNames...)
+			allVMNames = append(allVMNames, vmResources.SetupVMName)
+
+			GinkgoWriter.Printf("    ▶️ Getting IP addresses for all VMs\n")
+			for _, vmName := range allVMNames {
+				vmIP, err := cluster.GetVMIPAddress(ctx, virtClient, namespace, vmName)
+				Expect(err).NotTo(HaveOccurred(), "Failed to get IP address for VM %s", vmName)
+				Expect(vmIP).NotTo(BeEmpty(), "VM %s IP address should not be empty", vmName)
+				vmIPs = append(vmIPs, vmIP)
+				GinkgoWriter.Printf("    ✅ VM %s has IP: %s\n", vmName, vmIP)
+			}
+
+			firstMasterHostname := clusterDefinition.Masters[0].Hostname
+			masterIP, err := cluster.GetVMIPAddress(ctx, virtClient, namespace, firstMasterHostname)
+			Expect(err).NotTo(HaveOccurred(), "Failed to get IP address for master node %s", firstMasterHostname)
+			Expect(masterIP).NotTo(BeEmpty(), "Master node %s IP address should not be empty", firstMasterHostname)
+			GinkgoWriter.Printf("    ✅ Master node %s has IP: %s\n", firstMasterHostname, masterIP)
+
+			GinkgoWriter.Printf("    ▶️ Preparing bootstrap config for the setup node\n")
+			bootstrapConfig, err = cluster.PrepareBootstrapConfig(clusterDefinition, masterIP, vmIPs)
+			Expect(err).NotTo(HaveOccurred(), "Failed to prepare bootstrap config for the setup node")
+			GinkgoWriter.Printf("    ✅ Bootstrap config prepared successfully at: %s\n", bootstrapConfig)
+		})
+	})
+
+	// Step 12: Upload private key and config.yml to setup node for DKP bootstrap
+	It("should upload bootstrap files to the setup node", func() {
+		By("Uploading private key and config.yml to setup node", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+
+			// Expand SSH key path to handle ~
+			keyPath := config.SSHKeyPath
+			if strings.HasPrefix(keyPath, "~") {
+				homeDir, err := os.UserHomeDir()
+				Expect(err).NotTo(HaveOccurred())
+				keyPath = filepath.Join(homeDir, strings.TrimPrefix(keyPath, "~/"))
+			}
+
+			GinkgoWriter.Printf("    ▶️ Uploading bootstrap files to setup node\n")
+			GinkgoWriter.Printf("    📁 Private key: %s -> /home/cloud/.ssh/id_rsa\n", keyPath)
+			GinkgoWriter.Printf("    📁 Config file: %s -> /home/cloud/config.yml\n", bootstrapConfig)
+
+			err := cluster.UploadBootstrapFiles(ctx, setupSSHClient, keyPath, bootstrapConfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to upload bootstrap files to setup node")
+			GinkgoWriter.Printf("    ✅ Bootstrap files uploaded successfully\n")
+		})
+	})
 }) // Describe: Cluster Creation

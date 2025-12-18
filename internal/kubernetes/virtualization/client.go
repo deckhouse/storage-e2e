@@ -63,6 +63,11 @@ func (c *Client) ClusterVirtualImages() ClusterVirtualImageClient {
 	return &clusterVirtualImageClient{client: c.client}
 }
 
+// VirtualImages returns a VirtualImage client
+func (c *Client) VirtualImages() VirtualImageClient {
+	return &virtualImageClient{client: c.client}
+}
+
 // VirtualMachineBlockDeviceAttachments returns a VMBD client
 func (c *Client) VirtualMachineBlockDeviceAttachments() VMBDClient {
 	return &vmbdClient{client: c.client}
