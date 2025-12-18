@@ -6,6 +6,7 @@ clusterDefinition:
       role: "master"
       osType: "Ubuntu 22.04 6.2.0-39-generic"
       cpu: 4
+      coreFraction: 50
       ram: 8
       diskSize: 30
   workers: # Worker nodes configuration // TODO implement logic allowing to deploy different number of workes and masters with the same config.
@@ -14,6 +15,7 @@ clusterDefinition:
       role: "worker"
       osType: "RedOS 8.0 6.6.26-1.red80.x86_64"
       cpu: 2
+      coreFraction: 50
       ram: 6
       diskSize: 30
     - hostname: "worker-2"
@@ -21,6 +23,7 @@ clusterDefinition:
       role: "worker"
       osType: "RedOS 7.3.6 5.15.78-2.el7.3.x86_64"
       cpu: 2
+      coreFraction: 50
       ram: 6
       diskSize: 30
     - hostname: "worker-3"
@@ -28,6 +31,7 @@ clusterDefinition:
       role: "worker"
       osType: "Ubuntu 24.04 6.8.0-53-generic"
       cpu: 2
+      coreFraction: 50
       ram: 6
       diskSize: 30
   # DKP parameters

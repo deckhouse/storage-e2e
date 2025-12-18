@@ -26,6 +26,8 @@ import (
 	"strings"
 	"text/template"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 )
@@ -316,6 +318,149 @@ func UploadBootstrapFiles(ctx context.Context, sshClient ssh.SSHClient, privateK
 	remoteConfigPath := "/home/cloud/config.yml"
 	if err := sshClient.Upload(ctx, configPath, remoteConfigPath); err != nil {
 		return fmt.Errorf("failed to upload config.yml to %s: %w", remoteConfigPath, err)
+	}
+
+	return nil
+}
+
+// getDevBranchFromConfig reads the devBranch value from the bootstrap config.yml file.
+// It parses the YAML and extracts the devBranch from the InitConfiguration section.
+func getDevBranchFromConfig(configPath string) (string, error) {
+	if configPath == "" {
+		return "", fmt.Errorf("configPath cannot be empty")
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read config file %s: %w", configPath, err)
+	}
+
+	// Parse YAML documents (the file contains multiple YAML documents separated by ---)
+	documents := strings.Split(string(data), "---")
+	for _, doc := range documents {
+		doc = strings.TrimSpace(doc)
+		if doc == "" {
+			continue
+		}
+
+		var initConfig struct {
+			APIVersion string `yaml:"apiVersion"`
+			Kind       string `yaml:"kind"`
+			Deckhouse  struct {
+				DevBranch string `yaml:"devBranch"`
+			} `yaml:"deckhouse"`
+		}
+
+		if err := yaml.Unmarshal([]byte(doc), &initConfig); err != nil {
+			continue // Skip documents that don't match
+		}
+
+		// Check if this is an InitConfiguration
+		if initConfig.Kind == "InitConfiguration" && initConfig.Deckhouse.DevBranch != "" {
+			return initConfig.Deckhouse.DevBranch, nil
+		}
+	}
+
+	return "", fmt.Errorf("devBranch not found in config file %s", configPath)
+}
+
+// BootstrapCluster bootstraps a Kubernetes cluster from the setup node to the first master node.
+// It performs the following steps:
+// 1. Logs into the Docker registry using DKP_LICENSE_KEY from config
+// 2. Runs the dhctl bootstrap command in a Docker container (can take up to 30 minutes)
+// The function uses sudo to run commands as root on the setup node.
+// It uses config.VMSSHUser and config.DKPLicenseKey from the config package.
+// The install image is constructed from registryRepo and the devBranch read from configPath.
+func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *config.ClusterDefinition, masterIP string, configPath string) error {
+	if sshClient == nil {
+		return fmt.Errorf("sshClient cannot be nil")
+	}
+	if clusterDef == nil {
+		return fmt.Errorf("clusterDef cannot be nil")
+	}
+	if masterIP == "" {
+		return fmt.Errorf("masterIP cannot be empty")
+	}
+	if configPath == "" {
+		return fmt.Errorf("configPath cannot be empty")
+	}
+	if config.VMSSHUser == "" {
+		return fmt.Errorf("VMSSHUser cannot be empty in config")
+	}
+	if config.DKPLicenseKey == "" {
+		return fmt.Errorf("DKPLicenseKey cannot be empty in config")
+	}
+
+	// Extract registry hostname from registry repo URL
+	// Example: "dev-registry.deckhouse.io/sys/deckhouse-oss" -> "dev-registry.deckhouse.io"
+	registryRepo := clusterDef.DKPParameters.RegistryRepo
+	if registryRepo == "" {
+		return fmt.Errorf("registryRepo cannot be empty in cluster definition")
+	}
+	registryHostname := strings.Split(registryRepo, "/")[0]
+	if registryHostname == "" {
+		return fmt.Errorf("failed to extract hostname from registry repo: %s", registryRepo)
+	}
+
+	// Read devBranch from config file
+	// Example: "dev-registry.deckhouse.io/sys/deckhouse-oss" + "/install:" + "main" = "dev-registry.deckhouse.io/sys/deckhouse-oss/install:main"
+	devBranch, err := getDevBranchFromConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to get devBranch from config: %w", err)
+	}
+
+	// Step 1: Login to Docker registry
+	// Command: echo "$DKP_LICENSE_KEY" | docker login -u license-token --password-stdin $REGISTRY_HOSTNAME
+	loginCmd := fmt.Sprintf("echo \"%s\" | sudo docker login -u license-token --password-stdin %s", config.DKPLicenseKey, registryHostname)
+	output, err := sshClient.Exec(ctx, loginCmd)
+	if err != nil {
+		return fmt.Errorf("failed to login to Docker registry %s: %w\nOutput: %s", registryHostname, err, output)
+	}
+
+	// Determine log file path: configPath is in temp/<test-name>/config.yml, so log goes to temp/<test-name>/bootstrap.log
+	configDir := filepath.Dir(configPath)
+	logFilePath := filepath.Join(configDir, "bootstrap.log")
+	remoteLogPath := fmt.Sprintf("/tmp/bootstrap-%d.log", os.Getpid()) // Use unique name to avoid conflicts
+
+	// Step 2: Run dhctl bootstrap command with output redirected to log file
+	// Note: Removed -it flags since output is redirected and we don't need interactive terminal
+	// Command: docker run --network=host --pull=always -v "/home/$VM_SSH_User/config.yml:/config.yml" -v "/home/$VM_SSH_User/.ssh:/tmp/.ssh" $REGISTRY_REPO/install:$DEV_BRANCH dhctl bootstrap --ssh-host=$IP_OF_MASTER_VM --ssh-user=$VM_SSH_User --ssh-agent-private-keys=/tmp/.ssh/id_rsa --config=/config.yml > $REMOTE_LOG_PATH 2>&1
+	installImage := fmt.Sprintf("%s/install:%s", registryRepo, devBranch)
+	bootstrapCmd := fmt.Sprintf(
+		"sudo docker run --network=host --pull=always -v \"/home/%s/config.yml:/config.yml\" -v \"/home/%s/.ssh:/tmp/.ssh\" %s dhctl bootstrap --ssh-host=%s --ssh-user=%s --ssh-agent-private-keys=/tmp/.ssh/id_rsa --config=/config.yml > %s 2>&1",
+		config.VMSSHUser, config.VMSSHUser, installImage, masterIP, config.VMSSHUser, remoteLogPath,
+	)
+
+	// Run the bootstrap command (this can take up to 30 minutes)
+	// Output is redirected to remote log file, so output variable will be empty
+	output, err = sshClient.Exec(ctx, bootstrapCmd)
+
+	// Always download log file from remote host (whether success or failure)
+	// Use sudo cat since the log file was created with sudo
+	logContent, logErr := sshClient.Exec(ctx, fmt.Sprintf("sudo cat %s 2>/dev/null || echo ''", remoteLogPath))
+
+	// Save log file locally
+	if logErr == nil && logContent != "" {
+		// Create local log file directory if it doesn't exist
+		if mkdirErr := os.MkdirAll(configDir, 0755); mkdirErr == nil {
+			// Write log content to local file
+			_ = os.WriteFile(logFilePath, []byte(logContent), 0644)
+		}
+	}
+
+	// Clean up remote log file
+	_, _ = sshClient.Exec(ctx, fmt.Sprintf("sudo rm -f %s", remoteLogPath))
+
+	// If bootstrap failed, include log content in error
+	if err != nil {
+		baseErr := fmt.Errorf("failed to bootstrap cluster: %w", err)
+		if logContent != "" {
+			return fmt.Errorf("%w\n\nBootstrap log saved to: %s\n\nBootstrap log content:\n%s", baseErr, logFilePath, logContent)
+		} else if output != "" {
+			// Fallback to output if log file wasn't available
+			return fmt.Errorf("%w\n\nOutput: %s", baseErr, output)
+		}
+		return baseErr
 	}
 
 	return nil

@@ -316,10 +316,16 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				OsType:                   v1alpha2.OsType("Generic"),
 				Bootloader:               v1alpha2.BootloaderType("BIOS"),
 				LiveMigrationPolicy:      v1alpha2.LiveMigrationPolicy("PreferSafe"),
-				CPU: v1alpha2.CPUSpec{
-					Cores:        node.CPU,
-					CoreFraction: "100%",
-				},
+				CPU: func() v1alpha2.CPUSpec {
+					coreFraction := "100%" // Default to 100%
+					if node.CoreFraction != nil {
+						coreFraction = fmt.Sprintf("%d%%", *node.CoreFraction)
+					}
+					return v1alpha2.CPUSpec{
+						Cores:        node.CPU,
+						CoreFraction: coreFraction,
+					}
+				}(),
 				Memory: v1alpha2.MemorySpec{
 					Size: memoryQuantity,
 				},

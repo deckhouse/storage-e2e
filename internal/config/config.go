@@ -23,13 +23,14 @@ import "time"
 // DefaultSetupVM is the default VM configuration of the node that is used for bootstrap of test cluster.
 // This VM is always created separately and should be deleted after cluster bootstrap.
 var DefaultSetupVM = ClusterNode{
-	Hostname: "bootstrap-node-",
-	HostType: HostTypeVM,
-	Role:     ClusterRoleSetup,
-	OSType:   OSTypeMap["Ubuntu 22.04 6.2.0-39-generic"],
-	CPU:      2,
-	RAM:      4,
-	DiskSize: 20,
+	Hostname:     "bootstrap-node-",
+	HostType:     HostTypeVM,
+	Role:         ClusterRoleSetup,
+	OSType:       OSTypeMap["Ubuntu 22.04 6.2.0-39-generic"],
+	CPU:          2,
+	CoreFraction: func() *int { v := 50; return &v }(), // 50% core fraction
+	RAM:          4,
+	DiskSize:     20,
 }
 
 // VMsRunningTimeout is the timeout for waiting for all VMs to become Running state

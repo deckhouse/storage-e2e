@@ -55,9 +55,10 @@ type ClusterNode struct {
 	HostType  HostType    `yaml:"hostType"`
 	Role      ClusterRole `yaml:"role"`
 	// VM-specific fields (only used when HostType == HostTypeVM)
-	CPU      int `yaml:"cpu"`      // Required for VM
-	RAM      int `yaml:"ram"`      // Required for VM, in GB
-	DiskSize int `yaml:"diskSize"` // Required for VM, in GB
+	CPU          int  `yaml:"cpu"`          // Required for VM
+	CoreFraction *int `yaml:"coreFraction,omitempty"` // Optional for VM, CPU core fraction as percentage (e.g., 50 for 50%). Defaults to 100% if not specified.
+	RAM          int  `yaml:"ram"`          // Required for VM, in GB
+	DiskSize     int  `yaml:"diskSize"`     // Required for VM, in GB
 	// Bare-metal specific fields
 	Prepared bool `yaml:"prepared,omitempty"` // Whether the node is already prepared for DKP installation
 }
@@ -101,15 +102,16 @@ const (
 func (n *ClusterNode) UnmarshalYAML(value *yaml.Node) error {
 	// Temporary struct with OSType as string for unmarshaling
 	type clusterNodeTmp struct {
-		Hostname  string `yaml:"hostname"`
-		IPAddress string `yaml:"ipAddress,omitempty"`
-		OSType    string `yaml:"osType"`
-		HostType  string `yaml:"hostType"`
-		Role      string `yaml:"role"`
-		CPU       int    `yaml:"cpu"`
-		RAM       int    `yaml:"ram"`
-		DiskSize  int    `yaml:"diskSize"`
-		Prepared  bool   `yaml:"prepared,omitempty"`
+		Hostname     string `yaml:"hostname"`
+		IPAddress    string `yaml:"ipAddress,omitempty"`
+		OSType       string `yaml:"osType"`
+		HostType     string `yaml:"hostType"`
+		Role         string `yaml:"role"`
+		CPU          int    `yaml:"cpu"`
+		CoreFraction *int   `yaml:"coreFraction,omitempty"`
+		RAM          int    `yaml:"ram"`
+		DiskSize     int    `yaml:"diskSize"`
+		Prepared     bool   `yaml:"prepared,omitempty"`
 	}
 
 	var tmp clusterNodeTmp
@@ -142,6 +144,7 @@ func (n *ClusterNode) UnmarshalYAML(value *yaml.Node) error {
 	n.HostType = hostType
 	n.Role = role
 	n.CPU = tmp.CPU
+	n.CoreFraction = tmp.CoreFraction
 	n.RAM = tmp.RAM
 	n.DiskSize = tmp.DiskSize
 	n.Prepared = tmp.Prepared

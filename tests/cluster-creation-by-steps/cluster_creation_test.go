@@ -62,6 +62,48 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			GinkgoWriter.Printf("    ✅ Environment variables validated successfully\n")
 		})
 
+		By("Outputting environment variables without default values", func() {
+			GinkgoWriter.Printf("    📋 Environment variables (without default values):\n")
+
+			// Helper function to mask sensitive values
+			maskValue := func(value string, mask bool) string {
+				if mask && len(value) > 5 {
+					return value[:5] + "***"
+				}
+				return value
+			}
+
+			// DKP_LICENSE_KEY - mask first 5 characters
+			if config.DKPLicenseKey != "" {
+				GinkgoWriter.Printf("      DKP_LICENSE_KEY: %s\n", maskValue(config.DKPLicenseKey, true))
+			}
+
+			// REGISTRY_DOCKER_CFG - mask first 5 characters
+			if config.RegistryDockerCfg != "" {
+				GinkgoWriter.Printf("      REGISTRY_DOCKER_CFG: %s\n", maskValue(config.RegistryDockerCfg, true))
+			}
+
+			// TEST_CLUSTER_CREATE_MODE - no masking
+			if config.TestClusterCreateMode != "" {
+				GinkgoWriter.Printf("      TEST_CLUSTER_CREATE_MODE: %s\n", config.TestClusterCreateMode)
+			}
+
+			// TEST_CLUSTER_CLEANUP - no masking
+			if config.TestClusterCleanup != "" {
+				GinkgoWriter.Printf("      TEST_CLUSTER_CLEANUP: %s\n", config.TestClusterCleanup)
+			}
+
+			// SSH_PASSPHRASE - no masking (optional, may be empty)
+			if config.SSHPassphrase != "" {
+				GinkgoWriter.Printf("      SSH_PASSPHRASE: <set>\n")
+			}
+
+			// KUBE_CONFIG_PATH - no masking (optional, may be empty)
+			if config.KubeConfigPath != "" {
+				GinkgoWriter.Printf("      KUBE_CONFIG_PATH: %s\n", config.KubeConfigPath)
+			}
+		})
+
 		// Stage 1: LoadConfig - verifies and parses the config from yaml file
 		By("LoadConfig: Loading and verifying cluster configuration from YAML", func() {
 			yamlConfigFilename := config.YAMLConfigFilename
@@ -359,6 +401,29 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			err := cluster.UploadBootstrapFiles(ctx, setupSSHClient, keyPath, bootstrapConfig)
 			Expect(err).NotTo(HaveOccurred(), "Failed to upload bootstrap files to setup node")
 			GinkgoWriter.Printf("    ✅ Bootstrap files uploaded successfully\n")
+		})
+	})
+
+	// Step 13: Bootstrap cluster from setup node to first master node
+	It("should bootstrap cluster from setup node to first master", func() {
+		By("Bootstrapping cluster from setup node", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
+			defer cancel()
+
+			namespace := config.TestClusterNamespace
+			firstMasterHostname := clusterDefinition.Masters[0].Hostname
+
+			// Get master IP address
+			masterIP, err := cluster.GetVMIPAddress(ctx, virtClient, namespace, firstMasterHostname)
+			Expect(err).NotTo(HaveOccurred(), "Failed to get IP address for master node %s", firstMasterHostname)
+			Expect(masterIP).NotTo(BeEmpty(), "Master node %s IP address should not be empty", firstMasterHostname)
+
+			GinkgoWriter.Printf("    ▶️ Bootstrapping cluster from setup node to master %s (%s)\n", firstMasterHostname, masterIP)
+			GinkgoWriter.Printf("    ⏱️  This may take up to 30 minutes...\n")
+
+			err = cluster.BootstrapCluster(ctx, setupSSHClient, clusterDefinition, masterIP, bootstrapConfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to bootstrap cluster")
+			GinkgoWriter.Printf("    ✅ Cluster bootstrap completed successfully\n")
 		})
 	})
 }) // Describe: Cluster Creation
