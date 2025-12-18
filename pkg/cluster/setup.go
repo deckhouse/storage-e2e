@@ -420,20 +420,81 @@ func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *
 	// Determine log file path: configPath is in temp/<test-name>/config.yml, so log goes to temp/<test-name>/bootstrap.log
 	configDir := filepath.Dir(configPath)
 	logFilePath := filepath.Join(configDir, "bootstrap.log")
-	remoteLogPath := fmt.Sprintf("/tmp/bootstrap-%d.log", os.Getpid()) // Use unique name to avoid conflicts
+	remoteLogPath := fmt.Sprintf("/tmp/bootstrap-%d.log", os.Getpid())    // Use unique name to avoid conflicts
+	agentSocketPath := fmt.Sprintf("/tmp/ssh-agent-%d.sock", os.Getpid()) // Unique agent socket path
 
-	// Step 2: Run dhctl bootstrap command with output redirected to log file
-	// Note: Removed -it flags since output is redirected and we don't need interactive terminal
-	// Command: docker run --network=host --pull=always -v "/home/$VM_SSH_User/config.yml:/config.yml" -v "/home/$VM_SSH_User/.ssh:/tmp/.ssh" $REGISTRY_REPO/install:$DEV_BRANCH dhctl bootstrap --ssh-host=$IP_OF_MASTER_VM --ssh-user=$VM_SSH_User --ssh-agent-private-keys=/tmp/.ssh/id_rsa --config=/config.yml > $REMOTE_LOG_PATH 2>&1
+	// Step 2: Setup ssh-agent and add the SSH key
+	// Create a temporary askpass script to provide the passphrase non-interactively
+	askpassScriptPath := fmt.Sprintf("/tmp/ssh-askpass-%d.sh", os.Getpid())
+	askpassScript := fmt.Sprintf(`#!/bin/bash
+echo "%s"
+`, config.SSHPassphrase)
+
+	// Create the askpass script file on the remote host
+	createAskpassCmd := fmt.Sprintf("sudo -u %s bash -c 'cat > %s << \"ASKPASS_EOF\"\n%sASKPASS_EOF\nchmod +x %s'", config.VMSSHUser, askpassScriptPath, askpassScript, askpassScriptPath)
+	_, err = sshClient.Exec(ctx, createAskpassCmd)
+	if err != nil {
+		return fmt.Errorf("failed to create askpass script: %w", err)
+	}
+
+	// Setup ssh-agent and add the key
+	setupAgentScript := fmt.Sprintf(`
+		# Start ssh-agent with specified socket path
+		eval $(ssh-agent -a %s) > /dev/null 2>&1
+		export SSH_AUTH_SOCK=%s
+		export SSH_AGENT_PID=$SSH_AGENT_PID
+		
+		# Add the SSH key to the agent using the askpass script
+		if [ -n "%s" ]; then
+			DISPLAY=:0 SSH_ASKPASS=%s ssh-add /home/%s/.ssh/id_rsa </dev/null 2>&1
+		else
+			ssh-add /home/%s/.ssh/id_rsa </dev/null 2>&1
+		fi
+		
+		# Output the agent socket path for use in docker command
+		echo $SSH_AUTH_SOCK
+	`, agentSocketPath, agentSocketPath, config.SSHPassphrase, askpassScriptPath, config.VMSSHUser, config.VMSSHUser)
+
+	// Run the agent setup script
+	agentOutput, err := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s bash -c %s", config.VMSSHUser, fmt.Sprintf("'%s'", setupAgentScript)))
+	if err != nil {
+		// Clean up askpass script on error
+		_, _ = sshClient.Exec(ctx, fmt.Sprintf("sudo rm -f %s", askpassScriptPath))
+		return fmt.Errorf("failed to setup ssh-agent: %w\nOutput: %s", err, agentOutput)
+	}
+
+	// Extract the actual SSH_AUTH_SOCK path from output (last line)
+	agentSocketLines := strings.Split(strings.TrimSpace(agentOutput), "\n")
+	actualAgentSocket := agentSocketPath // Default to our specified path
+	if len(agentSocketLines) > 0 {
+		lastLine := strings.TrimSpace(agentSocketLines[len(agentSocketLines)-1])
+		if lastLine != "" && strings.HasPrefix(lastLine, "/") {
+			actualAgentSocket = lastLine
+		}
+	}
+
+	// Make the socket readable by root (needed when docker runs with sudo)
+	// This allows the docker process (running as root) to access the socket
+	chmodCmd := fmt.Sprintf("sudo chmod 666 %s 2>/dev/null || true", actualAgentSocket)
+	_, _ = sshClient.Exec(ctx, chmodCmd)
+
+	// Step 3: Run dhctl bootstrap command with ssh-agent
+	// Mount SSH_AUTH_SOCK into the container and use it for authentication
+	// Note: We don't use --ssh-agent-private-keys anymore, dhctl will use SSH_AUTH_SOCK
+	// Docker needs to run with sudo for access to docker socket
 	installImage := fmt.Sprintf("%s/install:%s", registryRepo, devBranch)
 	bootstrapCmd := fmt.Sprintf(
-		"sudo docker run --network=host --pull=always -v \"/home/%s/config.yml:/config.yml\" -v \"/home/%s/.ssh:/tmp/.ssh\" %s dhctl bootstrap --ssh-host=%s --ssh-user=%s --ssh-agent-private-keys=/tmp/.ssh/id_rsa --config=/config.yml > %s 2>&1",
-		config.VMSSHUser, config.VMSSHUser, installImage, masterIP, config.VMSSHUser, remoteLogPath,
+		"sudo -u %s bash -c 'export SSH_AUTH_SOCK=%s; sudo docker run --network=host --pull=always -v \"/home/%s/config.yml:/config.yml\" -v \"%s:/tmp/ssh-agent.sock\" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock %s dhctl bootstrap --ssh-host=%s --ssh-user=%s --config=/config.yml > %s 2>&1'",
+		config.VMSSHUser, actualAgentSocket, config.VMSSHUser, actualAgentSocket, installImage, masterIP, config.VMSSHUser, remoteLogPath,
 	)
 
 	// Run the bootstrap command (this can take up to 30 minutes)
 	// Output is redirected to remote log file, so output variable will be empty
 	output, err = sshClient.Exec(ctx, bootstrapCmd)
+
+	// Clean up ssh-agent and askpass script after bootstrap (whether success or failure)
+	cleanupAgentCmd := fmt.Sprintf("sudo -u %s bash -c 'SSH_AUTH_SOCK=%s ssh-agent -k 2>/dev/null || true; rm -f %s %s 2>/dev/null || true'", config.VMSSHUser, actualAgentSocket, actualAgentSocket, askpassScriptPath)
+	_, _ = sshClient.Exec(ctx, cleanupAgentCmd)
 
 	// Always download log file from remote host (whether success or failure)
 	// Use sudo cat since the log file was created with sudo
