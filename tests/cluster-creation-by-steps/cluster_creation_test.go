@@ -115,6 +115,22 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 
 		// DeferCleanup: Clean up all resources in reverse order of creation (it's a synonym for AfterAll)
 		DeferCleanup(func() {
+			// Step 0: Re-establish SSH tunnel if needed for VM cleanup
+			// The tunnel might have been stopped in Step 9, but we need it for VM cleanup
+			if tunnelinfo == nil && sshclient != nil {
+				GinkgoWriter.Printf("    ▶️ Re-establishing SSH tunnel for VM cleanup...\n")
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				var tunnelErr error
+				tunnelinfo, tunnelErr = ssh.EstablishSSHTunnel(ctx, sshclient, "6445")
+				cancel()
+				if tunnelErr != nil {
+					GinkgoWriter.Printf("    ⚠️  Warning: Failed to re-establish SSH tunnel: %v\n", tunnelErr)
+					GinkgoWriter.Printf("    ⚠️  VM cleanup will be skipped due to missing tunnel\n")
+				} else {
+					GinkgoWriter.Printf("    ✅ SSH tunnel re-established on local port: %d\n", tunnelinfo.LocalPort)
+				}
+			}
+
 			// Step 1: Cleanup setup VM (needs API access via SSH tunnel)
 			vmRes := vmResources
 			if vmRes != nil && vmRes.SetupVMName != "" {
