@@ -21,11 +21,15 @@ import (
 	"fmt"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 
 	internalcluster "github.com/deckhouse/storage-e2e/internal/cluster"
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/apps"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
 )
 
 // TestClusterResources holds all resources created for a test cluster connection
@@ -122,4 +126,121 @@ func CleanupTestCluster(resources *TestClusterResources) error {
 	}
 
 	return nil
+}
+
+// CheckClusterHealth checks if the deckhouse deployment pod is running with 2/2 ready replicas
+// in the d8-system namespace. This function is widely used to check cluster health after certain steps.
+func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
+	namespace := "d8-system"
+	deploymentName := "deckhouse"
+
+	// Create deployment client
+	deploymentClient, err := apps.NewDeploymentClient(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create deployment client: %w", err)
+	}
+
+	// Get the deployment
+	deployment, err := deploymentClient.Get(ctx, namespace, deploymentName)
+	if err != nil {
+		return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
+	}
+
+	// Check if deployment has 2 ready replicas
+	if deployment.Status.ReadyReplicas != 2 {
+		return fmt.Errorf("deployment %s/%s has %d ready replicas, expected 2", namespace, deploymentName, deployment.Status.ReadyReplicas)
+	}
+
+	// Create pod client
+	podClient, err := core.NewPodClient(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create pod client: %w", err)
+	}
+
+	// Get pods for the deployment using the deployment's selector
+	labelSelector := metav1.FormatLabelSelector(deployment.Spec.Selector)
+	pods, err := podClient.ListByLabelSelector(ctx, namespace, labelSelector)
+	if err != nil {
+		return fmt.Errorf("failed to list pods for deployment %s/%s: %w", namespace, deploymentName, err)
+	}
+
+	// Check that we have exactly 2 pods and both are running
+	if len(pods.Items) != 1 {
+		return fmt.Errorf("expected 1 pods for deployment %s/%s, found %d", namespace, deploymentName, len(pods.Items))
+	}
+
+	// Check each pod is running and all containers are ready
+	for _, pod := range pods.Items {
+		if !podClient.IsRunning(ctx, &pod) {
+			return fmt.Errorf("pod %s/%s is not running (phase: %s)", namespace, pod.Name, pod.Status.Phase)
+		}
+
+		if !podClient.AllContainersReady(ctx, &pod) {
+			return fmt.Errorf("pod %s/%s does not have all containers ready", namespace, pod.Name)
+		}
+	}
+
+	return nil
+}
+
+// ConnectToCluster establishes SSH connection to the test cluster master through the base cluster master,
+// retrieves kubeconfig, and sets up port forwarding tunnel.
+// The SSH tunnel remains active after this function returns (it's stored in the returned resources).
+// Returns the test cluster resources including the tunnel that must be kept alive.
+// Note: This function does NOT check cluster health - use CheckClusterHealth() for that.
+func ConnectToCluster(ctx context.Context, baseSSHClient ssh.SSHClient, testClusterMasterIP string) (*TestClusterResources, error) {
+	if baseSSHClient == nil {
+		return nil, fmt.Errorf("baseSSHClient cannot be nil")
+	}
+	if testClusterMasterIP == "" {
+		return nil, fmt.Errorf("testClusterMasterIP cannot be empty")
+	}
+
+	// Step 1: Create SSH client to test cluster master through base cluster master (jump host)
+	testSSHClient, err := ssh.NewClientWithJumpHost(
+		config.SSHUser, config.SSHHost, config.SSHKeyPath, // jump host (base cluster master)
+		config.VMSSHUser, testClusterMasterIP, config.SSHKeyPath, // target (test cluster master)
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSH client to test cluster master: %w", err)
+	}
+
+	// Step 2: Establish SSH tunnel with port forwarding 6445:127.0.0.1:6445
+	tunnelInfo, err := ssh.EstablishSSHTunnel(ctx, testSSHClient, "6445")
+	if err != nil {
+		testSSHClient.Close()
+		return nil, fmt.Errorf("failed to establish SSH tunnel to test cluster: %w", err)
+	}
+
+	// Step 3: Get kubeconfig from test cluster master
+	_, kubeconfigPath, err := internalcluster.GetKubeconfig(ctx, testClusterMasterIP, config.VMSSHUser, config.SSHKeyPath, testSSHClient)
+	if err != nil {
+		tunnelInfo.StopFunc()
+		testSSHClient.Close()
+		return nil, fmt.Errorf("failed to get kubeconfig from test cluster: %w", err)
+	}
+
+	// Step 4: Update kubeconfig to use the tunnel port (6445)
+	if err := internalcluster.UpdateKubeconfigPort(kubeconfigPath, tunnelInfo.LocalPort); err != nil {
+		tunnelInfo.StopFunc()
+		testSSHClient.Close()
+		return nil, fmt.Errorf("failed to update kubeconfig port: %w", err)
+	}
+
+	// Rebuild rest.Config from updated kubeconfig file
+	kubeconfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		tunnelInfo.StopFunc()
+		testSSHClient.Close()
+		return nil, fmt.Errorf("failed to rebuild kubeconfig from file: %w", err)
+	}
+
+	// Return resources with active tunnel
+	// Note: The test will use Eventually to check cluster health with CheckClusterHealth
+	return &TestClusterResources{
+		SSHClient:      testSSHClient,
+		Kubeconfig:     kubeconfig,
+		KubeconfigPath: kubeconfigPath,
+		TunnelInfo:     tunnelInfo,
+	}, nil
 }

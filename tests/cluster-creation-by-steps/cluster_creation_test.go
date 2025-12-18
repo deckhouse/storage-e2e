@@ -196,6 +196,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 
 	}) // BeforeAll
 
+	// TODO: Steps 3-5 can be joined into one using cluster.ConnectToCluster function
 	// Step 3: Establish SSH connection to base cluster (reused for getting kubeconfig)
 	It("should establish ssh connection to the base cluster", func() {
 		By(fmt.Sprintf("Connecting to %s@%s using key %s", config.SSHUser, config.SSHHost, config.SSHKeyPath), func() {
@@ -440,6 +441,42 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			err = cluster.BootstrapCluster(ctx, setupSSHClient, clusterDefinition, masterIP, bootstrapConfig)
 			Expect(err).NotTo(HaveOccurred(), "Failed to bootstrap cluster")
 			GinkgoWriter.Printf("    ✅ Cluster bootstrap completed successfully\n")
+		})
+	})
+
+	// Step 14: Verify cluster is ready
+	It("should verify cluster is ready", func() {
+		By("Verifying cluster is ready", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+
+			namespace := config.TestClusterNamespace
+			firstMasterHostname := clusterDefinition.Masters[0].Hostname
+
+			// Get master IP address
+			masterIP, err := cluster.GetVMIPAddress(ctx, virtClient, namespace, firstMasterHostname)
+			Expect(err).NotTo(HaveOccurred(), "Failed to get IP address for master node %s", firstMasterHostname)
+			Expect(masterIP).NotTo(BeEmpty(), "Master node %s IP address should not be empty", firstMasterHostname)
+
+			GinkgoWriter.Printf("    ▶️ Verifying cluster readiness for master %s (%s)\n", firstMasterHostname, masterIP)
+
+			// Step 1: Establish connection to test cluster (tunnel and kubeconfig)
+			testClusterResources, err := cluster.ConnectToCluster(ctx, sshclient, masterIP)
+			Expect(err).NotTo(HaveOccurred(), "Failed to establish connection to test cluster")
+			Expect(testClusterResources).NotTo(BeNil())
+			Expect(testClusterResources.TunnelInfo).NotTo(BeNil(), "Tunnel must remain active")
+
+			GinkgoWriter.Printf("    ✅ Connection established, kubeconfig saved to: %s\n", testClusterResources.KubeconfigPath)
+			GinkgoWriter.Printf("    ✅ SSH tunnel active on local port: %d\n", testClusterResources.TunnelInfo.LocalPort)
+
+			// Step 2: Check cluster health with Eventually (wait up to 10 minutes for deckhouse to be ready)
+			GinkgoWriter.Printf("    ⏱️  Waiting for deckhouse deployment to become ready (2/2 pods running)...\n")
+			Eventually(func() error {
+				return cluster.CheckClusterHealth(ctx, testClusterResources.Kubeconfig)
+			}).WithTimeout(10*time.Minute).WithPolling(20*time.Second).Should(Succeed(),
+				"Deckhouse deployment should have 2/2 pods running within 10 minutes")
+
+			GinkgoWriter.Printf("    ✅ Cluster is ready (deckhouse deployment: 2/2 pods running)\n")
 		})
 	})
 }) // Describe: Cluster Creation
