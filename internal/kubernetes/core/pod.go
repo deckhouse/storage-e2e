@@ -27,27 +27,21 @@ import (
 )
 
 // PodClient provides operations on Pod resources
-type PodClient interface {
-	ListByLabelSelector(ctx context.Context, namespace, labelSelector string) (*corev1.PodList, error)
-	IsRunning(ctx context.Context, pod *corev1.Pod) bool
-	AllContainersReady(ctx context.Context, pod *corev1.Pod) bool
-}
-
-type podClient struct {
+type PodClient struct {
 	client kubernetes.Interface
 }
 
 // NewPodClient creates a new pod client from a rest.Config
-func NewPodClient(config *rest.Config) (PodClient, error) {
+func NewPodClient(config *rest.Config) (*PodClient, error) {
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
-	return &podClient{client: clientset}, nil
+	return &PodClient{client: clientset}, nil
 }
 
 // ListByLabelSelector lists pods in a namespace matching the label selector
-func (c *podClient) ListByLabelSelector(ctx context.Context, namespace, labelSelector string) (*corev1.PodList, error) {
+func (c *PodClient) ListByLabelSelector(ctx context.Context, namespace, labelSelector string) (*corev1.PodList, error) {
 	pods, err := c.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
@@ -58,12 +52,12 @@ func (c *podClient) ListByLabelSelector(ctx context.Context, namespace, labelSel
 }
 
 // IsRunning checks if a pod is in Running phase
-func (c *podClient) IsRunning(ctx context.Context, pod *corev1.Pod) bool {
+func (c *PodClient) IsRunning(ctx context.Context, pod *corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodRunning
 }
 
 // AllContainersReady checks if all containers in a pod are ready
-func (c *podClient) AllContainersReady(ctx context.Context, pod *corev1.Pod) bool {
+func (c *PodClient) AllContainersReady(ctx context.Context, pod *corev1.Pod) bool {
 	if len(pod.Spec.Containers) == 0 {
 		return false
 	}

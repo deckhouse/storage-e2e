@@ -26,19 +26,12 @@ import (
 )
 
 // VirtualDiskClient provides operations on VirtualDisk resources
-type VirtualDiskClient interface {
-	Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualDisk, error)
-	List(ctx context.Context, namespace string) ([]v1alpha2.VirtualDisk, error)
-	Create(ctx context.Context, vd *v1alpha2.VirtualDisk) error
-	Update(ctx context.Context, vd *v1alpha2.VirtualDisk) error
-	Delete(ctx context.Context, namespace, name string) error
-}
-
-type virtualDiskClient struct {
+type VirtualDiskClient struct {
 	client client.Client
 }
 
-func (c *virtualDiskClient) Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualDisk, error) {
+// Get retrieves a VirtualDisk by namespace and name
+func (c *VirtualDiskClient) Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualDisk, error) {
 	vd := &v1alpha2.VirtualDisk{}
 	key := client.ObjectKey{Namespace: namespace, Name: name}
 	if err := c.client.Get(ctx, key, vd); err != nil {
@@ -47,7 +40,8 @@ func (c *virtualDiskClient) Get(ctx context.Context, namespace, name string) (*v
 	return vd, nil
 }
 
-func (c *virtualDiskClient) List(ctx context.Context, namespace string) ([]v1alpha2.VirtualDisk, error) {
+// List lists VirtualDisks in a namespace
+func (c *VirtualDiskClient) List(ctx context.Context, namespace string) ([]v1alpha2.VirtualDisk, error) {
 	list := &v1alpha2.VirtualDiskList{}
 	opts := []client.ListOption{}
 	if namespace != "" {
@@ -59,21 +53,24 @@ func (c *virtualDiskClient) List(ctx context.Context, namespace string) ([]v1alp
 	return list.Items, nil
 }
 
-func (c *virtualDiskClient) Create(ctx context.Context, vd *v1alpha2.VirtualDisk) error {
+// Create creates a new VirtualDisk
+func (c *VirtualDiskClient) Create(ctx context.Context, vd *v1alpha2.VirtualDisk) error {
 	if err := c.client.Create(ctx, vd); err != nil {
 		return fmt.Errorf("failed to create VirtualDisk %s/%s: %w", vd.Namespace, vd.Name, err)
 	}
 	return nil
 }
 
-func (c *virtualDiskClient) Update(ctx context.Context, vd *v1alpha2.VirtualDisk) error {
+// Update updates an existing VirtualDisk
+func (c *VirtualDiskClient) Update(ctx context.Context, vd *v1alpha2.VirtualDisk) error {
 	if err := c.client.Update(ctx, vd); err != nil {
 		return fmt.Errorf("failed to update VirtualDisk %s/%s: %w", vd.Namespace, vd.Name, err)
 	}
 	return nil
 }
 
-func (c *virtualDiskClient) Delete(ctx context.Context, namespace, name string) error {
+// Delete deletes a VirtualDisk by namespace and name
+func (c *VirtualDiskClient) Delete(ctx context.Context, namespace, name string) error {
 	vd := &v1alpha2.VirtualDisk{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,

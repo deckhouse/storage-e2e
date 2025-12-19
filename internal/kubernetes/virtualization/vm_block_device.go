@@ -26,19 +26,12 @@ import (
 )
 
 // VMBDClient provides operations on VirtualMachineBlockDeviceAttachment resources
-type VMBDClient interface {
-	Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachineBlockDeviceAttachment, error)
-	List(ctx context.Context, namespace string) ([]v1alpha2.VirtualMachineBlockDeviceAttachment, error)
-	Create(ctx context.Context, vmbd *v1alpha2.VirtualMachineBlockDeviceAttachment) error
-	Update(ctx context.Context, vmbd *v1alpha2.VirtualMachineBlockDeviceAttachment) error
-	Delete(ctx context.Context, namespace, name string) error
-}
-
-type vmbdClient struct {
+type VMBDClient struct {
 	client client.Client
 }
 
-func (c *vmbdClient) Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachineBlockDeviceAttachment, error) {
+// Get retrieves a VirtualMachineBlockDeviceAttachment by namespace and name
+func (c *VMBDClient) Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachineBlockDeviceAttachment, error) {
 	vmbd := &v1alpha2.VirtualMachineBlockDeviceAttachment{}
 	key := client.ObjectKey{Namespace: namespace, Name: name}
 	if err := c.client.Get(ctx, key, vmbd); err != nil {
@@ -47,7 +40,8 @@ func (c *vmbdClient) Get(ctx context.Context, namespace, name string) (*v1alpha2
 	return vmbd, nil
 }
 
-func (c *vmbdClient) List(ctx context.Context, namespace string) ([]v1alpha2.VirtualMachineBlockDeviceAttachment, error) {
+// List lists VirtualMachineBlockDeviceAttachments in a namespace
+func (c *VMBDClient) List(ctx context.Context, namespace string) ([]v1alpha2.VirtualMachineBlockDeviceAttachment, error) {
 	list := &v1alpha2.VirtualMachineBlockDeviceAttachmentList{}
 	opts := []client.ListOption{}
 	if namespace != "" {
@@ -59,21 +53,24 @@ func (c *vmbdClient) List(ctx context.Context, namespace string) ([]v1alpha2.Vir
 	return list.Items, nil
 }
 
-func (c *vmbdClient) Create(ctx context.Context, vmbd *v1alpha2.VirtualMachineBlockDeviceAttachment) error {
+// Create creates a new VirtualMachineBlockDeviceAttachment
+func (c *VMBDClient) Create(ctx context.Context, vmbd *v1alpha2.VirtualMachineBlockDeviceAttachment) error {
 	if err := c.client.Create(ctx, vmbd); err != nil {
 		return fmt.Errorf("failed to create VirtualMachineBlockDeviceAttachment %s/%s: %w", vmbd.Namespace, vmbd.Name, err)
 	}
 	return nil
 }
 
-func (c *vmbdClient) Update(ctx context.Context, vmbd *v1alpha2.VirtualMachineBlockDeviceAttachment) error {
+// Update updates an existing VirtualMachineBlockDeviceAttachment
+func (c *VMBDClient) Update(ctx context.Context, vmbd *v1alpha2.VirtualMachineBlockDeviceAttachment) error {
 	if err := c.client.Update(ctx, vmbd); err != nil {
 		return fmt.Errorf("failed to update VirtualMachineBlockDeviceAttachment %s/%s: %w", vmbd.Namespace, vmbd.Name, err)
 	}
 	return nil
 }
 
-func (c *vmbdClient) Delete(ctx context.Context, namespace, name string) error {
+// Delete deletes a VirtualMachineBlockDeviceAttachment by namespace and name
+func (c *VMBDClient) Delete(ctx context.Context, namespace, name string) error {
 	vmbd := &v1alpha2.VirtualMachineBlockDeviceAttachment{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,

@@ -49,26 +49,26 @@ func NewClient(ctx context.Context, config *rest.Config) (*Client, error) {
 }
 
 // VirtualMachines returns a VirtualMachine client
-func (c *Client) VirtualMachines() VirtualMachineClient {
-	return &virtualMachineClient{client: c.client}
+func (c *Client) VirtualMachines() *VirtualMachineClient {
+	return &VirtualMachineClient{client: c.client}
 }
 
 // VirtualDisks returns a VirtualDisk client
-func (c *Client) VirtualDisks() VirtualDiskClient {
-	return &virtualDiskClient{client: c.client}
+func (c *Client) VirtualDisks() *VirtualDiskClient {
+	return &VirtualDiskClient{client: c.client}
 }
 
 // ClusterVirtualImages returns a ClusterVirtualImage client
-func (c *Client) ClusterVirtualImages() ClusterVirtualImageClient {
-	return &clusterVirtualImageClient{client: c.client}
+func (c *Client) ClusterVirtualImages() *ClusterVirtualImageClient {
+	return &ClusterVirtualImageClient{client: c.client}
 }
 
 // VirtualImages returns a VirtualImage client
-func (c *Client) VirtualImages() VirtualImageClient {
-	return &virtualImageClient{client: c.client}
+func (c *Client) VirtualImages() *VirtualImageClient {
+	return &VirtualImageClient{client: c.client}
 }
 
 // VirtualMachineBlockDeviceAttachments returns a VMBD client
-func (c *Client) VirtualMachineBlockDeviceAttachments() VMBDClient {
-	return &vmbdClient{client: c.client}
+func (c *Client) VirtualMachineBlockDeviceAttachments() *VMBDClient {
+	return &VMBDClient{client: c.client}
 }

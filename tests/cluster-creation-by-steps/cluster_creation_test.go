@@ -313,17 +313,10 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 
 	// Step 9: Establish SSH connection to setup node through base cluster master (jump host)
 	It("should establish SSH connection to setup node through base cluster master", func() {
-		By("Stopping current SSH tunnel to base cluster", func() {
-			if tunnelinfo != nil && tunnelinfo.StopFunc != nil {
-				GinkgoWriter.Printf("    ▶️ Stopping SSH tunnel on local port %d...\n", tunnelinfo.LocalPort)
-				err := tunnelinfo.StopFunc()
-				Expect(err).NotTo(HaveOccurred())
-				GinkgoWriter.Printf("    ✅ SSH tunnel stopped successfully\n")
-				tunnelinfo = nil
-			}
-		})
-
 		By("Obtaining SSH client to setup node through base cluster master", func() {
+			// Note: We don't need to stop the base cluster tunnel here.
+			// Jump host clients are just SSH connections and don't require port forwarding.
+			// The base cluster tunnel can stay active for virtClient operations.
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
@@ -371,9 +364,9 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			namespace := config.TestClusterNamespace
 
 			// Get IPs for all VMs (masters, workers, and setup node)
+			// Note: vmResources.VMNames already includes the setup VM, so we don't need to append it
 			var vmIPs []string
-			allVMNames := append([]string{}, vmResources.VMNames...)
-			allVMNames = append(allVMNames, vmResources.SetupVMName)
+			allVMNames := vmResources.VMNames
 
 			GinkgoWriter.Printf("    ▶️ Getting IP addresses for all VMs\n")
 			for _, vmName := range allVMNames {
@@ -453,14 +446,25 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			namespace := config.TestClusterNamespace
 			firstMasterHostname := clusterDefinition.Masters[0].Hostname
 
-			// Get master IP address
+			// Get master IP address (base cluster tunnel should still be active from Step 5)
 			masterIP, err := cluster.GetVMIPAddress(ctx, virtClient, namespace, firstMasterHostname)
 			Expect(err).NotTo(HaveOccurred(), "Failed to get IP address for master node %s", firstMasterHostname)
 			Expect(masterIP).NotTo(BeEmpty(), "Master node %s IP address should not be empty", firstMasterHostname)
 
 			GinkgoWriter.Printf("    ▶️ Verifying cluster readiness for master %s (%s)\n", firstMasterHostname, masterIP)
 
-			// Step 1: Establish connection to test cluster (tunnel and kubeconfig)
+			// Step 1: Stop base cluster tunnel before creating test cluster tunnel
+			// Both tunnels use port 6445, so we can't have both active at the same time
+			if tunnelinfo != nil && tunnelinfo.StopFunc != nil {
+				GinkgoWriter.Printf("    ▶️ Stopping base cluster SSH tunnel (port 6445 needed for test cluster tunnel)...\n")
+				err := tunnelinfo.StopFunc()
+				Expect(err).NotTo(HaveOccurred(), "Failed to stop base cluster SSH tunnel")
+				tunnelinfo = nil
+				GinkgoWriter.Printf("    ✅ Base cluster SSH tunnel stopped successfully\n")
+			}
+
+			// Step 2: Establish connection to test cluster (tunnel and kubeconfig)
+			// This will create a new tunnel on port 6445 to the test cluster
 			testClusterResources, err := cluster.ConnectToCluster(ctx, sshclient, masterIP)
 			Expect(err).NotTo(HaveOccurred(), "Failed to establish connection to test cluster")
 			Expect(testClusterResources).NotTo(BeNil())

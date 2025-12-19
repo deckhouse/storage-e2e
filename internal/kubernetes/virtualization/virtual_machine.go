@@ -26,19 +26,12 @@ import (
 )
 
 // VirtualMachineClient provides operations on VirtualMachine resources
-type VirtualMachineClient interface {
-	Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachine, error)
-	List(ctx context.Context, namespace string) ([]v1alpha2.VirtualMachine, error)
-	Create(ctx context.Context, vm *v1alpha2.VirtualMachine) error
-	Update(ctx context.Context, vm *v1alpha2.VirtualMachine) error
-	Delete(ctx context.Context, namespace, name string) error
-}
-
-type virtualMachineClient struct {
+type VirtualMachineClient struct {
 	client client.Client
 }
 
-func (c *virtualMachineClient) Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachine, error) {
+// Get retrieves a VirtualMachine by namespace and name
+func (c *VirtualMachineClient) Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachine, error) {
 	vm := &v1alpha2.VirtualMachine{}
 	key := client.ObjectKey{Namespace: namespace, Name: name}
 	if err := c.client.Get(ctx, key, vm); err != nil {
@@ -47,7 +40,8 @@ func (c *virtualMachineClient) Get(ctx context.Context, namespace, name string) 
 	return vm, nil
 }
 
-func (c *virtualMachineClient) List(ctx context.Context, namespace string) ([]v1alpha2.VirtualMachine, error) {
+// List lists VirtualMachines in a namespace
+func (c *VirtualMachineClient) List(ctx context.Context, namespace string) ([]v1alpha2.VirtualMachine, error) {
 	list := &v1alpha2.VirtualMachineList{}
 	opts := []client.ListOption{}
 	if namespace != "" {
@@ -59,21 +53,24 @@ func (c *virtualMachineClient) List(ctx context.Context, namespace string) ([]v1
 	return list.Items, nil
 }
 
-func (c *virtualMachineClient) Create(ctx context.Context, vm *v1alpha2.VirtualMachine) error {
+// Create creates a new VirtualMachine
+func (c *VirtualMachineClient) Create(ctx context.Context, vm *v1alpha2.VirtualMachine) error {
 	if err := c.client.Create(ctx, vm); err != nil {
 		return fmt.Errorf("failed to create VirtualMachine %s/%s: %w", vm.Namespace, vm.Name, err)
 	}
 	return nil
 }
 
-func (c *virtualMachineClient) Update(ctx context.Context, vm *v1alpha2.VirtualMachine) error {
+// Update updates an existing VirtualMachine
+func (c *VirtualMachineClient) Update(ctx context.Context, vm *v1alpha2.VirtualMachine) error {
 	if err := c.client.Update(ctx, vm); err != nil {
 		return fmt.Errorf("failed to update VirtualMachine %s/%s: %w", vm.Namespace, vm.Name, err)
 	}
 	return nil
 }
 
-func (c *virtualMachineClient) Delete(ctx context.Context, namespace, name string) error {
+// Delete deletes a VirtualMachine by namespace and name
+func (c *VirtualMachineClient) Delete(ctx context.Context, namespace, name string) error {
 	vm := &v1alpha2.VirtualMachine{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: namespace,

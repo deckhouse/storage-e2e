@@ -27,19 +27,12 @@ import (
 
 // VirtualImageClient provides operations on VirtualImage resources
 // Note: VirtualImage is a namespace-scoped resource
-type VirtualImageClient interface {
-	Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualImage, error)
-	List(ctx context.Context, namespace string) ([]v1alpha2.VirtualImage, error)
-	Create(ctx context.Context, vi *v1alpha2.VirtualImage) error
-	Update(ctx context.Context, vi *v1alpha2.VirtualImage) error
-	Delete(ctx context.Context, namespace, name string) error
-}
-
-type virtualImageClient struct {
+type VirtualImageClient struct {
 	client client.Client
 }
 
-func (c *virtualImageClient) Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualImage, error) {
+// Get retrieves a VirtualImage by namespace and name
+func (c *VirtualImageClient) Get(ctx context.Context, namespace, name string) (*v1alpha2.VirtualImage, error) {
 	vi := &v1alpha2.VirtualImage{}
 	key := client.ObjectKey{Namespace: namespace, Name: name}
 	if err := c.client.Get(ctx, key, vi); err != nil {
@@ -48,7 +41,8 @@ func (c *virtualImageClient) Get(ctx context.Context, namespace, name string) (*
 	return vi, nil
 }
 
-func (c *virtualImageClient) List(ctx context.Context, namespace string) ([]v1alpha2.VirtualImage, error) {
+// List lists VirtualImages in a namespace
+func (c *VirtualImageClient) List(ctx context.Context, namespace string) ([]v1alpha2.VirtualImage, error) {
 	list := &v1alpha2.VirtualImageList{}
 	if err := c.client.List(ctx, list, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("failed to list VirtualImages in namespace %s: %w", namespace, err)
@@ -56,21 +50,24 @@ func (c *virtualImageClient) List(ctx context.Context, namespace string) ([]v1al
 	return list.Items, nil
 }
 
-func (c *virtualImageClient) Create(ctx context.Context, vi *v1alpha2.VirtualImage) error {
+// Create creates a new VirtualImage
+func (c *VirtualImageClient) Create(ctx context.Context, vi *v1alpha2.VirtualImage) error {
 	if err := c.client.Create(ctx, vi); err != nil {
 		return fmt.Errorf("failed to create VirtualImage %s/%s: %w", vi.Namespace, vi.Name, err)
 	}
 	return nil
 }
 
-func (c *virtualImageClient) Update(ctx context.Context, vi *v1alpha2.VirtualImage) error {
+// Update updates an existing VirtualImage
+func (c *VirtualImageClient) Update(ctx context.Context, vi *v1alpha2.VirtualImage) error {
 	if err := c.client.Update(ctx, vi); err != nil {
 		return fmt.Errorf("failed to update VirtualImage %s/%s: %w", vi.Namespace, vi.Name, err)
 	}
 	return nil
 }
 
-func (c *virtualImageClient) Delete(ctx context.Context, namespace, name string) error {
+// Delete deletes a VirtualImage by namespace and name
+func (c *VirtualImageClient) Delete(ctx context.Context, namespace, name string) error {
 	vi := &v1alpha2.VirtualImage{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -82,4 +79,3 @@ func (c *virtualImageClient) Delete(ctx context.Context, namespace, name string)
 	}
 	return nil
 }
-

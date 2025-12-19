@@ -27,25 +27,21 @@ import (
 )
 
 // DeploymentClient provides operations on Deployment resources
-type DeploymentClient interface {
-	Get(ctx context.Context, namespace, name string) (*appsv1.Deployment, error)
-}
-
-type deploymentClient struct {
+type DeploymentClient struct {
 	client kubernetes.Interface
 }
 
 // NewDeploymentClient creates a new deployment client from a rest.Config
-func NewDeploymentClient(config *rest.Config) (DeploymentClient, error) {
+func NewDeploymentClient(config *rest.Config) (*DeploymentClient, error) {
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
-	return &deploymentClient{client: clientset}, nil
+	return &DeploymentClient{client: clientset}, nil
 }
 
 // Get retrieves a deployment by namespace and name
-func (c *deploymentClient) Get(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
+func (c *DeploymentClient) Get(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
 	deployment, err := c.client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get deployment %s/%s: %w", namespace, name, err)
