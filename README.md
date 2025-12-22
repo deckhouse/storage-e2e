@@ -10,18 +10,21 @@ High-level test that creates a complete test cluster from a YAML configuration f
 ### cluster-creation-by-steps
 Step-by-step test that creates a test cluster incrementally, validating each stage:
 
+**Setup (BeforeAll):**
 1. Environment validation - Validates required environment variables are set
 2. Cluster configuration loading - Loads and parses cluster definition from YAML file
-3. SSH connection establishment to base cluster - Connects to base cluster via SSH
-4. Kubeconfig retrieval from base cluster - Fetches kubeconfig file from base cluster
-5. SSH tunnel setup with port forwarding - Establishes tunnel to access Kubernetes API
-6. Virtualization module readiness check - Verifies virtualization module is Ready
-7. Test namespace creation - Creates test namespace if it doesn't exist
-8. Virtual machine creation and provisioning - Creates VMs and waits for them to become Running
-9. SSH connection establishment to setup node (through base cluster master) - Connects to setup node via jump host
-10. Docker installation on setup node - Installs Docker (required for DKP bootstrap)
-11. Bootstrap configuration preparation - Prepares bootstrap config from template with cluster-specific values
-12. Bootstrap files upload (private key and config.yml) to setup node - Uploads files needed for DKP bootstrap
+
+**Test Steps:**
+1. Connect to base cluster - Establishes SSH connection, retrieves kubeconfig, and sets up port forwarding tunnel
+2. Virtualization module readiness check - Verifies virtualization module is Ready
+3. Test namespace creation - Creates test namespace if it doesn't exist
+4. Virtual machine creation and provisioning - Creates VMs and waits for them to become Running
+5. SSH connection establishment to setup node (through base cluster master) - Connects to setup node via jump host
+6. Docker installation on setup node - Installs Docker (required for DKP bootstrap)
+7. Bootstrap configuration preparation - Prepares bootstrap config from template with cluster-specific values
+8. Bootstrap files upload (private key and config.yml) to setup node - Uploads files needed for DKP bootstrap
+9. Cluster bootstrap - Bootstraps Kubernetes cluster from setup node to first master node
+10. Cluster readiness verification - Verifies cluster is ready by checking deckhouse deployment
 
 ## Environment Variables
 

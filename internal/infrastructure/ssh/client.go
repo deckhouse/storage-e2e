@@ -18,6 +18,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -404,7 +405,12 @@ func (c *client) Close() error {
 		c.keepaliveWg.Wait()
 	}
 	if c.sshClient != nil {
-		return c.sshClient.Close()
+		err := c.sshClient.Close()
+		// Ignore EOF errors - they just mean the connection was already closed
+		if err != nil && (errors.Is(err, io.EOF) || strings.Contains(err.Error(), "EOF")) {
+			return nil
+		}
+		return err
 	}
 	return nil
 }
@@ -665,12 +671,18 @@ func (c *jumpHostClient) Close() error {
 	var errs []error
 	if c.targetClient != nil {
 		if err := c.targetClient.Close(); err != nil {
-			errs = append(errs, err)
+			// Ignore EOF errors - they just mean the connection was already closed
+			if !errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "EOF") {
+				errs = append(errs, err)
+			}
 		}
 	}
 	if c.jumpClient != nil {
 		if err := c.jumpClient.Close(); err != nil {
-			errs = append(errs, err)
+			// Ignore EOF errors - they just mean the connection was already closed
+			if !errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "EOF") {
+				errs = append(errs, err)
+			}
 		}
 	}
 	if len(errs) > 0 {
