@@ -16,5 +16,38 @@ limitations under the License.
 
 package deckhouse
 
-// TODO: Implement Deckhouse client interface
+import (
+	"context"
 
+	deckhousev1alpha1 "github.com/deckhouse/deckhouse/deckhouse-controller/pkg/apis/deckhouse.io/v1alpha1"
+	deckhousev1alpha2 "github.com/deckhouse/deckhouse/deckhouse-controller/pkg/apis/deckhouse.io/v1alpha2"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// Client provides access to deckhouse resources
+type Client struct {
+	client client.Client
+}
+
+// NewClient creates a new deckhouse client from a rest.Config
+// It uses controller-runtime client which provides type-safe access to CRDs
+func NewClient(ctx context.Context, config *rest.Config) (*Client, error) {
+	scheme := runtime.NewScheme()
+
+	// Register deckhouse API types with the scheme
+	if err := deckhousev1alpha1.SchemeBuilder.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+	if err := deckhousev1alpha2.SchemeBuilder.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+
+	cl, err := client.New(config, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{client: cl}, nil
+}
