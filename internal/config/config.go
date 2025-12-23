@@ -38,6 +38,6 @@ const (
 	VMsRunningTimeout   = 20 * time.Minute
 	NodesReadyTimeout   = 15 * time.Minute
 	DKPDeployTimeout    = 30 * time.Minute // Timeout for DKP deployment
-	ModuleDeployTimeout = 20 * time.Minute // Timeout for module deployment
+	ModuleDeployTimeout = 30 * time.Minute // Timeout for module deployment
 	HostReadyTimeout    = 10 * time.Minute // Timeout for hosts to be ready
 )

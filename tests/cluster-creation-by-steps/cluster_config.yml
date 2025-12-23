@@ -60,8 +60,8 @@ clusterDefinition:
           enableThinProvisioning: true
         dependencies:
           - "sds-local-volume"
-      - name: "sds-replicated-volume"
-        version: 1
-        enabled: true
-        dependencies:
-          - "sds-node-configurator"
+      # - name: "sds-replicated-volume"
+      #   version: 1
+      #   enabled: true
+      #   dependencies:
+      #     - "sds-node-configurator"

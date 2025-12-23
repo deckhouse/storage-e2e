@@ -444,6 +444,8 @@ func WaitForModulesReady(ctx context.Context, kubeconfig *rest.Config, clusterDe
 }
 
 // WaitForModuleReady waits for a module to reach the Ready phase
+// It continues waiting even if the module is temporarily in Error phase, as modules can recover.
+// Only fails if the timeout is exceeded and the module is still not Ready.
 func WaitForModuleReady(ctx context.Context, kubeconfig *rest.Config, moduleName string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(2 * time.Second)
@@ -454,10 +456,6 @@ func WaitForModuleReady(ctx context.Context, kubeconfig *rest.Config, moduleName
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if time.Now().After(deadline) {
-				return fmt.Errorf("timeout waiting for module %s to be ready", moduleName)
-			}
-
 			module, err := deckhouse.GetModule(ctx, kubeconfig, moduleName)
 			if err != nil {
 				// Module doesn't exist yet, continue waiting
@@ -468,9 +466,16 @@ func WaitForModuleReady(ctx context.Context, kubeconfig *rest.Config, moduleName
 				return nil
 			}
 
-			if module.Status.Phase == "Error" {
-				return fmt.Errorf("module %s is in Error phase", moduleName)
+			// Check timeout only after checking the phase
+			// This ensures we wait the full timeout period even if module is in Error phase
+			if time.Now().After(deadline) {
+				if module.Status.Phase == "Error" {
+					return fmt.Errorf("timeout waiting for module %s to be ready: module is still in Error phase after %v", moduleName, timeout)
+				}
+				return fmt.Errorf("timeout waiting for module %s to be ready: module is in %s phase after %v", moduleName, module.Status.Phase, timeout)
 			}
+
+			// Continue waiting even if module is in Error phase - it may recover
 		}
 	}
 }
