@@ -35,10 +35,14 @@ export TEST_CLUSTER_CLEANUP='false'  # Default: false (set to 'true' or 'True' t
 
 ## Running Tests
 
-### Run all tests in a test suite
+### Make your own test suite from template
+
+See [tests/README.md](tests/README.md)
+
+### Run all tests in the test suite
 
 ```bash
-go test -timeout=90m -v ./tests/cluster-creation-by-steps -count=1
+go test -timeout=90m -v ./tests/test-folder-name -count=1
 ```
 
 The `-count=1` flag prevents Go from using cached test results.
@@ -46,7 +50,7 @@ The `-count=1` flag prevents Go from using cached test results.
 ### Run a specific test
 
 ```bash
-go test -timeout=30m -v ./tests/cluster-creation-by-steps -count=1 -ginkgo.focus="should create virtual machines"
+go test -timeout=30m -v ./tests/test-folder-name -count=1 -ginkgo.focus="should create virtual machines"
 ```
 
 ## Tests description
