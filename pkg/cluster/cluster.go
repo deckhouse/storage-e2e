@@ -30,30 +30,50 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/apps"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
+	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
+	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 )
 
 // TestClusterResources holds all resources created for a test cluster connection
 type TestClusterResources struct {
-	SSHClient         ssh.SSHClient
-	Kubeconfig        *rest.Config
-	KubeconfigPath    string
-	TunnelInfo        *ssh.TunnelInfo
-	ClusterDefinition *config.ClusterDefinition
+	SSHClient          ssh.SSHClient
+	Kubeconfig         *rest.Config
+	KubeconfigPath     string
+	TunnelInfo         *ssh.TunnelInfo
+	ClusterDefinition  *config.ClusterDefinition
+	VMResources        *VMResources
+	BaseClusterClient  ssh.SSHClient   // Base cluster SSH client (for cleanup)
+	BaseKubeconfig     *rest.Config    // Base cluster kubeconfig (for cleanup)
+	BaseKubeconfigPath string          // Base cluster kubeconfig path (for cleanup)
+	BaseTunnelInfo     *ssh.TunnelInfo // Base cluster tunnel (for cleanup, may be nil if stopped)
+	SetupSSHClient     ssh.SSHClient   // Setup node SSH client (for cleanup)
 }
 
-// CreateTestCluster establishes a connection to a test cluster by:
+// CreateTestCluster creates a complete test cluster by performing all necessary steps:
 // 1. Loading cluster configuration from YAML
-// 2. Establishing SSH connection to the base cluster
-// 3. Retrieving kubeconfig from the base cluster
-// 4. Establishing SSH tunnel with port forwarding
+// 2. Connecting to base cluster
+// 3. Verifying virtualization module is Ready
+// 4. Creating test namespace
+// 5. Creating virtual machines
+// 6. Gathering VM information
+// 7. Establishing SSH connection to setup node
+// 8. Installing Docker on setup node
+// 9. Preparing and uploading bootstrap config
+// 10. Bootstrapping cluster
+// 11. Creating NodeGroup for workers
+// 12. Verifying cluster is ready
+// 13. Adding nodes to cluster
+// 14. Enabling and configuring modules
 //
-// It returns all the resources needed to interact with the cluster.
+// It returns all the resources needed to interact with the test cluster.
 // SSH credentials are obtained from environment variables via config functions.
 func CreateTestCluster(
 	ctx context.Context,
 	yamlConfigFilename string,
 ) (*TestClusterResources, error) {
-	// Stage 1: Load cluster configuration from YAML
+	// Step 1: Load cluster configuration from YAML
 	clusterDefinition, err := internalcluster.LoadClusterConfig(yamlConfigFilename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load cluster configuration: %w", err)
@@ -67,60 +87,377 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("failed to get SSH private key path: %w", err)
 	}
 
-	// Stage 2: Establish SSH connection to base cluster
-	sshClient, err := ssh.NewClient(sshUser, sshHost, sshKeyPath)
+	// Step 2: Connect to base cluster
+	baseClusterResources, err := ConnectToCluster(ctx, ConnectClusterOptions{
+		SSHUser:     sshUser,
+		SSHHost:     sshHost,
+		SSHKeyPath:  sshKeyPath,
+		UseJumpHost: false,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SSH client: %w", err)
+		return nil, fmt.Errorf("failed to connect to base cluster: %w", err)
 	}
 
-	// Stage 3: Get kubeconfig from base cluster
-	// Use a timeout context for kubeconfig retrieval
-	kubeconfigCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Step 3: Verify virtualization module is Ready
+	moduleCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	module, err := deckhouse.GetModule(moduleCtx, baseClusterResources.Kubeconfig, "virtualization")
+	cancel()
+	if err != nil {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to get virtualization module: %w", err)
+	}
+	if module.Status.Phase != "Ready" {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("virtualization module is not Ready (phase: %s)", module.Status.Phase)
+	}
+
+	// Step 4: Create test namespace
+	namespaceCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	namespace := config.TestClusterNamespace
+	_, err = kubernetes.CreateNamespaceIfNotExists(namespaceCtx, baseClusterResources.Kubeconfig, namespace)
+	cancel()
+	if err != nil {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to create namespace: %w", err)
+	}
+
+	// Step 5: Create virtualization client and virtual machines
+	virtCtx, cancel := context.WithTimeout(ctx, 25*time.Minute)
+	virtClient, err := virtualization.NewClient(virtCtx, baseClusterResources.Kubeconfig)
+	if err != nil {
+		cancel()
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to create virtualization client: %w", err)
+	}
+
+	vmNames, vmResources, err := CreateVirtualMachines(virtCtx, virtClient, clusterDefinition)
+	cancel()
+	if err != nil {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to create virtual machines: %w", err)
+	}
+
+	// Wait for all VMs to become Running
+	vmWaitCtx, cancel := context.WithTimeout(ctx, config.VMsRunningTimeout)
 	defer cancel()
-
-	kubeconfig, kubeconfigPath, err := internalcluster.GetKubeconfig(
-		kubeconfigCtx,
-		sshHost,
-		sshUser,
-		sshKeyPath,
-		sshClient,
-	)
-	if err != nil {
-		sshClient.Close()
-		return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
-	}
-
-	// Stage 4: Establish SSH tunnel with port forwarding
-	tunnelInfo, err := ssh.EstablishSSHTunnel(ctx, sshClient, "6445")
-	if err != nil {
-		sshClient.Close()
-		return nil, fmt.Errorf("failed to establish SSH tunnel: %w", err)
-	}
-
-	return &TestClusterResources{
-		SSHClient:         sshClient,
-		Kubeconfig:        kubeconfig,
-		KubeconfigPath:    kubeconfigPath,
-		TunnelInfo:        tunnelInfo,
-		ClusterDefinition: clusterDefinition,
-	}, nil
-}
-
-// CleanupTestCluster cleans up all resources created by CreateTestCluster
-func CleanupTestCluster(resources *TestClusterResources) error {
-	var errs []error
-
-	// Stop SSH tunnel first (must be done before closing SSH client)
-	if resources.TunnelInfo != nil && resources.TunnelInfo.StopFunc != nil {
-		if err := resources.TunnelInfo.StopFunc(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to stop SSH tunnel: %w", err))
+	for _, vmName := range vmNames {
+		vmReady := false
+		for !vmReady {
+			select {
+			case <-vmWaitCtx.Done():
+				baseClusterResources.SSHClient.Close()
+				baseClusterResources.TunnelInfo.StopFunc()
+				return nil, fmt.Errorf("timeout waiting for VM %s to become Running", vmName)
+			case <-time.After(20 * time.Second):
+				vm, err := virtClient.VirtualMachines().Get(vmWaitCtx, namespace, vmName)
+				if err != nil {
+					continue
+				}
+				if vm.Status.Phase == v1alpha2.MachineRunning {
+					vmReady = true
+				}
+			}
 		}
 	}
 
-	// Close SSH client connection
+	// Step 6: Gather VM information
+	gatherCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	err = GatherVMInfo(gatherCtx, virtClient, namespace, clusterDefinition, vmResources)
+	cancel()
+	if err != nil {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to gather VM information: %w", err)
+	}
+
+	// Step 7: Establish SSH connection to setup node
+	setupNode, err := GetSetupNode(clusterDefinition)
+	if err != nil {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to get setup node: %w", err)
+	}
+	setupNodeIP := setupNode.IPAddress
+	if setupNodeIP == "" {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("setup node IP address is not set")
+	}
+
+	setupSSHClient, err := ssh.NewClientWithJumpHost(
+		sshUser, sshHost, sshKeyPath, // jump host
+		config.VMSSHUser, setupNodeIP, sshKeyPath, // target host
+	)
+	if err != nil {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to create SSH client to setup node: %w", err)
+	}
+
+	// Step 8: Install Docker on setup node
+	dockerCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	err = InstallDocker(dockerCtx, setupSSHClient)
+	cancel()
+	if err != nil {
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to install Docker on setup node: %w", err)
+	}
+
+	// Step 9: Prepare bootstrap config
+	bootstrapConfig, err := PrepareBootstrapConfig(clusterDefinition)
+	if err != nil {
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to prepare bootstrap config: %w", err)
+	}
+
+	// Step 10: Upload bootstrap files
+	uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	err = UploadBootstrapFiles(uploadCtx, setupSSHClient, sshKeyPath, bootstrapConfig)
+	cancel()
+	if err != nil {
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to upload bootstrap files: %w", err)
+	}
+
+	// Step 11: Bootstrap cluster
+	firstMasterIP := clusterDefinition.Masters[0].IPAddress
+	if firstMasterIP == "" {
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("first master IP address is not set")
+	}
+
+	bootstrapCtx, cancel := context.WithTimeout(ctx, 35*time.Minute)
+	err = BootstrapCluster(bootstrapCtx, setupSSHClient, clusterDefinition, bootstrapConfig)
+	cancel()
+	if err != nil {
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("failed to bootstrap cluster: %w", err)
+	}
+
+	// Step 12: Store base cluster kubeconfig before stopping tunnel (needed for cleanup)
+	baseKubeconfig := baseClusterResources.Kubeconfig
+	baseKubeconfigPath := baseClusterResources.KubeconfigPath
+
+	// Step 13: Stop base cluster tunnel (needed for test cluster tunnel)
+	if baseClusterResources.TunnelInfo != nil && baseClusterResources.TunnelInfo.StopFunc != nil {
+		baseClusterResources.TunnelInfo.StopFunc()
+	}
+
+	// Step 14: Connect to test cluster
+	testClusterResources, err := ConnectToCluster(ctx, ConnectClusterOptions{
+		SSHUser:       sshUser,
+		SSHHost:       sshHost,
+		SSHKeyPath:    sshKeyPath,
+		UseJumpHost:   true,
+		TargetUser:    config.VMSSHUser,
+		TargetHost:    firstMasterIP,
+		TargetKeyPath: sshKeyPath,
+	})
+	if err != nil {
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		return nil, fmt.Errorf("failed to connect to test cluster: %w", err)
+	}
+
+	// Step 14: Create NodeGroup for workers
+	nodegroupCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	err = CreateStaticNodeGroup(nodegroupCtx, testClusterResources.Kubeconfig, "worker")
+	cancel()
+	if err != nil {
+		testClusterResources.SSHClient.Close()
+		testClusterResources.TunnelInfo.StopFunc()
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		return nil, fmt.Errorf("failed to create worker NodeGroup: %w", err)
+	}
+
+	// Step 15: Verify cluster is ready
+	healthCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	err = CheckClusterHealth(healthCtx, testClusterResources.Kubeconfig)
+	cancel()
+	if err != nil {
+		testClusterResources.SSHClient.Close()
+		testClusterResources.TunnelInfo.StopFunc()
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		return nil, fmt.Errorf("cluster is not ready: %w", err)
+	}
+
+	// Step 16: Add nodes to cluster
+	nodesCtx, cancel := context.WithTimeout(ctx, config.NodesReadyTimeout)
+	err = AddNodesToCluster(nodesCtx, testClusterResources.Kubeconfig, clusterDefinition, sshUser, sshHost, sshKeyPath)
+	cancel()
+	if err != nil {
+		testClusterResources.SSHClient.Close()
+		testClusterResources.TunnelInfo.StopFunc()
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		return nil, fmt.Errorf("failed to add nodes to cluster: %w", err)
+	}
+
+	// Wait for all nodes to become Ready
+	nodesReadyCtx, cancel := context.WithTimeout(ctx, config.NodesReadyTimeout)
+	err = WaitForAllNodesReady(nodesReadyCtx, testClusterResources.Kubeconfig, clusterDefinition, config.NodesReadyTimeout)
+	cancel()
+	if err != nil {
+		testClusterResources.SSHClient.Close()
+		testClusterResources.TunnelInfo.StopFunc()
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		return nil, fmt.Errorf("failed to wait for nodes to be ready: %w", err)
+	}
+
+	// Step 17: Enable and configure modules
+	modulesCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	err = EnableAndConfigureModules(modulesCtx, testClusterResources.Kubeconfig, clusterDefinition, testClusterResources.SSHClient)
+	cancel()
+	if err != nil {
+		testClusterResources.SSHClient.Close()
+		testClusterResources.TunnelInfo.StopFunc()
+		setupSSHClient.Close()
+		baseClusterResources.SSHClient.Close()
+		return nil, fmt.Errorf("failed to enable and configure modules: %w", err)
+	}
+
+	// Set cluster definition and VM resources
+	testClusterResources.ClusterDefinition = clusterDefinition
+	testClusterResources.VMResources = vmResources
+	testClusterResources.BaseClusterClient = baseClusterResources.SSHClient
+	testClusterResources.BaseKubeconfig = baseKubeconfig
+	testClusterResources.BaseKubeconfigPath = baseKubeconfigPath
+	testClusterResources.BaseTunnelInfo = nil // Tunnel was stopped, will be re-established if needed
+	testClusterResources.SetupSSHClient = setupSSHClient
+
+	return testClusterResources, nil
+}
+
+// WaitForTestClusterReady waits for all modules in the test cluster to become Ready.
+// It uses the ModuleDeployTimeout from config.
+func WaitForTestClusterReady(ctx context.Context, resources *TestClusterResources) error {
+	if resources == nil {
+		return fmt.Errorf("resources cannot be nil")
+	}
+	if resources.Kubeconfig == nil {
+		return fmt.Errorf("kubeconfig cannot be nil")
+	}
+	if resources.ClusterDefinition == nil {
+		return fmt.Errorf("cluster definition cannot be nil")
+	}
+
+	return WaitForModulesReady(ctx, resources.Kubeconfig, resources.ClusterDefinition, config.ModuleDeployTimeout)
+}
+
+// CleanupTestCluster cleans up all resources created by CreateTestCluster.
+// It performs cleanup in the following order:
+// 1. Stop test cluster tunnel and close test cluster SSH client
+// 2. Close setup SSH client
+// 3. Re-establish base cluster tunnel if needed (for VM cleanup via API)
+// 4. Remove setup VM (always removed)
+// 5. Remove test cluster VMs if TEST_CLUSTER_CLEANUP is enabled
+// 6. Stop base cluster tunnel and close base cluster SSH client
+func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) error {
+	if resources == nil {
+		return nil // Nothing to clean up
+	}
+
+	var errs []error
+
+	// Step 1: Stop test cluster tunnel and close test cluster SSH client
+	if resources.TunnelInfo != nil && resources.TunnelInfo.StopFunc != nil {
+		if err := resources.TunnelInfo.StopFunc(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to stop test cluster SSH tunnel: %w", err))
+		}
+	}
+
 	if resources.SSHClient != nil {
 		if err := resources.SSHClient.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close SSH client: %w", err))
+			errs = append(errs, fmt.Errorf("failed to close test cluster SSH client: %w", err))
+		}
+	}
+
+	// Step 2: Close setup SSH client
+	if resources.SetupSSHClient != nil {
+		if err := resources.SetupSSHClient.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close setup SSH client: %w", err))
+		}
+	}
+
+	// Step 3: Re-establish base cluster tunnel if needed for VM cleanup
+	// We need API access to remove VMs, so we need the tunnel
+	var baseTunnel *ssh.TunnelInfo
+	var cleanupKubeconfig *rest.Config
+	if resources.BaseClusterClient != nil && resources.VMResources != nil {
+		// Re-establish tunnel if it was stopped (BaseTunnelInfo is nil)
+		if resources.BaseTunnelInfo == nil {
+			var tunnelErr error
+			baseTunnel, tunnelErr = ssh.EstablishSSHTunnel(context.Background(), resources.BaseClusterClient, "6445")
+			if tunnelErr != nil {
+				errs = append(errs, fmt.Errorf("failed to re-establish base cluster tunnel for VM cleanup: %w", tunnelErr))
+			} else {
+				// Update kubeconfig to use the tunnel port
+				if resources.BaseKubeconfigPath != "" {
+					if updateErr := internalcluster.UpdateKubeconfigPort(resources.BaseKubeconfigPath, baseTunnel.LocalPort); updateErr == nil {
+						// Rebuild kubeconfig
+						cleanupKubeconfig, _ = clientcmd.BuildConfigFromFlags("", resources.BaseKubeconfigPath)
+					}
+				}
+			}
+		} else {
+			// Tunnel already exists, use it
+			baseTunnel = resources.BaseTunnelInfo
+			cleanupKubeconfig = resources.BaseKubeconfig
+		}
+
+		// Step 4 & 5: Remove VMs if we have a valid kubeconfig
+		if cleanupKubeconfig != nil {
+			// Create virtualization client for cleanup
+			virtClient, virtErr := virtualization.NewClient(ctx, cleanupKubeconfig)
+			if virtErr == nil {
+				// Step 4: Remove setup VM (always removed)
+				if resources.VMResources.SetupVMName != "" {
+					namespace := config.TestClusterNamespace
+					if removeErr := RemoveVM(ctx, virtClient, namespace, resources.VMResources.SetupVMName); removeErr != nil {
+						errs = append(errs, fmt.Errorf("failed to remove setup VM %s: %w", resources.VMResources.SetupVMName, removeErr))
+					}
+				}
+
+				// Step 5: Remove test cluster VMs if cleanup is enabled
+				if config.TestClusterCleanup == "true" || config.TestClusterCleanup == "True" {
+					if removeErr := RemoveAllVMs(ctx, resources.VMResources); removeErr != nil {
+						errs = append(errs, fmt.Errorf("failed to remove test cluster VMs: %w", removeErr))
+					}
+				}
+			} else {
+				errs = append(errs, fmt.Errorf("failed to create virtualization client for cleanup: %w", virtErr))
+			}
+		}
+	}
+
+	// Step 6: Stop base cluster tunnel and close base cluster SSH client
+	if baseTunnel != nil && baseTunnel.StopFunc != nil {
+		if err := baseTunnel.StopFunc(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to stop base cluster SSH tunnel: %w", err))
+		}
+	}
+
+	if resources.BaseClusterClient != nil {
+		if err := resources.BaseClusterClient.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close base cluster SSH client: %w", err))
 		}
 	}
 
