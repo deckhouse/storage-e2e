@@ -63,8 +63,8 @@ var (
 	TestClusterNamespaceDefaultValue = "e2e-test-cluster"
 
 	// TestClusterStorageClass specifies the storage class for DKP cluster deployment
-	TestClusterStorageClass             = os.Getenv("TEST_CLUSTER_STORAGE_CLASS")
-	TestClusterStorageClassDefaultValue = "rsc-test-r2-local"
+	TestClusterStorageClass = os.Getenv("TEST_CLUSTER_STORAGE_CLASS")
+	//TestClusterStorageClassDefaultValue = "rsc-test-r2-local"
 
 	// DKPLicenseKey specifies the DKP license key for cluster deployment
 	DKPLicenseKey = os.Getenv("DKP_LICENSE_KEY")
@@ -95,9 +95,6 @@ func ValidateEnvironment() error {
 	if TestClusterNamespace == "" {
 		TestClusterNamespace = TestClusterNamespaceDefaultValue
 	}
-	if TestClusterStorageClass == "" {
-		TestClusterStorageClass = TestClusterStorageClassDefaultValue
-	}
 
 	// There are no default values for these variables and they must be set! Otherwise, the test will fail.
 	if SSHUser == "" {
@@ -106,6 +103,10 @@ func ValidateEnvironment() error {
 
 	if SSHHost == "" {
 		return fmt.Errorf("SSH_HOST environment variable is required but not set.")
+	}
+
+	if TestClusterStorageClass == "" {
+		return fmt.Errorf("TEST_CLUSTER_STORAGE_CLASS environment variable is required but not set.")
 	}
 
 	if DKPLicenseKey == "" {
