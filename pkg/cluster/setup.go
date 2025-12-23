@@ -18,18 +18,23 @@ package cluster
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"text/template"
+	"time"
 
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
 )
 
 // OSInfo represents detected operating system information
@@ -121,18 +126,40 @@ func InstallDocker(ctx context.Context, sshClient ssh.SSHClient) error {
 }
 
 // PrepareBootstrapConfig prepares the bootstrap configuration file from a template.
-// It takes cluster definition, master IP address, and VM IP addresses to calculate the internal network CIDR.
+// It takes cluster definition and extracts VM IP addresses to calculate the internal network CIDR.
 // The function generates a config file and saves it to the temp/ directory.
 // Returns the path to the generated config file.
-func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition, masterIP string, vmIPs []string) (string, error) {
+// Note: clusterDef must have IPAddress fields filled in for all VM nodes (via GatherVMInfo)
+func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition) (string, error) {
 	if clusterDef == nil {
 		return "", fmt.Errorf("clusterDef cannot be nil")
 	}
-	if masterIP == "" {
-		return "", fmt.Errorf("masterIP cannot be empty")
+
+	// Extract VM IPs from cluster definition
+	var vmIPs []string
+	firstMasterIP := ""
+	for _, master := range clusterDef.Masters {
+		if master.HostType == config.HostTypeVM && master.IPAddress != "" {
+			vmIPs = append(vmIPs, master.IPAddress)
+			if firstMasterIP == "" {
+				firstMasterIP = master.IPAddress
+			}
+		}
 	}
+	for _, worker := range clusterDef.Workers {
+		if worker.HostType == config.HostTypeVM && worker.IPAddress != "" {
+			vmIPs = append(vmIPs, worker.IPAddress)
+		}
+	}
+	if clusterDef.Setup != nil && clusterDef.Setup.HostType == config.HostTypeVM && clusterDef.Setup.IPAddress != "" {
+		vmIPs = append(vmIPs, clusterDef.Setup.IPAddress)
+	}
+
 	if len(vmIPs) == 0 {
-		return "", fmt.Errorf("vmIPs cannot be empty")
+		return "", fmt.Errorf("no VM IP addresses found in cluster definition (IPAddress fields must be filled via GatherVMInfo)")
+	}
+	if firstMasterIP == "" {
+		return "", fmt.Errorf("no master IP address found in cluster definition")
 	}
 
 	// Calculate internal network CIDR from VM IPs (assume /24 subnet)
@@ -143,7 +170,7 @@ func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition, masterIP strin
 
 	// Format public domain template with master IP for sslip.io
 	// Format: %s.10.10.1.5.sslip.io (dots in IP are preserved)
-	publicDomainTemplate := fmt.Sprintf("%%s.%s.sslip.io", masterIP)
+	publicDomainTemplate := fmt.Sprintf("%%s.%s.sslip.io", firstMasterIP)
 
 	// Prepare template data
 	templateData := struct {
@@ -368,19 +395,22 @@ func getDevBranchFromConfig(configPath string) (string, error) {
 // It performs the following steps:
 // 1. Logs into the Docker registry using DKP_LICENSE_KEY from config
 // 2. Runs the dhctl bootstrap command in a Docker container (can take up to 30 minutes)
-// The function uses sudo to run commands as root on the setup node.
-// It uses config.VMSSHUser and config.DKPLicenseKey from the config package.
-// The install image is constructed from registryRepo and the devBranch read from configPath.
-func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *config.ClusterDefinition, masterIP string, configPath string) error {
+// Note: clusterDef must have IPAddress fields filled in for all VM nodes (via GatherVMInfo)
+func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *config.ClusterDefinition, configPath string) error {
 	if sshClient == nil {
 		return fmt.Errorf("sshClient cannot be nil")
 	}
 	if clusterDef == nil {
 		return fmt.Errorf("clusterDef cannot be nil")
 	}
-	if masterIP == "" {
-		return fmt.Errorf("masterIP cannot be empty")
+	if len(clusterDef.Masters) == 0 {
+		return fmt.Errorf("cluster definition must have at least one master")
 	}
+	firstMaster := clusterDef.Masters[0]
+	if firstMaster.IPAddress == "" {
+		return fmt.Errorf("first master IP address is not set (must be filled via GatherVMInfo)")
+	}
+	masterIP := firstMaster.IPAddress
 	if configPath == "" {
 		return fmt.Errorf("configPath cannot be empty")
 	}
@@ -525,4 +555,366 @@ echo "%s"
 	}
 
 	return nil
+}
+
+// AddNodesToCluster adds nodes to the cluster
+// It performs the following steps:
+// 1. Gets bootstrap scripts from secrets
+// 2. Runs bootstrap scripts on each node via SSH
+// Note: NodeGroup must be created before calling this function (secrets won't appear until NodeGroup exists)
+// Note: clusterDef must have IPAddress fields filled in for all VM nodes (via GatherVMInfo)
+func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef *config.ClusterDefinition, baseSSHUser, baseSSHHost, sshKeyPath string) error {
+	if kubeconfig == nil {
+		return fmt.Errorf("kubeconfig cannot be nil")
+	}
+	if clusterDef == nil {
+		return fmt.Errorf("clusterDef cannot be nil")
+	}
+
+	// Step 1: Get bootstrap scripts from secrets
+	workerBootstrapScript, err := GetSecretDataValue(ctx, kubeconfig, "d8-cloud-instance-manager", "manual-bootstrap-for-worker", "bootstrap.sh")
+	if err != nil {
+		return fmt.Errorf("failed to get worker bootstrap script: %w", err)
+	}
+
+	masterBootstrapScript, err := GetSecretDataValue(ctx, kubeconfig, "d8-cloud-instance-manager", "manual-bootstrap-for-master", "bootstrap.sh")
+	if err != nil {
+		return fmt.Errorf("failed to get master bootstrap script: %w", err)
+	}
+
+	// Process additional masters (skip the first one)
+	masterCount := len(clusterDef.Masters) - 1
+	if masterCount > 0 {
+		fmt.Printf("    ▶️ Adding %d additional master node(s) to the cluster\n", masterCount)
+		for i := 1; i < len(clusterDef.Masters); i++ {
+			masterNode := clusterDef.Masters[i]
+			if err := addNodeToCluster(ctx, masterNode, masterBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath); err != nil {
+				return fmt.Errorf("failed to add master node %s: %w", masterNode.Hostname, err)
+			}
+		}
+	}
+
+	// Process all workers
+	workerCount := len(clusterDef.Workers)
+	if workerCount > 0 {
+		fmt.Printf("    ▶️ Adding %d worker node(s) to the cluster\n", workerCount)
+		for _, workerNode := range clusterDef.Workers {
+			if err := addNodeToCluster(ctx, workerNode, workerBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath); err != nil {
+				return fmt.Errorf("failed to add worker node %s: %w", workerNode.Hostname, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// addNodeToCluster adds a single node to the cluster by running the bootstrap script
+func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScript string, clusterDef *config.ClusterDefinition, baseSSHUser, baseSSHHost, sshKeyPath string) error {
+	// Get node IP address from cluster definition
+	nodeIP, err := GetNodeIPAddress(clusterDef, node.Hostname)
+	if err != nil {
+		return fmt.Errorf("failed to get IP address for node %s: %w", node.Hostname, err)
+	}
+
+	// Log start of node addition
+	nodeType := "worker"
+	if node.Role == config.ClusterRoleMaster {
+		nodeType = "master"
+	}
+	fmt.Printf("    ▶️ Adding %s node %s (%s) to the cluster...\n", nodeType, node.Hostname, nodeIP)
+
+	// Create SSH client to the node through jump host (base cluster master)
+	sshClient, err := ssh.NewClientWithJumpHost(
+		baseSSHUser, baseSSHHost, sshKeyPath, // jump host
+		config.VMSSHUser, nodeIP, sshKeyPath, // target host
+	)
+	if err != nil {
+		fmt.Printf("    ❌ Failed to create SSH connection to node %s (%s): %v\n", node.Hostname, nodeIP, err)
+		return fmt.Errorf("failed to create SSH client to node %s (%s): %w", node.Hostname, nodeIP, err)
+	}
+	defer sshClient.Close()
+
+	// Log that bootstrap script is starting
+	fmt.Printf("    ⏳ Running bootstrap script on node %s (%s)...\n", node.Hostname, nodeIP)
+
+	// Run bootstrap script as root
+	// Note: The bootstrap script from secret is already decoded (Kubernetes API returns decoded data)
+	cmd := fmt.Sprintf("sudo bash << 'BOOTSTRAP_EOF'\n%s\nBOOTSTRAP_EOF", bootstrapScript)
+
+	output, err := sshClient.Exec(ctx, cmd)
+	if err != nil {
+		fmt.Printf("    ❌ Bootstrap script failed on node %s (%s): %v\n", node.Hostname, nodeIP, err)
+		if output != "" {
+			fmt.Printf("    📋 Bootstrap script output from node %s:\n%s\n", node.Hostname, output)
+		}
+		return fmt.Errorf("failed to run bootstrap script on node %s: %w\nOutput: %s", node.Hostname, err, output)
+	}
+
+	// Log successful completion (output is only shown on failure)
+	fmt.Printf("    ✅ Bootstrap script completed successfully on node %s (%s)\n", node.Hostname, nodeIP)
+
+	return nil
+}
+
+// WaitForNodeReady waits for a node to become Ready
+func WaitForNodeReady(ctx context.Context, kubeconfig *rest.Config, nodeName string, timeout time.Duration) error {
+	nodeClient, err := core.NewNodeClient(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create node client: %w", err)
+	}
+
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return fmt.Errorf("timeout waiting for node %s to be ready", nodeName)
+			}
+
+			node, err := nodeClient.Get(ctx, nodeName)
+			if err != nil {
+				// Node doesn't exist yet, continue waiting
+				continue
+			}
+
+			if nodeClient.IsReady(ctx, node) {
+				return nil
+			}
+		}
+	}
+}
+
+// WaitForAllNodesReady waits for all expected nodes to become Ready
+// It validates that:
+// 1. All expected nodes are present in the cluster
+// 2. All nodes are in Ready state
+// Expected nodes: all masters (including the first one that was bootstrapped) + all workers
+func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterDef *config.ClusterDefinition, timeout time.Duration) error {
+	if kubeconfig == nil {
+		return fmt.Errorf("kubeconfig cannot be nil")
+	}
+	if clusterDef == nil {
+		return fmt.Errorf("clusterDef cannot be nil")
+	}
+
+	nodeClient, err := core.NewNodeClient(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create node client: %w", err)
+	}
+
+	// Build expected node names (all masters + all workers)
+	expectedNodeNames := make(map[string]bool)
+	for _, master := range clusterDef.Masters {
+		expectedNodeNames[master.Hostname] = true
+	}
+	for _, worker := range clusterDef.Workers {
+		expectedNodeNames[worker.Hostname] = true
+	}
+
+	expectedCount := len(expectedNodeNames)
+	if expectedCount == 0 {
+		return fmt.Errorf("no nodes expected in cluster definition")
+	}
+
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				// Get current state for better error message
+				nodes, err := nodeClient.List(ctx)
+				if err != nil {
+					return fmt.Errorf("timeout waiting for nodes to be ready (failed to list nodes: %w)", err)
+				}
+
+				expectedReadyCount := 0
+				foundNodes := make(map[string]bool)
+				missingNodes := make([]string, 0)
+				for _, node := range nodes.Items {
+					foundNodes[node.Name] = true
+					// Only count ready nodes that are in our expected list
+					if expectedNodeNames[node.Name] && nodeClient.IsReady(ctx, &node) {
+						expectedReadyCount++
+					}
+				}
+
+				// Find missing expected nodes
+				for expectedName := range expectedNodeNames {
+					if !foundNodes[expectedName] {
+						missingNodes = append(missingNodes, expectedName)
+					}
+				}
+
+				errorMsg := fmt.Sprintf("timeout waiting for nodes to be ready: expected %d nodes (%v), found %d nodes, %d expected nodes ready",
+					expectedCount, getNodeNamesList(expectedNodeNames), len(foundNodes), expectedReadyCount)
+				if len(missingNodes) > 0 {
+					errorMsg += fmt.Sprintf(". Missing nodes: %v", missingNodes)
+				}
+				errorMsg += fmt.Sprintf(". Found nodes: %v", getNodeNamesList(foundNodes))
+
+				return fmt.Errorf("%s", errorMsg)
+			}
+
+			// List all nodes
+			nodes, err := nodeClient.List(ctx)
+			if err != nil {
+				// Continue waiting if we can't list nodes yet
+				continue
+			}
+
+			// Check if we have all expected nodes and they are all ready
+			foundNodes := make(map[string]bool)
+			expectedReadyCount := 0
+			for _, node := range nodes.Items {
+				foundNodes[node.Name] = true
+				// Only count ready nodes that are in our expected list
+				if expectedNodeNames[node.Name] && nodeClient.IsReady(ctx, &node) {
+					expectedReadyCount++
+				}
+			}
+
+			// Check if all expected nodes are present
+			allPresent := true
+			for expectedName := range expectedNodeNames {
+				if !foundNodes[expectedName] {
+					allPresent = false
+					break
+				}
+			}
+
+			// If all expected nodes are present and all expected nodes are ready, we're done
+			if allPresent && expectedReadyCount == expectedCount {
+				return nil
+			}
+		}
+	}
+}
+
+// getNodeNamesList converts a map of node names to a sorted list for error messages
+func getNodeNamesList(nodeMap map[string]bool) []string {
+	names := make([]string, 0, len(nodeMap))
+	for name := range nodeMap {
+		names = append(names, name)
+	}
+	// Simple sort by iterating (for consistent error messages)
+	// In production, you might want to use sort.Strings
+	return names
+}
+
+// GetSSHPrivateKeyPath returns the path to the SSH private key file.
+// If SSHPrivateKey is a file path, it returns the expanded path.
+// If SSHPrivateKey is a base64-encoded string, it decodes it, writes to a temporary file in temp/<test-name>/,
+// and returns that path.
+func GetSSHPrivateKeyPath() (string, error) {
+	// Check if it looks like a file path (contains path separators or starts with ~)
+	looksLikePath := strings.Contains(config.SSHPrivateKey, "/") || strings.HasPrefix(config.SSHPrivateKey, "~") || strings.Contains(config.SSHPrivateKey, "\\")
+
+	if !looksLikePath {
+		// Doesn't look like a path, try base64 decoding
+		decoded, err := base64.StdEncoding.DecodeString(config.SSHPrivateKey)
+		if err == nil && len(decoded) > 0 {
+			// Successfully decoded, write to temp file in temp/<test-name>/
+			// Get the test file name from the caller (same pattern as PrepareBootstrapConfig)
+			_, callerFile, _, ok := runtime.Caller(1)
+			if !ok {
+				return "", fmt.Errorf("failed to get caller file information")
+			}
+			testFileName := strings.TrimSuffix(filepath.Base(callerFile), filepath.Ext(callerFile))
+
+			// Determine the temp directory path in the repo root
+			callerDir := filepath.Dir(callerFile)
+			repoRootPath := filepath.Join(callerDir, "..", "..")
+			repoRoot, err := filepath.Abs(repoRootPath)
+			if err != nil {
+				return "", fmt.Errorf("failed to resolve repo root path: %w", err)
+			}
+
+			// Create temp directory if it doesn't exist
+			tempDir := filepath.Join(repoRoot, "temp", testFileName)
+			if err := os.MkdirAll(tempDir, 0755); err != nil {
+				return "", fmt.Errorf("failed to create temp directory %s: %w", tempDir, err)
+			}
+
+			// Create temp file in temp/<test-name>/
+			tmpFile, err := os.CreateTemp(tempDir, "ssh_private_key_*")
+			if err != nil {
+				return "", fmt.Errorf("failed to create temp file for private key: %w", err)
+			}
+			defer tmpFile.Close()
+
+			if _, err := tmpFile.Write(decoded); err != nil {
+				os.Remove(tmpFile.Name())
+				return "", fmt.Errorf("failed to write decoded private key to temp file: %w", err)
+			}
+
+			// Set permissions to 0600
+			if err := os.Chmod(tmpFile.Name(), 0600); err != nil {
+				os.Remove(tmpFile.Name())
+				return "", fmt.Errorf("failed to set permissions on temp private key file: %w", err)
+			}
+
+			return tmpFile.Name(), nil
+		}
+		// If decoding failed, fall through to treat as path (might be a relative path without /)
+	}
+
+	// Treat as file path
+	return expandPath(config.SSHPrivateKey)
+}
+
+// GetSSHPublicKeyContent returns the SSH public key content as a string.
+// If SSHPublicKey is a file path, it reads and returns the file content.
+// If SSHPublicKey is a plain-text string, it returns it directly.
+func GetSSHPublicKeyContent() (string, error) {
+	if config.SSHPublicKey == "" {
+		return "", fmt.Errorf("SSH_PUBLIC_KEY is not set")
+	}
+
+	// Check if it looks like a file path (contains / or ~)
+	if strings.Contains(config.SSHPublicKey, "/") || strings.HasPrefix(config.SSHPublicKey, "~") {
+		// Treat as file path
+		expandedPath, err := expandPath(config.SSHPublicKey)
+		if err != nil {
+			return "", fmt.Errorf("failed to expand public key path: %w", err)
+		}
+
+		content, err := os.ReadFile(expandedPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read public key file %s: %w", expandedPath, err)
+		}
+
+		// Trim whitespace (public key files often have trailing newlines)
+		return strings.TrimSpace(string(content)), nil
+	}
+
+	// Treat as plain-text public key
+	return strings.TrimSpace(config.SSHPublicKey), nil
+}
+
+// expandPath expands ~ to home directory
+func expandPath(path string) (string, error) {
+	if !strings.HasPrefix(path, "~") {
+		return path, nil
+	}
+
+	usr, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current user: %w", err)
+	}
+
+	if path == "~" {
+		return usr.HomeDir, nil
+	}
+
+	return filepath.Join(usr.HomeDir, strings.TrimPrefix(path, "~/")), nil
 }

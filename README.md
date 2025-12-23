@@ -19,42 +19,47 @@ Step-by-step test that creates a test cluster incrementally, validating each sta
 2. Virtualization module readiness check - Verifies virtualization module is Ready
 3. Test namespace creation - Creates test namespace if it doesn't exist
 4. Virtual machine creation and provisioning - Creates VMs and waits for them to become Running
-5. SSH connection establishment to setup node (through base cluster master) - Connects to setup node via jump host
-6. Docker installation on setup node - Installs Docker (required for DKP bootstrap)
-7. Bootstrap configuration preparation - Prepares bootstrap config from template with cluster-specific values
-8. Bootstrap files upload (private key and config.yml) to setup node - Uploads files needed for DKP bootstrap
-9. Cluster bootstrap - Bootstraps Kubernetes cluster from setup node to first master node
-10. Cluster readiness verification - Verifies cluster is ready by checking deckhouse deployment
+5. VM information gathering - Gathers IP addresses and other information for all VMs
+6. SSH connection establishment to setup node (through base cluster master) - Connects to setup node via jump host
+7. Docker installation on setup node - Installs Docker (required for DKP bootstrap)
+8. Bootstrap configuration preparation - Prepares bootstrap config from template with cluster-specific values
+9. Bootstrap files upload (private key and config.yml) to setup node - Uploads files needed for DKP bootstrap
+10. Cluster bootstrap - Bootstraps Kubernetes cluster from setup node to first master node
+11. NodeGroup creation for workers - Creates static NodeGroup for worker nodes
+12. Cluster readiness verification - Verifies cluster is ready by checking deckhouse deployment
+13. Node addition to cluster - Adds remaining master nodes and all worker nodes to the cluster
+14. Module enablement and configuration - Enables and configures modules from cluster definition
+15. Module readiness verification - Waits for all modules to become Ready in the test cluster
 
 ## Environment Variables
 
-### Required environment variables
+### Ready-to-use setup script
 
-- **`TEST_CLUSTER_CREATE_MODE`** - Cluster creation mode. Must be set to either:
-  - `alwaysUseExisting` - Use existing cluster
-  - `alwaysCreateNew` - Create new cluster
+Copy and customize the following script with your values:
 
-- **`DKP_LICENSE_KEY`** - DKP license key for cluster deployment (see license token at license.deckhouse.io)
+```bash
+#!/bin/bash
 
-- **`REGISTRY_DOCKER_CFG`** - dockerRegistryCfg for downloading images from Deckhouse registry (see license.deckhouse.io)
+# Required environment variables (must be set)
+export TEST_CLUSTER_CREATE_MODE='alwaysCreateNew'  # or 'alwaysUseExisting'
+export DKP_LICENSE_KEY='your-license-key-here'  # Get from license.deckhouse.io
+export REGISTRY_DOCKER_CFG='your-docker-registry-cfg-here'  # Get from license.deckhouse.io
+export SSH_USER='your-ssh-user'  # SSH username for base cluster connection
+export SSH_HOST='your-ssh-host'  # SSH hostname/IP for base cluster
 
-### Optional (with defaults)
+# Optional environment variables with defaults (customize as needed)
+export YAML_CONFIG_FILENAME='cluster_config.yml'  # Default: cluster_config.yml
+export SSH_KEY_PATH='~/.ssh/id_rsa'  # Default: ~/.ssh/id_rsa
+export SSH_PASSPHRASE=''  # Optional: passphrase for SSH private key
+export SSH_VM_USER='cloud'  # Default: cloud
+export SSH_VM_PUBLIC_KEY='ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC8WyGvnBNQp+v6CUweF1QYCRtR7Do/IA8IA2uMd2HuBsddFrc5xYon2ZtEvypZC4Vm1CzgcgUm9UkHgxytKEB4zOOWkmqFP62OSLNyuWMaFEW1fb0EDenup6B5SrjnA8ckm4Hf2NSLvwW9yS98TfN3nqPOPJKfQsN+OTiCerTtNyXjca//ppuGKsQd99jG7SqE9aDQ3sYCXatM53SXqhxS2nTew82bmzVmKXDxcIzVrS9f+2WmXIdY2cKo2I352yKWOIp1Nk0uji8ozLPHFQGvbAG8DGG1KNVcBl2qYUcttmCpN+iXEcGqyn/atUVJJMnZXGtp0fiL1rMLqAd/bb6TFNzZFSsS+zqGesxqLePe32vLCQ3xursP3BRZkrScM+JzIqevfP63INHJEZfYlUf4Ic+gfliS2yA1LwhU7hD4LSVXMQynlF9WeGjuv6ZYxmO8hC6IWCqWnIUqKUiGtvBSPXwsZo7wgljBr4ykJgBzS9MjZ0fzz1JKe80tH6clpjIOn6ReBPwQBq2zmDDrpa5GVqqqjXhRQuA0AfpHdhs5UKxs1PBr7/PTLA7PI39xkOAE/Zj1TYQ2dmqvpskshi7AtBStjinQBAlLXysLSHBtO+3+PLAYcMZMVfb0bVqfGGludO2prvXrrWWTku0eOsA5IRahrRdGhv5zhKgFV7cwUQ== ayakubov@MacBook-Pro-Alexey.local'  # Default: hardcoded key
+export TEST_CLUSTER_NAMESPACE='e2e-test-cluster'  # Default: e2e-test-cluster
+export TEST_CLUSTER_STORAGE_CLASS='rsc-test-r2-local'  # Default: rsc-test-r2-local
+export TEST_CLUSTER_CLEANUP='false'  # Default: false (set to 'true' or 'True' to enable cleanup)
+export KUBE_CONFIG_PATH=''  # Optional: fallback path to kubeconfig if SSH retrieval fails
+```
 
-- **`YAML_CONFIG_FILENAME`** - YAML configuration file name (default: `cluster_config.yml`)
-
-- **`SSH_USER`** - SSH username for base cluster connection (default: `a.yakubov`)
-- **`SSH_HOST`** - SSH hostname/IP for base cluster (default: `94.26.231.181`)
-- **`SSH_KEY_PATH`** - Path to SSH private key (default: `~/.ssh/id_rsa`)
-- **`SSH_PASSPHRASE`** - Passphrase for SSH private key (no default)
-
-- **`SSH_VM_USER`** - SSH username for VM access (default: `cloud`)
-- **`SSH_VM_PUBLIC_KEY`** - SSH public key to deploy to VMs (default: hardcoded key)
-
-- **`TEST_CLUSTER_NAMESPACE`** - Namespace for test cluster deployment (default: `e2e-test-cluster`)
-- **`TEST_CLUSTER_STORAGE_CLASS`** - Storage class for test cluster (default: `rsc-test-r2-local`)
-- **`TEST_CLUSTER_CLEANUP`** - Whether to cleanup test cluster after tests (default: `false`, set to `true` or `True` to enable)
-
-- **`KUBE_CONFIG_PATH`** - Fallback path to kubeconfig file if SSH retrieval fails (no default)
+**Note:** The `SSH_VM_PUBLIC_KEY` default value is a hardcoded public key. You can replace it with your own SSH public key if needed.
 
 ## Configuration Parameters
 
@@ -92,9 +97,15 @@ go test -timeout=60m -v ./tests/cluster-creation-by-steps -count=1 -ginkgo.focus
 ### Example with environment variables
 
 ```bash
+# Source the setup script (or copy the exports from above)
+source setup_env.sh  # if you saved the script above
+
+# Or set variables inline
 export TEST_CLUSTER_CREATE_MODE='alwaysCreateNew'
 export DKP_LICENSE_KEY='your-license-key'
-export REGISTRY_DOCKER_CFG='base64-encoded-docker-config-json'
+export REGISTRY_DOCKER_CFG='your-docker-registry-cfg'
+export SSH_USER='your-ssh-user'
+export SSH_HOST='your-ssh-host'
 export SSH_PASSPHRASE='your-passphrase'
 export TEST_CLUSTER_CLEANUP='true'
 

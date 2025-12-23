@@ -18,6 +18,7 @@ package ssh
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -121,11 +122,51 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(usr.HomeDir, strings.TrimPrefix(path, "~/")), nil
 }
 
+// getSSHPrivateKeyPath handles both file path and base64-encoded private key
+// If keyPathOrBase64 is a base64 string, it decodes and writes to a temp file
+// If it's a path, it expands ~ and returns the path
+func getSSHPrivateKeyPath(keyPathOrBase64 string) (string, error) {
+	// Check if it looks like a file path (contains path separators or starts with ~)
+	looksLikePath := strings.Contains(keyPathOrBase64, "/") || strings.HasPrefix(keyPathOrBase64, "~") || strings.Contains(keyPathOrBase64, "\\")
+
+	if !looksLikePath {
+		// Doesn't look like a path, try base64 decoding
+		decoded, err := base64.StdEncoding.DecodeString(keyPathOrBase64)
+		if err == nil && len(decoded) > 0 {
+			// Successfully decoded, write to temp file
+			tmpFile, err := os.CreateTemp("", "ssh_private_key_*")
+			if err != nil {
+				return "", fmt.Errorf("failed to create temp file for private key: %w", err)
+			}
+			defer tmpFile.Close()
+
+			if _, err := tmpFile.Write(decoded); err != nil {
+				os.Remove(tmpFile.Name())
+				return "", fmt.Errorf("failed to write decoded private key to temp file: %w", err)
+			}
+
+			// Set permissions to 0600
+			if err := os.Chmod(tmpFile.Name(), 0600); err != nil {
+				os.Remove(tmpFile.Name())
+				return "", fmt.Errorf("failed to set permissions on temp private key file: %w", err)
+			}
+
+			return tmpFile.Name(), nil
+		}
+		// If decoding failed, fall through to treat as path (might be a relative path without /)
+	}
+
+	// Treat as file path
+	return expandPath(keyPathOrBase64)
+}
+
 // createSSHConfig creates SSH client config with support for passphrase-protected keys
-func createSSHConfig(user, keyPath string) (*ssh.ClientConfig, error) {
-	expandedKeyPath, err := expandPath(keyPath)
+func createSSHConfig(user, keyPathOrBase64 string) (*ssh.ClientConfig, error) {
+	// keyPathOrBase64 can be either a file path or a base64-encoded private key
+	// Use GetSSHPrivateKeyPath to handle both cases
+	expandedKeyPath, err := getSSHPrivateKeyPath(keyPathOrBase64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to expand key path: %w", err)
+		return nil, fmt.Errorf("failed to get private key path: %w", err)
 	}
 
 	key, err := os.ReadFile(expandedKeyPath)

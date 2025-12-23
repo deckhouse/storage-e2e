@@ -302,6 +302,12 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 			return "", fmt.Errorf("failed to check VirtualMachine %s: %w", vmName, err)
 		}
 		// VirtualMachine doesn't exist, create it
+		// Get SSH public key content
+		sshPublicKey, err := GetSSHPublicKeyContent()
+		if err != nil {
+			return "", fmt.Errorf("failed to get SSH public key content: %w", err)
+		}
+
 		memoryQuantity := resource.MustParse(fmt.Sprintf("%dGi", node.RAM))
 		vm := &v1alpha2.VirtualMachine{
 			ObjectMeta: metav1.ObjectMeta{
@@ -337,7 +343,7 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				},
 				Provisioning: &v1alpha2.Provisioning{
 					Type:     "UserData",
-					UserData: generateCloudInitUserData(vmName, config.VMSSHPublicKey),
+					UserData: generateCloudInitUserData(vmName, sshPublicKey),
 				},
 			},
 		}
@@ -440,20 +446,22 @@ func RemoveAllVMs(ctx context.Context, resources *VMResources) error {
 	return nil
 }
 
-// GetSetupNode returns the setup VM node from VMResources.
+// GetSetupNode returns the setup VM node from ClusterDefinition.
 // The setup node is always a separate VM with a unique name (bootstrap-node-<suffix>).
-func GetSetupNode(vmResources *VMResources) (*config.ClusterNode, error) {
-	if vmResources == nil {
-		return nil, fmt.Errorf("VMResources cannot be nil")
+// Note: clusterDef.Setup.Hostname must be set to the generated VM name (done by GatherVMInfo)
+func GetSetupNode(clusterDef *config.ClusterDefinition) (*config.ClusterNode, error) {
+	if clusterDef == nil {
+		return nil, fmt.Errorf("clusterDef cannot be nil")
 	}
-	// Find the setup VM node by hostname
-	setupVM := config.DefaultSetupVM
-	setupVM.Hostname = vmResources.SetupVMName
-	return &setupVM, nil
+	if clusterDef.Setup == nil {
+		return nil, fmt.Errorf("setup node is not defined in cluster definition")
+	}
+	return clusterDef.Setup, nil
 }
 
 // GetVMIPAddress gets the IP address of a VM by querying its status
 // It waits for the VM to have an IP address assigned
+// DEPRECATED: Use GatherVMInfo to get all VM info at once, then use VMInfo.GetIPAddress
 func GetVMIPAddress(ctx context.Context, virtClient *virtualization.Client, namespace, vmName string) (string, error) {
 	vm, err := virtClient.VirtualMachines().Get(ctx, namespace, vmName)
 	if err != nil {
@@ -466,6 +474,91 @@ func GetVMIPAddress(ctx context.Context, virtClient *virtualization.Client, name
 	}
 
 	return vm.Status.IPAddress, nil
+}
+
+// GatherVMInfo gathers IP addresses for all VMs in the cluster definition and fills them into ClusterDefinition.
+// This should be called once while connected to the base cluster, before switching to test cluster.
+// It modifies clusterDef in-place by setting IPAddress field for each VM node.
+func GatherVMInfo(ctx context.Context, virtClient *virtualization.Client, namespace string, clusterDef *config.ClusterDefinition, vmResources *VMResources) error {
+	// Gather info for all masters
+	for i := range clusterDef.Masters {
+		master := &clusterDef.Masters[i]
+		if master.HostType == config.HostTypeVM {
+			ip, err := GetVMIPAddress(ctx, virtClient, namespace, master.Hostname)
+			if err != nil {
+				return fmt.Errorf("failed to get IP for master %s: %w", master.Hostname, err)
+			}
+			master.IPAddress = ip
+		}
+	}
+
+	// Gather info for all workers
+	for i := range clusterDef.Workers {
+		worker := &clusterDef.Workers[i]
+		if worker.HostType == config.HostTypeVM {
+			ip, err := GetVMIPAddress(ctx, virtClient, namespace, worker.Hostname)
+			if err != nil {
+				return fmt.Errorf("failed to get IP for worker %s: %w", worker.Hostname, err)
+			}
+			worker.IPAddress = ip
+		}
+	}
+
+	// Gather info for setup node
+	// The setup node is always created dynamically, so we need to create/update clusterDef.Setup
+	setupVMName := vmResources.SetupVMName
+	ip, err := GetVMIPAddress(ctx, virtClient, namespace, setupVMName)
+	if err != nil {
+		return fmt.Errorf("failed to get IP for setup node %s: %w", setupVMName, err)
+	}
+
+	// Create or update clusterDef.Setup with the generated VM info
+	if clusterDef.Setup == nil {
+		// Create setup node from DefaultSetupVM template
+		setupNode := config.DefaultSetupVM
+		setupNode.Hostname = setupVMName
+		setupNode.IPAddress = ip
+		clusterDef.Setup = &setupNode
+	} else {
+		// Update existing setup node
+		clusterDef.Setup.Hostname = setupVMName
+		clusterDef.Setup.IPAddress = ip
+	}
+
+	return nil
+}
+
+// GetNodeIPAddress gets the IP address for a node by hostname from ClusterDefinition
+func GetNodeIPAddress(clusterDef *config.ClusterDefinition, hostname string) (string, error) {
+	// Check masters
+	for _, master := range clusterDef.Masters {
+		if master.Hostname == hostname {
+			if master.IPAddress == "" {
+				return "", fmt.Errorf("IP address not set for master node %s", hostname)
+			}
+			return master.IPAddress, nil
+		}
+	}
+
+	// Check workers
+	for _, worker := range clusterDef.Workers {
+		if worker.Hostname == hostname {
+			if worker.IPAddress == "" {
+				return "", fmt.Errorf("IP address not set for worker node %s", hostname)
+			}
+			return worker.IPAddress, nil
+		}
+	}
+
+	// Check setup node
+	if clusterDef.Setup != nil && clusterDef.Setup.Hostname == hostname {
+		if clusterDef.Setup.IPAddress == "" {
+			return "", fmt.Errorf("IP address not set for setup node %s", hostname)
+		}
+		return clusterDef.Setup.IPAddress, nil
+	}
+
+	return "", fmt.Errorf("node with hostname %s not found in cluster definition", hostname)
 }
 
 // RemoveVM removes a VM and its associated VirtualDisks, then removes the ClusterVirtualImage if not used by other VMs.

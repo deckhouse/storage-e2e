@@ -18,7 +18,6 @@ package config
 
 import (
 	"fmt"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,15 +49,15 @@ type OSType struct {
 // ClusterNode defines a single node in the cluster
 type ClusterNode struct {
 	Hostname  string      `yaml:"hostname"`
-	IPAddress string      `yaml:"ipAddress,omitempty"` // Required for bare-metal, optional for VM
+	IPAddress string      `yaml:"ipAddress,omitempty"` // Required for bare-metal, filled in for VM when gathering VM info
 	OSType    OSType      `yaml:"osType"`              // Required for VM, optional for bare-metal (custom unmarshaler handles string -> OSType conversion)
 	HostType  HostType    `yaml:"hostType"`
 	Role      ClusterRole `yaml:"role"`
 	// VM-specific fields (only used when HostType == HostTypeVM)
-	CPU          int  `yaml:"cpu"`          // Required for VM
+	CPU          int  `yaml:"cpu"`                    // Required for VM
 	CoreFraction *int `yaml:"coreFraction,omitempty"` // Optional for VM, CPU core fraction as percentage (e.g., 50 for 50%). Defaults to 100% if not specified.
-	RAM          int  `yaml:"ram"`          // Required for VM, in GB
-	DiskSize     int  `yaml:"diskSize"`     // Required for VM, in GB
+	RAM          int  `yaml:"ram"`                    // Required for VM, in GB
+	DiskSize     int  `yaml:"diskSize"`               // Required for VM, in GB
 	// Bare-metal specific fields
 	Prepared bool `yaml:"prepared,omitempty"` // Whether the node is already prepared for DKP installation
 }
@@ -90,12 +89,6 @@ type ModuleConfig struct {
 	Dependencies       []string       `yaml:"dependencies,omitempty"`       // Names of modules that must be enabled before this one
 	ModulePullOverride string         `yaml:"modulePullOverride,omitempty"` // Override the module pull branch or tag (e.g. "main", "pr123", "mr41"). Main is defailt value.
 }
-
-const (
-	HostReadyTimeout    = 10 * time.Minute // Timeout for hosts to be ready
-	DKPDeployTimeout    = 30 * time.Minute // Timeout for DKP deployment
-	ModuleDeployTimeout = 10 * time.Minute // Timeout for module deployment
-)
 
 // UnmarshalYAML implements custom YAML unmarshaling for ClusterNode
 // to handle OSType conversion from string key to OSType struct

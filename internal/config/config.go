@@ -34,4 +34,10 @@ var DefaultSetupVM = ClusterNode{
 }
 
 // VMsRunningTimeout is the timeout for waiting for all VMs to become Running state
-const VMsRunningTimeout = 20 * time.Minute
+const (
+	VMsRunningTimeout   = 20 * time.Minute
+	NodesReadyTimeout   = 15 * time.Minute
+	DKPDeployTimeout    = 30 * time.Minute // Timeout for DKP deployment
+	ModuleDeployTimeout = 20 * time.Minute // Timeout for module deployment
+	HostReadyTimeout    = 10 * time.Minute // Timeout for hosts to be ready
+)

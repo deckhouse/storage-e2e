@@ -62,7 +62,10 @@ func CreateTestCluster(
 	// Get SSH credentials from environment variables
 	sshHost := config.SSHHost
 	sshUser := config.SSHUser
-	sshKeyPath := config.SSHKeyPath
+	sshKeyPath, err := GetSSHPrivateKeyPath()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get SSH private key path: %w", err)
+	}
 
 	// Stage 2: Establish SSH connection to base cluster
 	sshClient, err := ssh.NewClient(sshUser, sshHost, sshKeyPath)
@@ -129,7 +132,8 @@ func CleanupTestCluster(resources *TestClusterResources) error {
 }
 
 // CheckClusterHealth checks if the deckhouse deployment has 1 pod running with 2/2 containers ready
-// in the d8-system namespace. This function is widely used to check cluster health after certain steps.
+// in the d8-system namespace, and verifies that bootstrap secrets are available.
+// This function is widely used to check cluster health after certain steps.
 func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 	namespace := "d8-system"
 	deploymentName := "deckhouse"
@@ -155,6 +159,12 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 	podClient, err := core.NewPodClient(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create pod client: %w", err)
+	}
+
+	// Check that bootstrap secrets are available
+	secretNamespace := "d8-cloud-instance-manager"
+	if err := checkBootstrapSecrets(ctx, kubeconfig, secretNamespace); err != nil {
+		return fmt.Errorf("bootstrap secrets not ready: %w", err)
 	}
 
 	// Get pods for the deployment using the deployment's selector
@@ -183,6 +193,46 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 	// Check all containers are ready
 	if !podClient.AllContainersReady(ctx, &pod) {
 		return fmt.Errorf("pod %s/%s does not have all containers ready (expected 2/2 containers ready)", namespace, pod.Name)
+	}
+
+	return nil
+}
+
+// checkBootstrapSecrets verifies that both bootstrap secrets are available
+func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespace string) error {
+	secretClient, err := core.NewSecretClient(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create secret client: %w", err)
+	}
+
+	// Check for worker bootstrap secret
+	_, err = secretClient.Get(ctx, namespace, "manual-bootstrap-for-worker")
+	if err != nil {
+		// List available secrets for debugging
+		secretList, listErr := secretClient.List(ctx, namespace)
+		if listErr == nil {
+			availableNames := make([]string, 0, len(secretList.Items))
+			for _, s := range secretList.Items {
+				availableNames = append(availableNames, s.Name)
+			}
+			return fmt.Errorf("worker bootstrap secret not found: %w. Available secrets in namespace %s: %v", err, namespace, availableNames)
+		}
+		return fmt.Errorf("worker bootstrap secret not found: %w", err)
+	}
+
+	// Check for master bootstrap secret
+	_, err = secretClient.Get(ctx, namespace, "manual-bootstrap-for-master")
+	if err != nil {
+		// List available secrets for debugging
+		secretList, listErr := secretClient.List(ctx, namespace)
+		if listErr == nil {
+			availableNames := make([]string, 0, len(secretList.Items))
+			for _, s := range secretList.Items {
+				availableNames = append(availableNames, s.Name)
+			}
+			return fmt.Errorf("master bootstrap secret not found: %w. Available secrets in namespace %s: %v", err, namespace, availableNames)
+		}
+		return fmt.Errorf("master bootstrap secret not found: %w", err)
 	}
 
 	return nil

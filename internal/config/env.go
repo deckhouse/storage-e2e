@@ -25,21 +25,25 @@ var (
 	// SSH credentials to connect to BASE cluster
 	SSHPassphrase = os.Getenv("SSH_PASSPHRASE")
 
-	SSHUser             = os.Getenv("SSH_USER")
-	SSHUserDefaultValue = "a.yakubov"
+	SSHUser = os.Getenv("SSH_USER")
+	//SSHUserDefaultValue = "a.yakubov"
 
-	SSHKeyPath             = os.Getenv("SSH_KEY_PATH")
-	SSHKeyPathDefaultValue = "~/.ssh/id_rsa"
+	// Private key. Can be either path for a file or a base64 encoded string.
+	SSHPrivateKey             = os.Getenv("SSH_PRIVATE_KEY")
+	SSHPrivateKeyDefaultValue = "~/.ssh/id_rsa"
 
-	SSHHost             = os.Getenv("SSH_HOST")
-	SSHHostDefaultValue = "94.26.231.181"
+	// Public key. Can be either path to a file or a plain-text string.
+	SSHPublicKey = os.Getenv("SSH_PUBLIC_KEY")
+	//VMSSHPublicKeyDefaultValue = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC8WyGvnBNQp+v6CUweF1QYCRtR7Do/IA8IA2uMd2HuBsddFrc5xYon2ZtEvypZC4Vm1CzgcgUm9UkHgxytKEB4zOOWkmqFP62OSLNyuWMaFEW1fb0EDenup6B5SrjnA8ckm4Hf2NSLvwW9yS98TfN3nqPOPJKfQsN+OTiCerTtNyXjca//ppuGKsQd99jG7SqE9aDQ3sYCXatM53SXqhxS2nTew82bmzVmKXDxcIzVrS9f+2WmXIdY2cKo2I352yKWOIp1Nk0uji8ozLPHFQGvbAG8DGG1KNVcBl2qYUcttmCpN+iXEcGqyn/atUVJJMnZXGtp0fiL1rMLqAd/bb6TFNzZFSsS+zqGesxqLePe32vLCQ3xursP3BRZkrScM+JzIqevfP63INHJEZfYlUf4Ic+gfliS2yA1LwhU7hD4LSVXMQynlF9WeGjuv6ZYxmO8hC6IWCqWnIUqKUiGtvBSPXwsZo7wgljBr4ykJgBzS9MjZ0fzz1JKe80tH6clpjIOn6ReBPwQBq2zmDDrpa5GVqqqjXhRQuA0AfpHdhs5UKxs1PBr7/PTLA7PI39xkOAE/Zj1TYQ2dmqvpskshi7AtBStjinQBAlLXysLSHBtO+3+PLAYcMZMVfb0bVqfGGludO2prvXrrWWTku0eOsA5IRahrRdGhv5zhKgFV7cwUQ== ayakubov@MacBook-Pro-Alexey.local"
+	SSHPublicKeyDefaultValue = "~/.ssh/id_rsa.pub"
+
+	// Base cluster SSH host
+	SSHHost = os.Getenv("SSH_HOST")
+	//SSHHostDefaultValue = "94.26.231.181"
 
 	// SSH credentials to deploy to VM
 	VMSSHUser             = os.Getenv("SSH_VM_USER")
 	VMSSHUserDefaultValue = "cloud"
-
-	VMSSHPublicKey             = os.Getenv("SSH_VM_PUBLIC_KEY")
-	VMSSHPublicKeyDefaultValue = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC8WyGvnBNQp+v6CUweF1QYCRtR7Do/IA8IA2uMd2HuBsddFrc5xYon2ZtEvypZC4Vm1CzgcgUm9UkHgxytKEB4zOOWkmqFP62OSLNyuWMaFEW1fb0EDenup6B5SrjnA8ckm4Hf2NSLvwW9yS98TfN3nqPOPJKfQsN+OTiCerTtNyXjca//ppuGKsQd99jG7SqE9aDQ3sYCXatM53SXqhxS2nTew82bmzVmKXDxcIzVrS9f+2WmXIdY2cKo2I352yKWOIp1Nk0uji8ozLPHFQGvbAG8DGG1KNVcBl2qYUcttmCpN+iXEcGqyn/atUVJJMnZXGtp0fiL1rMLqAd/bb6TFNzZFSsS+zqGesxqLePe32vLCQ3xursP3BRZkrScM+JzIqevfP63INHJEZfYlUf4Ic+gfliS2yA1LwhU7hD4LSVXMQynlF9WeGjuv6ZYxmO8hC6IWCqWnIUqKUiGtvBSPXwsZo7wgljBr4ykJgBzS9MjZ0fzz1JKe80tH6clpjIOn6ReBPwQBq2zmDDrpa5GVqqqjXhRQuA0AfpHdhs5UKxs1PBr7/PTLA7PI39xkOAE/Zj1TYQ2dmqvpskshi7AtBStjinQBAlLXysLSHBtO+3+PLAYcMZMVfb0bVqfGGludO2prvXrrWWTku0eOsA5IRahrRdGhv5zhKgFV7cwUQ== ayakubov@MacBook-Pro-Alexey.local"
 
 	// KubeConfigPath is the path to a kubeconfig file. If SSH retrieval fails (e.g., sudo requires password),
 	// this path will be used as a fallback. If not set and SSH fails, the user will be notified to download
@@ -79,20 +83,14 @@ func ValidateEnvironment() error {
 		TestClusterCleanup = TestClusterCleanupDefaultValue
 	}
 
-	if SSHKeyPath == "" {
-		SSHKeyPath = SSHKeyPathDefaultValue
-	}
-	if SSHUser == "" {
-		SSHUser = SSHUserDefaultValue
-	}
-	if SSHHost == "" {
-		SSHHost = SSHHostDefaultValue
+	if SSHPrivateKey == "" {
+		SSHPrivateKey = SSHPrivateKeyDefaultValue
 	}
 	if VMSSHUser == "" {
 		VMSSHUser = VMSSHUserDefaultValue
 	}
-	if VMSSHPublicKey == "" {
-		VMSSHPublicKey = VMSSHPublicKeyDefaultValue
+	if SSHPublicKey == "" {
+		SSHPublicKey = SSHPublicKeyDefaultValue
 	}
 	if TestClusterNamespace == "" {
 		TestClusterNamespace = TestClusterNamespaceDefaultValue
@@ -102,6 +100,14 @@ func ValidateEnvironment() error {
 	}
 
 	// There are no default values for these variables and they must be set! Otherwise, the test will fail.
+	if SSHUser == "" {
+		return fmt.Errorf("SSH_USER environment variable is required but not set.")
+	}
+
+	if SSHHost == "" {
+		return fmt.Errorf("SSH_HOST environment variable is required but not set.")
+	}
+
 	if DKPLicenseKey == "" {
 		return fmt.Errorf("DKP_LICENSE_KEY environment variable is required but not set. ")
 	}
