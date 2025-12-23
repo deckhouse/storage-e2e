@@ -182,41 +182,6 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 	return fmt.Errorf("failed to configure moduleconfig %s after %d attempts: %w", moduleConfig.Name, maxRetries, lastErr)
 }
 
-// findKubectlPath finds the kubectl binary path on the remote host
-// It checks both as the user and as root (via sudo) to ensure kubectl is accessible
-func findKubectlPath(ctx context.Context, sshClient ssh.SSHClient) (string, error) {
-	// First, try to find kubectl as the user
-	cmd := "command -v kubectl 2>/dev/null || which kubectl 2>/dev/null || echo ''"
-	output, err := sshClient.Exec(ctx, cmd)
-	if err == nil {
-		path := strings.TrimSpace(output)
-		if path != "" {
-			// Verify it's accessible with sudo
-			verifyCmd := fmt.Sprintf("sudo test -x %s && echo %s", path, path)
-			verifyOutput, verifyErr := sshClient.Exec(ctx, verifyCmd)
-			if verifyErr == nil && strings.TrimSpace(verifyOutput) != "" {
-				return path, nil
-			}
-		}
-	}
-
-	// Try common kubectl installation paths (check as root via sudo)
-	kubectlPaths := []string{"/usr/local/bin/kubectl", "/usr/bin/kubectl", "/opt/bin/kubectl", "/snap/bin/kubectl"}
-	for _, path := range kubectlPaths {
-		// Check if file exists and is executable (as root)
-		checkCmd := fmt.Sprintf("sudo test -x %s && echo %s", path, path)
-		checkOutput, checkErr := sshClient.Exec(ctx, checkCmd)
-		if checkErr == nil {
-			foundPath := strings.TrimSpace(checkOutput)
-			if foundPath != "" {
-				return foundPath, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("kubectl not found on master node (checked user PATH and common locations)")
-}
-
 // configureModuleConfigViaSSH creates or updates a ModuleConfig resource via kubectl over SSH
 // This ensures the webhook is called from within the cluster network
 func configureModuleConfigViaSSH(ctx context.Context, sshClient ssh.SSHClient, moduleConfig *config.ModuleConfig) error {
@@ -256,14 +221,8 @@ func configureModuleConfigViaSSH(ctx context.Context, sshClient ssh.SSHClient, m
 		return fmt.Errorf("failed to marshal ModuleConfig YAML: %w", err)
 	}
 
-	// Find kubectl path
-	kubectlPath, err := findKubectlPath(ctx, sshClient)
-	if err != nil {
-		return fmt.Errorf("failed to find kubectl: %w", err)
-	}
-
 	// Apply via kubectl over SSH using the found path
-	cmd := fmt.Sprintf("sudo %s apply -f - << 'MODULECONFIG_EOF'\n%sMODULECONFIG_EOF", kubectlPath, string(yamlBytes))
+	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULECONFIG_EOF'\n%sMODULECONFIG_EOF", string(yamlBytes))
 	output, err := sshClient.Exec(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to apply ModuleConfig %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
@@ -329,14 +288,8 @@ func configureModulePullOverrideViaSSH(ctx context.Context, sshClient ssh.SSHCli
 		return fmt.Errorf("failed to marshal ModulePullOverride YAML: %w", err)
 	}
 
-	// Find kubectl path
-	kubectlPath, err := findKubectlPath(ctx, sshClient)
-	if err != nil {
-		return fmt.Errorf("failed to find kubectl: %w", err)
-	}
-
 	// Apply via kubectl over SSH using the found path
-	cmd := fmt.Sprintf("sudo %s apply -f - << 'MODULEPULLOVERRIDE_EOF'\n%sMODULEPULLOVERRIDE_EOF", kubectlPath, string(yamlBytes))
+	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULEPULLOVERRIDE_EOF'\n%sMODULEPULLOVERRIDE_EOF", string(yamlBytes))
 	output, err := sshClient.Exec(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to apply ModulePullOverride %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
