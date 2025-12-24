@@ -520,28 +520,40 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 		return nil // Nothing to clean up
 	}
 
+	fmt.Printf("    ▶️ Cleanup Step 1: Stopping test cluster tunnel and closing SSH client\n")
 	var errs []error
 
 	// Step 1: Stop test cluster tunnel and close test cluster SSH client
 	if resources.TunnelInfo != nil && resources.TunnelInfo.StopFunc != nil {
 		if err := resources.TunnelInfo.StopFunc(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to stop test cluster SSH tunnel: %w", err))
+			fmt.Printf("    ❌ Failed to stop test cluster SSH tunnel: %v\n", err)
+		} else {
+			fmt.Printf("    ✅ Test cluster SSH tunnel stopped\n")
 		}
 	}
 
 	if resources.SSHClient != nil {
 		if err := resources.SSHClient.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close test cluster SSH client: %w", err))
+			fmt.Printf("    ❌ Failed to close test cluster SSH client: %v\n", err)
+		} else {
+			fmt.Printf("    ✅ Test cluster SSH client closed\n")
 		}
 	}
 
+	fmt.Printf("    ▶️ Cleanup Step 2: Closing setup SSH client\n")
 	// Step 2: Close setup SSH client
 	if resources.SetupSSHClient != nil {
 		if err := resources.SetupSSHClient.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close setup SSH client: %w", err))
+			fmt.Printf("    ❌ Failed to close setup SSH client: %v\n", err)
+		} else {
+			fmt.Printf("    ✅ Setup SSH client closed\n")
 		}
 	}
 
+	fmt.Printf("    ▶️ Cleanup Step 3: Re-establishing base cluster tunnel for VM cleanup\n")
 	// Step 3: Re-establish base cluster tunnel if needed for VM cleanup
 	// We need API access to remove VMs, so we need the tunnel
 	var baseTunnel *ssh.TunnelInfo
@@ -549,11 +561,14 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 	if resources.BaseClusterClient != nil && resources.VMResources != nil {
 		// Re-establish tunnel if it was stopped (BaseTunnelInfo is nil)
 		if resources.BaseTunnelInfo == nil {
+			fmt.Printf("    ⏳ Re-establishing base cluster tunnel...\n")
 			var tunnelErr error
 			baseTunnel, tunnelErr = ssh.EstablishSSHTunnel(context.Background(), resources.BaseClusterClient, "6445")
 			if tunnelErr != nil {
 				errs = append(errs, fmt.Errorf("failed to re-establish base cluster tunnel for VM cleanup: %w", tunnelErr))
+				fmt.Printf("    ❌ Failed to re-establish base cluster tunnel: %v\n", tunnelErr)
 			} else {
+				fmt.Printf("    ✅ Base cluster tunnel re-established on local port: %d\n", baseTunnel.LocalPort)
 				// Update kubeconfig to use the tunnel port
 				if resources.BaseKubeconfigPath != "" {
 					if updateErr := internalcluster.UpdateKubeconfigPort(resources.BaseKubeconfigPath, baseTunnel.LocalPort); updateErr == nil {
@@ -564,6 +579,7 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 			}
 		} else {
 			// Tunnel already exists, use it
+			fmt.Printf("    ✅ Base cluster tunnel already exists\n")
 			baseTunnel = resources.BaseTunnelInfo
 			cleanupKubeconfig = resources.BaseKubeconfig
 		}
@@ -576,33 +592,62 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 				// Step 4: Remove setup VM (always removed)
 				if resources.VMResources.SetupVMName != "" {
 					namespace := config.TestClusterNamespace
+					fmt.Printf("    ▶️ Cleanup Step 4: Removing setup VM %s\n", resources.VMResources.SetupVMName)
 					if removeErr := RemoveVM(ctx, virtClient, namespace, resources.VMResources.SetupVMName); removeErr != nil {
 						errs = append(errs, fmt.Errorf("failed to remove setup VM %s: %w", resources.VMResources.SetupVMName, removeErr))
+						fmt.Printf("    ❌ Failed to remove setup VM %s: %v\n", resources.VMResources.SetupVMName, removeErr)
+					} else {
+						fmt.Printf("    ✅ Setup VM %s removed\n", resources.VMResources.SetupVMName)
 					}
 				}
 
 				// Step 5: Remove test cluster VMs if cleanup is enabled
 				if config.TestClusterCleanup == "true" || config.TestClusterCleanup == "True" {
+					fmt.Printf("    ▶️ Cleanup Step 5: Removing test cluster VMs (TEST_CLUSTER_CLEANUP is enabled)\n")
+					if resources.VMResources != nil && len(resources.VMResources.VMNames) > 0 {
+						fmt.Printf("    ⏳ Removing %d VMs: %v\n", len(resources.VMResources.VMNames), resources.VMResources.VMNames)
+					}
 					if removeErr := RemoveAllVMs(ctx, resources.VMResources); removeErr != nil {
 						errs = append(errs, fmt.Errorf("failed to remove test cluster VMs: %w", removeErr))
+						fmt.Printf("    ❌ Failed to remove test cluster VMs: %v\n", removeErr)
+					} else {
+						fmt.Printf("    ✅ Test cluster VMs removed\n")
 					}
+				} else {
+					fmt.Printf("    ⏭️  Cleanup Step 5: Skipping test cluster VM removal (TEST_CLUSTER_CLEANUP is not enabled)\n")
 				}
 			} else {
 				errs = append(errs, fmt.Errorf("failed to create virtualization client for cleanup: %w", virtErr))
+				fmt.Printf("    ❌ Failed to create virtualization client for cleanup: %v\n", virtErr)
 			}
+		} else {
+			fmt.Printf("    ⚠️  Warning: Cannot remove VMs - no valid kubeconfig for cleanup\n")
+		}
+	} else {
+		if resources.VMResources == nil {
+			fmt.Printf("    ⏭️  Cleanup Step 3-5: Skipping VM cleanup (no VM resources to clean up)\n")
+		} else {
+			fmt.Printf("    ⚠️  Warning: Cannot remove VMs - base cluster client not available\n")
 		}
 	}
 
+	fmt.Printf("    ▶️ Cleanup Step 6: Stopping base cluster tunnel and closing SSH client\n")
 	// Step 6: Stop base cluster tunnel and close base cluster SSH client
 	if baseTunnel != nil && baseTunnel.StopFunc != nil {
 		if err := baseTunnel.StopFunc(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to stop base cluster SSH tunnel: %w", err))
+			fmt.Printf("    ❌ Failed to stop base cluster SSH tunnel: %v\n", err)
+		} else {
+			fmt.Printf("    ✅ Base cluster SSH tunnel stopped\n")
 		}
 	}
 
 	if resources.BaseClusterClient != nil {
 		if err := resources.BaseClusterClient.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to close base cluster SSH client: %w", err))
+			fmt.Printf("    ❌ Failed to close base cluster SSH client: %v\n", err)
+		} else {
+			fmt.Printf("    ✅ Base cluster SSH client closed\n")
 		}
 	}
 

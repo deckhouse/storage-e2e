@@ -43,11 +43,18 @@ var _ = Describe("Template Test", Ordered, func() {
 
 	AfterAll(func() {
 		// Cleanup test cluster resources
+		// Note: Bootstrap node (setup VM) is always removed.
+		// Test cluster VMs (masters and workers) are only removed if TEST_CLUSTER_CLEANUP='true' or 'True'
 		if testClusterResources != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 
-			GinkgoWriter.Printf("    ▶️ Cleaning up test cluster resources...\n")
+			cleanupEnabled := config.TestClusterCleanup == "true" || config.TestClusterCleanup == "True"
+			if cleanupEnabled {
+				GinkgoWriter.Printf("    ▶️ Cleaning up test cluster resources (TEST_CLUSTER_CLEANUP is enabled - all VMs will be removed)...\n")
+			} else {
+				GinkgoWriter.Printf("    ▶️ Cleaning up test cluster resources (TEST_CLUSTER_CLEANUP is not enabled - only bootstrap node will be removed)...\n")
+			}
 			err := cluster.CleanupTestCluster(ctx, testClusterResources)
 			if err != nil {
 				GinkgoWriter.Printf("    ⚠️  Warning: Cleanup errors occurred: %v\n", err)
