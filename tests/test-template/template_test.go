@@ -60,26 +60,27 @@ var _ = Describe("Template Test", Ordered, func() {
 	// ---=== TEST CLUSTER IS CREATED AND GOT READY HERE ===--- //
 
 	It("should create test cluster and wait for it to become ready", func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
 		defer cancel()
 
 		By("Creating test cluster", func() {
-			GinkgoWriter.Printf("    ▶️ Creating test cluster (this may take up to 60 minutes)...\n")
-			Eventually(func() error {
-				var err error
-				testClusterResources, err = cluster.CreateTestCluster(ctx, config.YAMLConfigFilename)
-				return err
-			}).WithTimeout(60*time.Minute).WithPolling(30*time.Second).Should(Succeed(),
-				"Test cluster should be created within 60 minutes")
+			GinkgoWriter.Printf("    ▶️ Creating test cluster (this may take up to 90 minutes)...\n")
+			var err error
+			testClusterResources, err = cluster.CreateTestCluster(ctx, config.YAMLConfigFilename)
+			if err != nil {
+				GinkgoWriter.Printf("    ❌ Failed to create test cluster: %v\n", err)
+				Expect(err).NotTo(HaveOccurred(), "Test cluster should be created successfully")
+			}
 			GinkgoWriter.Printf("    ✅ Test cluster created successfully\n")
 		})
 
 		By("Waiting for test cluster to become ready", func() {
-			GinkgoWriter.Printf("    ▶️ Waiting for all modules to be ready in test cluster...\n")
-			Eventually(func() error {
-				return cluster.WaitForTestClusterReady(ctx, testClusterResources)
-			}).WithTimeout(60*time.Minute).WithPolling(30*time.Second).Should(Succeed(),
-				"Test cluster should become ready within 60 minutes")
+			GinkgoWriter.Printf("    ▶️ Waiting for all modules to be ready in test cluster (timeout: %v)...\n", config.ModuleDeployTimeout)
+			err := cluster.WaitForTestClusterReady(ctx, testClusterResources)
+			if err != nil {
+				GinkgoWriter.Printf("    ❌ Failed to wait for test cluster to be ready: %v\n", err)
+				Expect(err).NotTo(HaveOccurred(), "Test cluster should become ready")
+			}
 			GinkgoWriter.Printf("    ✅ Test cluster is ready (all modules are Ready)\n")
 		})
 	}) // should create test cluster
