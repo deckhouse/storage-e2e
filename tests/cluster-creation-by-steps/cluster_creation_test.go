@@ -92,6 +92,16 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 				GinkgoWriter.Printf("      TEST_CLUSTER_CLEANUP: %s\n", config.TestClusterCleanup)
 			}
 
+			// TEST_CLUSTER_NAMESPACE - no masking
+			if config.TestClusterNamespace != "" {
+				GinkgoWriter.Printf("      TEST_CLUSTER_NAMESPACE: %s\n", config.TestClusterNamespace)
+			}
+
+			// TEST_CLUSTER_STORAGE_CLASS - no masking
+			if config.TestClusterStorageClass != "" {
+				GinkgoWriter.Printf("      TEST_CLUSTER_STORAGE_CLASS: %s\n", config.TestClusterStorageClass)
+			}
+
 			// SSH_PASSPHRASE - no masking (optional, may be empty)
 			if config.SSHPassphrase != "" {
 				GinkgoWriter.Printf("      SSH_PASSPHRASE: <set>\n")

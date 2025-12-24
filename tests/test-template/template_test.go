@@ -39,6 +39,58 @@ var _ = Describe("Template Test", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			GinkgoWriter.Printf("    ✅ Environment variables validated successfully\n")
 		})
+
+		By("Outputting environment variables without default values", func() {
+			GinkgoWriter.Printf("    📋 Environment variables (without default values):\n")
+
+			// Helper function to mask sensitive values
+			maskValue := func(value string, mask bool) string {
+				if mask && len(value) > 5 {
+					return value[:5] + "***"
+				}
+				return value
+			}
+
+			// DKP_LICENSE_KEY - mask first 5 characters
+			if config.DKPLicenseKey != "" {
+				GinkgoWriter.Printf("      DKP_LICENSE_KEY: %s\n", maskValue(config.DKPLicenseKey, true))
+			}
+
+			// REGISTRY_DOCKER_CFG - mask first 5 characters
+			if config.RegistryDockerCfg != "" {
+				GinkgoWriter.Printf("      REGISTRY_DOCKER_CFG: %s\n", maskValue(config.RegistryDockerCfg, true))
+			}
+
+			// TEST_CLUSTER_CREATE_MODE - no masking
+			if config.TestClusterCreateMode != "" {
+				GinkgoWriter.Printf("      TEST_CLUSTER_CREATE_MODE: %s\n", config.TestClusterCreateMode)
+			}
+
+			// TEST_CLUSTER_CLEANUP - no masking
+			if config.TestClusterCleanup != "" {
+				GinkgoWriter.Printf("      TEST_CLUSTER_CLEANUP: %s\n", config.TestClusterCleanup)
+			}
+
+			// TEST_CLUSTER_NAMESPACE - no masking
+			if config.TestClusterNamespace != "" {
+				GinkgoWriter.Printf("      TEST_CLUSTER_NAMESPACE: %s\n", config.TestClusterNamespace)
+			}
+
+			// TEST_CLUSTER_STORAGE_CLASS - no masking
+			if config.TestClusterStorageClass != "" {
+				GinkgoWriter.Printf("      TEST_CLUSTER_STORAGE_CLASS: %s\n", config.TestClusterStorageClass)
+			}
+
+			// SSH_PASSPHRASE - no masking (optional, may be empty)
+			if config.SSHPassphrase != "" {
+				GinkgoWriter.Printf("      SSH_PASSPHRASE: <set>\n")
+			}
+
+			// KUBE_CONFIG_PATH - no masking (optional, may be empty)
+			if config.KubeConfigPath != "" {
+				GinkgoWriter.Printf("      KUBE_CONFIG_PATH: %s\n", config.KubeConfigPath)
+			}
+		})
 	})
 
 	AfterAll(func() {
