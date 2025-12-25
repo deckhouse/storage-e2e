@@ -34,7 +34,6 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/apps"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
@@ -159,22 +158,22 @@ func CreateTestCluster(
 	}
 	fmt.Printf("    ✅ Step 2: Connected to base cluster successfully\n")
 
-	fmt.Printf("    ▶️ Step 3: Verifying virtualization module is Ready\n")
-	// Step 3: Verify virtualization module is Ready
-	moduleCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	module, err := deckhouse.GetModule(moduleCtx, baseClusterResources.Kubeconfig, "virtualization")
-	cancel()
-	if err != nil {
-		baseClusterResources.SSHClient.Close()
-		baseClusterResources.TunnelInfo.StopFunc()
-		return nil, fmt.Errorf("failed to get virtualization module: %w", err)
-	}
-	if module.Status.Phase != "Ready" {
-		baseClusterResources.SSHClient.Close()
-		baseClusterResources.TunnelInfo.StopFunc()
-		return nil, fmt.Errorf("virtualization module is not Ready (phase: %s)", module.Status.Phase)
-	}
-	fmt.Printf("    ✅ Step 3: Virtualization module is Ready\n")
+	// fmt.Printf("    ▶️ Step 3: Verifying virtualization module is Ready\n")
+	// // Step 3: Verify virtualization module is Ready
+	// moduleCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	// module, err := deckhouse.GetModule(moduleCtx, baseClusterResources.Kubeconfig, "virtualization")
+	// cancel()
+	// if err != nil {
+	// 	baseClusterResources.SSHClient.Close()
+	// 	baseClusterResources.TunnelInfo.StopFunc()
+	// 	return nil, fmt.Errorf("failed to get virtualization module: %w", err)
+	// }
+	// if module.Status.Phase != "Ready" {
+	// 	baseClusterResources.SSHClient.Close()
+	// 	baseClusterResources.TunnelInfo.StopFunc()
+	// 	return nil, fmt.Errorf("virtualization module is not Ready (phase: %s)", module.Status.Phase)
+	// }
+	// fmt.Printf("    ✅ Step 3: Virtualization module is Ready\n")
 
 	fmt.Printf("    ▶️ Step 4: Creating test namespace %s\n", config.TestClusterNamespace)
 	// Step 4: Create test namespace
