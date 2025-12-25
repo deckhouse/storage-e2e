@@ -36,6 +36,9 @@ import (
 	"golang.org/x/term"
 )
 
+// cachedPassphrase stores the SSH key passphrase after first input to avoid repeated prompts
+var cachedPassphrase []byte
+
 // client implements Client interface
 type client struct {
 	sshClient       *ssh.Client
@@ -186,6 +189,9 @@ func createSSHConfig(user, keyPathOrBase64 string) (*ssh.ClientConfig, error) {
 		var pass []byte
 		if envPass := os.Getenv("SSH_PASSPHRASE"); envPass != "" {
 			pass = []byte(envPass)
+		} else if cachedPassphrase != nil {
+			// Use cached passphrase from previous input
+			pass = cachedPassphrase
 		} else {
 			// Try to read from terminal
 			var readErr error
@@ -193,6 +199,8 @@ func createSSHConfig(user, keyPathOrBase64 string) (*ssh.ClientConfig, error) {
 			if readErr != nil {
 				return nil, fmt.Errorf("SSH key '%s' is passphrase protected. Set SSH_PASSPHRASE environment variable: export SSH_PASSPHRASE='your-passphrase'\nOriginal error: %w", expandedKeyPath, readErr)
 			}
+			// Cache the passphrase for future use
+			cachedPassphrase = pass
 		}
 
 		signer, err = ssh.ParsePrivateKeyWithPassphrase(key, pass)

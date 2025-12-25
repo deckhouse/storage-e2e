@@ -34,6 +34,7 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/apps"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
@@ -158,22 +159,26 @@ func CreateTestCluster(
 	}
 	fmt.Printf("    ✅ Step 2: Connected to base cluster successfully\n")
 
-	// fmt.Printf("    ▶️ Step 3: Verifying virtualization module is Ready\n")
-	// // Step 3: Verify virtualization module is Ready
-	// moduleCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	// module, err := deckhouse.GetModule(moduleCtx, baseClusterResources.Kubeconfig, "virtualization")
-	// cancel()
-	// if err != nil {
-	// 	baseClusterResources.SSHClient.Close()
-	// 	baseClusterResources.TunnelInfo.StopFunc()
-	// 	return nil, fmt.Errorf("failed to get virtualization module: %w", err)
-	// }
-	// if module.Status.Phase != "Ready" {
-	// 	baseClusterResources.SSHClient.Close()
-	// 	baseClusterResources.TunnelInfo.StopFunc()
-	// 	return nil, fmt.Errorf("virtualization module is not Ready (phase: %s)", module.Status.Phase)
-	// }
-	// fmt.Printf("    ✅ Step 3: Virtualization module is Ready\n")
+	// Step 3: Verify virtualization module is Ready (can be skipped with SKIP_VIRTUALIZATION_CHECK=true)
+	if !config.SkipVirtualizationCheck {
+		fmt.Printf("    ▶️ Step 3: Verifying virtualization module is Ready\n")
+		moduleCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		module, err := deckhouse.GetModule(moduleCtx, baseClusterResources.Kubeconfig, "virtualization")
+		cancel()
+		if err != nil {
+			baseClusterResources.SSHClient.Close()
+			baseClusterResources.TunnelInfo.StopFunc()
+			return nil, fmt.Errorf("failed to get virtualization module: %w", err)
+		}
+		if module.Status.Phase != "Ready" {
+			baseClusterResources.SSHClient.Close()
+			baseClusterResources.TunnelInfo.StopFunc()
+			return nil, fmt.Errorf("virtualization module is not Ready (phase: %s)", module.Status.Phase)
+		}
+		fmt.Printf("    ✅ Step 3: Virtualization module is Ready\n")
+	} else {
+		fmt.Printf("    ⏭️  Step 3: Skipping virtualization module check (SKIP_VIRTUALIZATION_CHECK=true)\n")
+	}
 
 	fmt.Printf("    ▶️ Step 4: Creating test namespace %s\n", config.TestClusterNamespace)
 	// Step 4: Create test namespace
@@ -209,27 +214,53 @@ func CreateTestCluster(
 	fmt.Printf("    ✅ Step 5: Created %d virtual machines: %v\n", len(vmNames), vmNames)
 
 	fmt.Printf("    ▶️ Step 5.1: Waiting for all VMs to become Running (timeout: %v)\n", config.VMsRunningTimeout)
-	// Wait for all VMs to become Running
+	// Wait for all VMs to become Running (check all VMs in parallel)
 	vmWaitCtx, cancel := context.WithTimeout(ctx, config.VMsRunningTimeout)
 	defer cancel()
-	for i, vmName := range vmNames {
-		fmt.Printf("    ⏳ Waiting for VM %d/%d: %s\n", i+1, len(vmNames), vmName)
-		vmReady := false
-		for !vmReady {
-			select {
-			case <-vmWaitCtx.Done():
-				baseClusterResources.SSHClient.Close()
-				baseClusterResources.TunnelInfo.StopFunc()
-				return nil, fmt.Errorf("timeout waiting for VM %s to become Running", vmName)
-			case <-time.After(20 * time.Second):
+
+	// Track which VMs are ready
+	vmStatus := make(map[string]bool)
+	for _, vmName := range vmNames {
+		vmStatus[vmName] = false
+	}
+	totalVMs := len(vmNames)
+
+	allVMsReady := false
+	for !allVMsReady {
+		select {
+		case <-vmWaitCtx.Done():
+			// List VMs that are not running
+			notRunning := make([]string, 0)
+			for _, vmName := range vmNames {
+				if !vmStatus[vmName] {
+					notRunning = append(notRunning, vmName)
+				}
+			}
+			baseClusterResources.SSHClient.Close()
+			baseClusterResources.TunnelInfo.StopFunc()
+			return nil, fmt.Errorf("timeout waiting for VMs to become Running. Not ready: %v", notRunning)
+
+		case <-time.After(20 * time.Second):
+			readyCount := 0
+			for _, vmName := range vmNames {
+				if vmStatus[vmName] {
+					readyCount++
+					continue
+				}
 				vm, err := virtClient.VirtualMachines().Get(vmWaitCtx, namespace, vmName)
 				if err != nil {
 					continue
 				}
 				if vm.Status.Phase == v1alpha2.MachineRunning {
-					vmReady = true
+					vmStatus[vmName] = true
+					readyCount++
 					fmt.Printf("    ✅ VM %s is Running\n", vmName)
 				}
+			}
+			if readyCount == totalVMs {
+				allVMsReady = true
+			} else {
+				fmt.Printf("    ⏳ VMs ready: %d/%d\n", readyCount, totalVMs)
 			}
 		}
 	}

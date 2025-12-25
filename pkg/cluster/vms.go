@@ -144,6 +144,8 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 	vmNames := make([]string, 0, len(vmNodes))
 	systemDiskNames := make([]string, 0, len(vmNodes))
 	cvmiNamesSet := make(map[string]bool)
+	// Track which CVMI names have TrustIfExists enabled
+	cvmiTrustIfExists := make(map[string]bool)
 
 	for _, node := range vmNodes {
 		vmName := node.Hostname
@@ -154,6 +156,10 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 		// Get CVMI name from image URL
 		cvmiName := getCVMINameFromImageURL(node.OSType.ImageURL)
 		cvmiNamesSet[cvmiName] = true
+		// Track TrustIfExists setting for this CVMI
+		if node.OSType.TrustIfExists {
+			cvmiTrustIfExists[cvmiName] = true
+		}
 	}
 
 	// Check for conflicting VirtualMachines
@@ -194,8 +200,11 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 	for _, cvmiName := range cvmiNames {
 		_, err := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
 		if err == nil {
-			// CVMI exists
-			conflicts.ClusterVirtualImages = append(conflicts.ClusterVirtualImages, cvmiName)
+			// CVMI exists - only report as conflict if TrustIfExists is not set
+			if !cvmiTrustIfExists[cvmiName] {
+				conflicts.ClusterVirtualImages = append(conflicts.ClusterVirtualImages, cvmiName)
+			}
+			// If TrustIfExists is true, we trust existing CVMI and skip conflict
 		} else if !errors.IsNotFound(err) {
 			// Some other error occurred
 			return nil, fmt.Errorf("failed to check ClusterVirtualImage %s: %w", cvmiName, err)
@@ -295,6 +304,37 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 	}
 	// If VirtualDisk already exists, we'll use it
 
+	// 2.5. Create data VirtualDisk if DataDiskSize is specified
+	var dataDiskName string
+	if node.DataDiskSize != nil && *node.DataDiskSize > 0 {
+		dataDiskName = fmt.Sprintf("%s-data", vmName)
+		_, err = virtClient.VirtualDisks().Get(ctx, namespace, dataDiskName)
+		if err != nil {
+			if !errors.IsNotFound(err) {
+				return "", fmt.Errorf("failed to check VirtualDisk %s: %w", dataDiskName, err)
+			}
+			// VirtualDisk doesn't exist, create it (blank disk, no data source)
+			dataDisk := &v1alpha2.VirtualDisk{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      dataDiskName,
+					Namespace: namespace,
+				},
+				Spec: v1alpha2.VirtualDiskSpec{
+					PersistentVolumeClaim: v1alpha2.VirtualDiskPersistentVolumeClaim{
+						Size:         resource.NewQuantity(int64(*node.DataDiskSize)*1024*1024*1024, resource.BinarySI),
+						StorageClass: &storageClass,
+					},
+					// No DataSource - creates empty/blank disk
+				},
+			}
+			err = virtClient.VirtualDisks().Create(ctx, dataDisk)
+			if err != nil {
+				return "", fmt.Errorf("failed to create data VirtualDisk %s: %w", dataDiskName, err)
+			}
+		}
+		// If VirtualDisk already exists, we'll use it
+	}
+
 	// 3. Create VirtualMachine (check if it exists first)
 	_, err = virtClient.VirtualMachines().Get(ctx, namespace, vmName)
 	if err != nil {
@@ -335,12 +375,22 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				Memory: v1alpha2.MemorySpec{
 					Size: memoryQuantity,
 				},
-				BlockDeviceRefs: []v1alpha2.BlockDeviceSpecRef{
-					{
-						Kind: v1alpha2.DiskDevice,
-						Name: systemDiskName,
-					},
-				},
+				BlockDeviceRefs: func() []v1alpha2.BlockDeviceSpecRef {
+					refs := []v1alpha2.BlockDeviceSpecRef{
+						{
+							Kind: v1alpha2.DiskDevice,
+							Name: systemDiskName,
+						},
+					}
+					// Add data disk if created
+					if dataDiskName != "" {
+						refs = append(refs, v1alpha2.BlockDeviceSpecRef{
+							Kind: v1alpha2.DiskDevice,
+							Name: dataDiskName,
+						})
+					}
+					return refs
+				}(),
 				Provisioning: &v1alpha2.Provisioning{
 					Type:     "UserData",
 					UserData: generateCloudInitUserData(vmName, sshPublicKey),

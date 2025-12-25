@@ -44,6 +44,7 @@ type OSType struct {
 	Name          string
 	ImageURL      string
 	KernelVersion string
+	TrustIfExists bool // If true, use existing CVMI instead of treating as conflict
 }
 
 // ClusterNode defines a single node in the cluster
@@ -57,7 +58,8 @@ type ClusterNode struct {
 	CPU          int  `yaml:"cpu"`                    // Required for VM
 	CoreFraction *int `yaml:"coreFraction,omitempty"` // Optional for VM, CPU core fraction as percentage (e.g., 50 for 50%). Defaults to 100% if not specified.
 	RAM          int  `yaml:"ram"`                    // Required for VM, in GB
-	DiskSize     int  `yaml:"diskSize"`               // Required for VM, in GB
+	DiskSize     int  `yaml:"diskSize"`               // Required for VM, system disk in GB
+	DataDiskSize *int `yaml:"dataDiskSize,omitempty"` // Optional for VM, additional data disk in GB. If empty/nil - data disk not created.
 	// Bare-metal specific fields
 	Prepared bool `yaml:"prepared,omitempty"` // Whether the node is already prepared for DKP installation
 }
@@ -104,6 +106,7 @@ func (n *ClusterNode) UnmarshalYAML(value *yaml.Node) error {
 		CoreFraction *int   `yaml:"coreFraction,omitempty"`
 		RAM          int    `yaml:"ram"`
 		DiskSize     int    `yaml:"diskSize"`
+		DataDiskSize *int   `yaml:"dataDiskSize,omitempty"`
 		Prepared     bool   `yaml:"prepared,omitempty"`
 	}
 
@@ -140,6 +143,7 @@ func (n *ClusterNode) UnmarshalYAML(value *yaml.Node) error {
 	n.CoreFraction = tmp.CoreFraction
 	n.RAM = tmp.RAM
 	n.DiskSize = tmp.DiskSize
+	n.DataDiskSize = tmp.DataDiskSize
 	n.Prepared = tmp.Prepared
 
 	return nil

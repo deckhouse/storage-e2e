@@ -90,6 +90,7 @@ The template uses `test_template` as the package name. You need to update it to 
    export SSH_VM_USER='cloud'
    export TEST_CLUSTER_NAMESPACE='e2e-test-cluster'
    export TEST_CLUSTER_CLEANUP='false'  # Set to 'true' to enable cleanup
+   export SKIP_VIRTUALIZATION_CHECK='true'  # Default: false (set to 'true' to skip virtualization module check)
    ```
 
 2. Make it executable and run to export all the envvars:

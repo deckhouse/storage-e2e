@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 const (
@@ -71,6 +72,10 @@ var (
 
 	// RegistryDockerCfg specifies the docker registry key to download images from Deckhouse registry.
 	RegistryDockerCfg = os.Getenv("REGISTRY_DOCKER_CFG")
+
+	// SkipVirtualizationCheck specifies whether to skip virtualization module readiness check.
+	// Default is false (check is performed). Set to "true" to skip the check.
+	SkipVirtualizationCheck = strings.ToLower(os.Getenv("SKIP_VIRTUALIZATION_CHECK")) == "true"
 )
 
 func ValidateEnvironment() error {
