@@ -90,10 +90,21 @@ The template uses `test_template` as the package name. You need to update it to 
    export SSH_VM_USER='cloud'
    export TEST_CLUSTER_NAMESPACE='e2e-test-cluster'
    export TEST_CLUSTER_CLEANUP='false'  # Set to 'true' to enable cleanup
+   export SKIP_VIRTUALIZATION_CHECK='true'  # Default: false (set to 'true' to skip virtualization module check)
    ```
 
 2. Make it executable and run to export all the envvars:
    ```bash
    chmod +x test_exports
    ```
+
+### Bootstrap SSH Key
+
+A temporary SSH key pair (without passphrase) is auto-generated in `temp/bootstrap_ssh/` for VM bootstrap. Both user's and bootstrap public keys are added to VMs for access.
+
+### Cloud-init Secret
+
+VM provisioning uses a Kubernetes Secret with cloud-init config (packages, SSH keys, etc.).
+- **Name:** `e2e-cloudinit-{namespace}-{config}` (e.g., `e2e-cloudinit-e2e-test-cluster-cluster-config`)
+- **Cleanup:** Automatically deleted with VMs when `TEST_CLUSTER_CLEANUP=true`
 

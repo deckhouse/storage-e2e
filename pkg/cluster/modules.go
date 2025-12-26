@@ -29,6 +29,16 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// Webhook retry configuration
+const (
+	// WebhookRetryAttempts is the number of retry attempts for webhook connection errors
+	WebhookRetryAttempts = 10
+	// WebhookRetryInitialDelay is the initial delay before first retry
+	WebhookRetryInitialDelay = 3 * time.Second
+	// WebhookRetryBackoffMultiplier is the multiplier for exponential backoff
+	WebhookRetryBackoffMultiplier = 1.5
+)
+
 // moduleGraph represents the dependency graph structure
 type moduleGraph struct {
 	modules      map[string]*config.ModuleConfig // module name -> module config
@@ -125,8 +135,8 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 	}
 
 	// Retry logic for webhook connection errors
-	maxRetries := 10
-	retryDelay := 2 * time.Second
+	maxRetries := WebhookRetryAttempts
+	retryDelay := WebhookRetryInitialDelay
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -146,7 +156,7 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 							return ctx.Err()
 						case <-time.After(retryDelay):
 							// Exponential backoff
-							retryDelay = time.Duration(float64(retryDelay) * 1.5)
+							retryDelay = time.Duration(float64(retryDelay) * WebhookRetryBackoffMultiplier)
 							continue
 						}
 					}
@@ -168,7 +178,7 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 							return ctx.Err()
 						case <-time.After(retryDelay):
 							// Exponential backoff
-							retryDelay = time.Duration(float64(retryDelay) * 1.5)
+							retryDelay = time.Duration(float64(retryDelay) * WebhookRetryBackoffMultiplier)
 							continue
 						}
 					}
@@ -184,6 +194,7 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 
 // configureModuleConfigViaSSH creates or updates a ModuleConfig resource via kubectl over SSH
 // This ensures the webhook is called from within the cluster network
+// It retries on webhook connection errors to handle cases where the webhook service isn't ready yet
 func configureModuleConfigViaSSH(ctx context.Context, sshClient ssh.SSHClient, moduleConfig *config.ModuleConfig) error {
 	// Build ModuleConfig YAML
 	moduleConfigYAML := struct {
@@ -221,11 +232,9 @@ func configureModuleConfigViaSSH(ctx context.Context, sshClient ssh.SSHClient, m
 		return fmt.Errorf("failed to marshal ModuleConfig YAML: %w", err)
 	}
 
-	// Apply via kubectl over SSH using the found path
 	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULECONFIG_EOF'\n%sMODULECONFIG_EOF", string(yamlBytes))
-	output, err := sshClient.Exec(ctx, cmd)
-	if err != nil {
-		return fmt.Errorf("failed to apply ModuleConfig %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
+	if err := execWithWebhookRetry(ctx, sshClient, cmd, moduleConfig.Name); err != nil {
+		return fmt.Errorf("failed to apply ModuleConfig %s via SSH: %w", moduleConfig.Name, err)
 	}
 
 	return nil
@@ -288,14 +297,46 @@ func configureModulePullOverrideViaSSH(ctx context.Context, sshClient ssh.SSHCli
 		return fmt.Errorf("failed to marshal ModulePullOverride YAML: %w", err)
 	}
 
-	// Apply via kubectl over SSH using the found path
 	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULEPULLOVERRIDE_EOF'\n%sMODULEPULLOVERRIDE_EOF", string(yamlBytes))
-	output, err := sshClient.Exec(ctx, cmd)
-	if err != nil {
-		return fmt.Errorf("failed to apply ModulePullOverride %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
+	if err := execWithWebhookRetry(ctx, sshClient, cmd, moduleConfig.Name); err != nil {
+		return fmt.Errorf("failed to apply ModulePullOverride %s via SSH: %w", moduleConfig.Name, err)
 	}
 
 	return nil
+}
+
+// execWithWebhookRetry executes a kubectl command via SSH with retry logic for webhook errors
+func execWithWebhookRetry(ctx context.Context, sshClient ssh.SSHClient, cmd, resourceName string) error {
+	maxRetries := WebhookRetryAttempts
+	retryDelay := WebhookRetryInitialDelay
+
+	var lastOutput string
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		output, err := sshClient.Exec(ctx, cmd)
+		if err == nil {
+			return nil
+		}
+		lastOutput = output
+
+		// Check if it's a webhook connection error (check both error and output)
+		combinedErr := fmt.Sprintf("%v %s", err, output)
+		if isWebhookConnectionError(fmt.Errorf("%s", combinedErr)) {
+			if attempt < maxRetries-1 {
+				fmt.Printf("    ⏳ Webhook not ready for %s, retrying in %v (attempt %d/%d)...\n",
+					resourceName, retryDelay, attempt+1, maxRetries)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(retryDelay):
+					retryDelay = time.Duration(float64(retryDelay) * WebhookRetryBackoffMultiplier)
+					continue
+				}
+			}
+		}
+		return fmt.Errorf("command failed: %w\nOutput: %s", err, output)
+	}
+
+	return fmt.Errorf("command failed after %d attempts\nLast output: %s", maxRetries, lastOutput)
 }
 
 // isWebhookConnectionError checks if the error is a webhook connection error

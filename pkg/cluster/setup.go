@@ -22,10 +22,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -594,14 +596,49 @@ func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef 
 		}
 	}
 
-	// Process all workers
+	// Process all workers in parallel
 	workerCount := len(clusterDef.Workers)
 	if workerCount > 0 {
-		fmt.Printf("    ▶️ Adding %d worker node(s) to the cluster\n", workerCount)
+		fmt.Printf("    ▶️ Adding %d worker node(s) to the cluster (parallel)\n", workerCount)
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		errChan := make(chan error, workerCount)
+		completedCount := 0
+
 		for _, workerNode := range clusterDef.Workers {
-			if err := addNodeToCluster(ctx, workerNode, workerBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath); err != nil {
-				return fmt.Errorf("failed to add worker node %s: %w", workerNode.Hostname, err)
-			}
+			wg.Add(1)
+			go func(node config.ClusterNode) {
+				defer wg.Done()
+
+				mu.Lock()
+				fmt.Printf("    ⏳ Starting bootstrap on %s...\n", node.Hostname)
+				mu.Unlock()
+
+				err := addNodeToCluster(ctx, node, workerBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath)
+
+				mu.Lock()
+				if err != nil {
+					fmt.Printf("    ❌ Worker %s failed: %v\n", node.Hostname, err)
+					errChan <- fmt.Errorf("worker %s: %w", node.Hostname, err)
+				} else {
+					completedCount++
+					fmt.Printf("    ✅ [%d/%d] Worker %s bootstrapped successfully\n", completedCount, workerCount, node.Hostname)
+				}
+				mu.Unlock()
+			}(workerNode)
+		}
+
+		wg.Wait()
+		close(errChan)
+
+		// Collect all errors
+		var errs []error
+		for err := range errChan {
+			errs = append(errs, err)
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("failed to add %d worker(s): %v", len(errs), errs)
 		}
 	}
 
@@ -626,7 +663,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 	// Create SSH client to the node through jump host (base cluster master)
 	sshClient, err := ssh.NewClientWithJumpHost(
 		baseSSHUser, baseSSHHost, sshKeyPath, // jump host
-		config.VMSSHUser, nodeIP, sshKeyPath, // target host
+		config.VMSSHUser, nodeIP, sshKeyPath, // target host (user's key added via cloud-init)
 	)
 	if err != nil {
 		fmt.Printf("    ❌ Failed to create SSH connection to node %s (%s): %v\n", node.Hostname, nodeIP, err)
@@ -917,4 +954,72 @@ func expandPath(path string) (string, error) {
 	}
 
 	return filepath.Join(usr.HomeDir, strings.TrimPrefix(path, "~/")), nil
+}
+
+// BootstrapSSHKeyDir is the directory where bootstrap SSH keys are stored
+const BootstrapSSHKeyDir = "temp/bootstrap_ssh"
+
+// GetOrCreateBootstrapSSHKey returns paths to bootstrap SSH key pair.
+// If keys don't exist, they are generated (without passphrase).
+// Keys are stored in temp/bootstrap_ssh/ and reused between test runs.
+// This avoids issues with user's SSH key passphrase during bootstrap.
+func GetOrCreateBootstrapSSHKey() (privateKeyPath, publicKeyPath string, err error) {
+	// Get project root directory (where temp/ should be)
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", "", fmt.Errorf("failed to get caller info")
+	}
+	// Go up from pkg/cluster/setup.go to project root
+	projectRoot := filepath.Join(filepath.Dir(filename), "..", "..")
+
+	keyDir := filepath.Join(projectRoot, BootstrapSSHKeyDir)
+	privateKeyPath = filepath.Join(keyDir, "id_rsa")
+	publicKeyPath = filepath.Join(keyDir, "id_rsa.pub")
+
+	// Check if keys already exist
+	if _, err := os.Stat(privateKeyPath); err == nil {
+		if _, err := os.Stat(publicKeyPath); err == nil {
+			// Both keys exist, return them
+			return privateKeyPath, publicKeyPath, nil
+		}
+	}
+
+	// Keys don't exist, create directory and generate them
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		return "", "", fmt.Errorf("failed to create bootstrap SSH key directory: %w", err)
+	}
+
+	// Generate key pair using ssh-keygen (no passphrase)
+	fmt.Printf("    🔑 Generating bootstrap SSH key pair in %s\n", keyDir)
+	cmd := exec.Command("ssh-keygen", "-t", "rsa", "-b", "4096", "-f", privateKeyPath, "-N", "", "-q", "-C", "bootstrap-e2e-test")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", "", fmt.Errorf("failed to generate SSH key pair: %w\nOutput: %s", err, output)
+	}
+
+	fmt.Printf("    ✅ Bootstrap SSH key pair generated\n")
+	return privateKeyPath, publicKeyPath, nil
+}
+
+// GetBootstrapSSHPublicKeyContent returns the content of bootstrap SSH public key
+func GetBootstrapSSHPublicKeyContent() (string, error) {
+	_, publicKeyPath, err := GetOrCreateBootstrapSSHKey()
+	if err != nil {
+		return "", fmt.Errorf("failed to get bootstrap SSH key: %w", err)
+	}
+
+	content, err := os.ReadFile(publicKeyPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read bootstrap public key: %w", err)
+	}
+
+	return strings.TrimSpace(string(content)), nil
+}
+
+// GetBootstrapSSHPrivateKeyPath returns the path to bootstrap SSH private key
+func GetBootstrapSSHPrivateKeyPath() (string, error) {
+	privateKeyPath, _, err := GetOrCreateBootstrapSSHKey()
+	if err != nil {
+		return "", fmt.Errorf("failed to get bootstrap SSH key: %w", err)
+	}
+	return privateKeyPath, nil
 }

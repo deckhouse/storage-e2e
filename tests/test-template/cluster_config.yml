@@ -1,4 +1,9 @@
 # Test nested cluster configuration
+#
+# VM disk options:
+#   diskSize     - system disk size in GB (required, created from OS image)
+#   dataDiskSize - additional data disk size in GB (optional, if not set - data disk not created)
+#
 clusterDefinition:
   masters: # Master nodes configuration
     - hostname: "master-1"

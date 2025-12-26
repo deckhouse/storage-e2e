@@ -22,22 +22,24 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // VMResources tracks VM-related resources created for a test cluster
 type VMResources struct {
-	VirtClient  *virtualization.Client
-	Namespace   string
-	VMNames     []string
-	CVMINames   []string // ClusterVirtualImage names (cluster-scoped)
-	SetupVMName string   // Name of the setup VM (always created)
+	VirtClient          *virtualization.Client
+	Namespace           string
+	VMNames             []string
+	CVMINames           []string // ClusterVirtualImage names (cluster-scoped)
+	SetupVMName         string   // Name of the setup VM (always created)
+	CloudInitSecretName string   // Cloud-init secret name (for cleanup)
 }
 
 // CreateVirtualMachines creates virtual machines from cluster definition.
@@ -115,11 +117,12 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 	// Track setup VM separately
 	// The setup VM is always created, so it will exist in vmNames
 	resources := &VMResources{
-		VirtClient:  virtClient,
-		Namespace:   namespace,
-		VMNames:     vmNames,
-		CVMINames:   cvmiNames,
-		SetupVMName: setupVMName, // setupVMName was set above when creating setupVM
+		VirtClient:          virtClient,
+		Namespace:           namespace,
+		VMNames:             vmNames,
+		CVMINames:           cvmiNames,
+		SetupVMName:         setupVMName,              // setupVMName was set above when creating setupVM
+		CloudInitSecretName: getCloudInitSecretName(), // For cleanup
 	}
 
 	return vmNames, resources, nil
@@ -144,6 +147,8 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 	vmNames := make([]string, 0, len(vmNodes))
 	systemDiskNames := make([]string, 0, len(vmNodes))
 	cvmiNamesSet := make(map[string]bool)
+	// Track which CVMI names have TrustIfExists enabled
+	cvmiTrustIfExists := make(map[string]bool)
 
 	for _, node := range vmNodes {
 		vmName := node.Hostname
@@ -154,6 +159,10 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 		// Get CVMI name from image URL
 		cvmiName := getCVMINameFromImageURL(node.OSType.ImageURL)
 		cvmiNamesSet[cvmiName] = true
+		// Track TrustIfExists setting for this CVMI
+		if node.OSType.TrustIfExists {
+			cvmiTrustIfExists[cvmiName] = true
+		}
 	}
 
 	// Check for conflicting VirtualMachines
@@ -194,8 +203,11 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 	for _, cvmiName := range cvmiNames {
 		_, err := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
 		if err == nil {
-			// CVMI exists
-			conflicts.ClusterVirtualImages = append(conflicts.ClusterVirtualImages, cvmiName)
+			// CVMI exists - only report as conflict if TrustIfExists is not set
+			if !cvmiTrustIfExists[cvmiName] {
+				conflicts.ClusterVirtualImages = append(conflicts.ClusterVirtualImages, cvmiName)
+			}
+			// If TrustIfExists is true, we trust existing CVMI and skip conflict
 		} else if !errors.IsNotFound(err) {
 			// Some other error occurred
 			return nil, fmt.Errorf("failed to check ClusterVirtualImage %s: %w", cvmiName, err)
@@ -295,19 +307,50 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 	}
 	// If VirtualDisk already exists, we'll use it
 
-	// 3. Create VirtualMachine (check if it exists first)
+	// 2.5. Create data VirtualDisk if DataDiskSize is specified
+	var dataDiskName string
+	if node.DataDiskSize != nil && *node.DataDiskSize > 0 {
+		dataDiskName = fmt.Sprintf("%s-data", vmName)
+		_, err = virtClient.VirtualDisks().Get(ctx, namespace, dataDiskName)
+		if err != nil {
+			if !errors.IsNotFound(err) {
+				return "", fmt.Errorf("failed to check VirtualDisk %s: %w", dataDiskName, err)
+			}
+			// VirtualDisk doesn't exist, create it (blank disk, no data source)
+			dataDisk := &v1alpha2.VirtualDisk{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      dataDiskName,
+					Namespace: namespace,
+				},
+				Spec: v1alpha2.VirtualDiskSpec{
+					PersistentVolumeClaim: v1alpha2.VirtualDiskPersistentVolumeClaim{
+						Size:         resource.NewQuantity(int64(*node.DataDiskSize)*1024*1024*1024, resource.BinarySI),
+						StorageClass: &storageClass,
+					},
+					// No DataSource - creates empty/blank disk
+				},
+			}
+			err = virtClient.VirtualDisks().Create(ctx, dataDisk)
+			if err != nil {
+				return "", fmt.Errorf("failed to create data VirtualDisk %s: %w", dataDiskName, err)
+			}
+		}
+		// If VirtualDisk already exists, we'll use it
+	}
+
+	// 3. Ensure cloud-init secret exists (shared by all VMs)
+	cloudInitSecretName, err := getOrCreateCloudInitSecret(ctx, virtClient, namespace)
+	if err != nil {
+		return "", fmt.Errorf("failed to ensure cloud-init secret: %w", err)
+	}
+
+	// 4. Create VirtualMachine (check if it exists first)
 	_, err = virtClient.VirtualMachines().Get(ctx, namespace, vmName)
 	if err != nil {
 		if !errors.IsNotFound(err) {
 			return "", fmt.Errorf("failed to check VirtualMachine %s: %w", vmName, err)
 		}
 		// VirtualMachine doesn't exist, create it
-		// Get SSH public key content
-		sshPublicKey, err := GetSSHPublicKeyContent()
-		if err != nil {
-			return "", fmt.Errorf("failed to get SSH public key content: %w", err)
-		}
-
 		memoryQuantity := resource.MustParse(fmt.Sprintf("%dGi", node.RAM))
 		vm := &v1alpha2.VirtualMachine{
 			ObjectMeta: metav1.ObjectMeta{
@@ -335,15 +378,28 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				Memory: v1alpha2.MemorySpec{
 					Size: memoryQuantity,
 				},
-				BlockDeviceRefs: []v1alpha2.BlockDeviceSpecRef{
-					{
-						Kind: v1alpha2.DiskDevice,
-						Name: systemDiskName,
-					},
-				},
+				BlockDeviceRefs: func() []v1alpha2.BlockDeviceSpecRef {
+					refs := []v1alpha2.BlockDeviceSpecRef{
+						{
+							Kind: v1alpha2.DiskDevice,
+							Name: systemDiskName,
+						},
+					}
+					// Add data disk if created
+					if dataDiskName != "" {
+						refs = append(refs, v1alpha2.BlockDeviceSpecRef{
+							Kind: v1alpha2.DiskDevice,
+							Name: dataDiskName,
+						})
+					}
+					return refs
+				}(),
 				Provisioning: &v1alpha2.Provisioning{
-					Type:     "UserData",
-					UserData: generateCloudInitUserData(vmName, sshPublicKey),
+					Type: "UserDataRef",
+					UserDataRef: &v1alpha2.UserDataRef{
+						Kind: "Secret",
+						Name: cloudInitSecretName,
+					},
 				},
 			},
 		}
@@ -386,8 +442,27 @@ func getCVMINameFromImageURL(imageURL string) string {
 	return name
 }
 
-// generateCloudInitUserData generates cloud-init user data for VM provisioning
-func generateCloudInitUserData(hostname, sshPubKey string) string {
+// getCloudInitSecretName returns unique cloud-init secret name based on config and namespace.
+// Format: e2e-cloudinit-{namespace}-{config-name} (without .yml/.yaml extension)
+func getCloudInitSecretName() string {
+	// Get config filename and remove extension
+	configName := strings.TrimSuffix(config.YAMLConfigFilename, ".yml")
+	configName = strings.TrimSuffix(configName, ".yaml")
+	// Sanitize for Kubernetes naming
+	configName = strings.ToLower(configName)
+	configName = strings.ReplaceAll(configName, "_", "-")
+	namespace := strings.ToLower(config.TestClusterNamespace)
+	namespace = strings.ReplaceAll(namespace, "_", "-")
+	return fmt.Sprintf("e2e-cloudinit-%s-%s", namespace, configName)
+}
+
+// generateCloudInitConfig generates full cloud-init configuration.
+// Uses Secret to avoid 2048 byte limit of inline userData.
+//
+// NOTE: Hostname is NOT set in cloud-init. DVP automatically sets the hostname
+// from the VirtualMachine name via cloud-init metadata. This was verified to work
+// correctly for all VMs (masters, workers, bootstrap). Do not add "hostname:" here.
+func generateCloudInitConfig(userPubKey, bootstrapPubKey string) string {
 	return fmt.Sprintf(`#cloud-config
 package_update: true
 packages:
@@ -413,21 +488,86 @@ users:
     lock_passwd: false
     ssh_authorized_keys:
       - %s
+      - %s
+
 write_files:
   - path: /etc/ssh/sshd_config.d/allow_tcp_forwarding.conf
     content: |
-      # Разрешить TCP forwarding
+      # Allow TCP forwarding for SSH jump host
       AllowTcpForwarding yes
+  - path: /etc/profile.d/kubectl-aliases.sh
+    permissions: '0644'
+    content: |
+      # kubectl aliases and completion
+      alias k=kubectl
+      if command -v kubectl &>/dev/null; then
+        source <(kubectl completion bash)
+        complete -o default -F __start_kubectl k
+      fi
 
 runcmd:
-  - systemctl restart ssh
-  - hostnamectl set-hostname %s
-  - systemctl daemon-reload
-  - systemctl enable --now qemu-guest-agent.service
-`, sshPubKey, hostname)
+  - systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+  - systemctl enable --now qemu-guest-agent
+
+final_message: "The system is finally up, after $UPTIME seconds"
+`, userPubKey, bootstrapPubKey)
 }
 
-// RemoveAllVMs forcefully stops and deletes virtual machines, virtual disks, and virtual images.
+// getOrCreateCloudInitSecret ensures the cloud-init secret exists in the namespace.
+// Creates it if not exists, returns the secret name.
+func getOrCreateCloudInitSecret(ctx context.Context, virtClient *virtualization.Client, namespace string) (string, error) {
+	secretName := getCloudInitSecretName()
+
+	// Check if secret already exists
+	_, err := virtClient.Secrets().Get(ctx, namespace, secretName)
+	if err == nil {
+		// Secret exists, return its name
+		return secretName, nil
+	}
+	if !errors.IsNotFound(err) {
+		return "", fmt.Errorf("failed to check cloud-init secret: %w", err)
+	}
+
+	// Secret doesn't exist, create it
+	fmt.Printf("    🔐 Creating cloud-init secret %s/%s\n", namespace, secretName)
+
+	// Get SSH public keys
+	userPubKey, err := GetSSHPublicKeyContent()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user SSH public key: %w", err)
+	}
+
+	bootstrapPubKey, err := GetBootstrapSSHPublicKeyContent()
+	if err != nil {
+		return "", fmt.Errorf("failed to get bootstrap SSH public key: %w", err)
+	}
+
+	// Generate cloud-init config
+	cloudInitConfig := generateCloudInitConfig(userPubKey, bootstrapPubKey)
+
+	// Create secret with cloud-init data
+	// Note: Kubernetes Secret.Data expects raw bytes, the API handles base64 encoding
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretType("provisioning.virtualization.deckhouse.io/cloud-init"),
+		Data: map[string][]byte{
+			"userData": []byte(cloudInitConfig),
+		},
+	}
+
+	err = virtClient.Secrets().Create(ctx, secret)
+	if err != nil {
+		return "", fmt.Errorf("failed to create cloud-init secret: %w", err)
+	}
+
+	fmt.Printf("    ✅ Cloud-init secret created\n")
+	return secretName, nil
+}
+
+// RemoveAllVMs forcefully stops and deletes virtual machines, virtual disks, cloud-init secret, and virtual images.
 // If a VirtualImage is in use by other resources, it will be skipped but VMs and VDs will still be deleted.
 func RemoveAllVMs(ctx context.Context, resources *VMResources) error {
 	if resources == nil {
@@ -448,6 +588,19 @@ func RemoveAllVMs(ctx context.Context, resources *VMResources) error {
 			fmt.Printf("    ❌ Failed to remove VM %s/%s: %v\n", resources.Namespace, vmName, err)
 		} else {
 			fmt.Printf("    ✅ VM %s/%s removed successfully\n", resources.Namespace, vmName)
+		}
+	}
+
+	// Delete cloud-init secret
+	if resources.CloudInitSecretName != "" {
+		fmt.Printf("    ⏳ Removing cloud-init secret %s/%s\n", resources.Namespace, resources.CloudInitSecretName)
+		err := resources.VirtClient.Secrets().Delete(ctx, resources.Namespace, resources.CloudInitSecretName)
+		if err != nil {
+			if !errors.IsNotFound(err) {
+				fmt.Printf("    ⚠️  Warning: Failed to delete cloud-init secret %s: %v\n", resources.CloudInitSecretName, err)
+			}
+		} else {
+			fmt.Printf("    ✅ Cloud-init secret %s deleted\n", resources.CloudInitSecretName)
 		}
 	}
 

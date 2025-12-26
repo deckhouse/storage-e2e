@@ -16,23 +16,65 @@ limitations under the License.
 
 package config
 
-// OSTypeMap maps OS type names to their definitions
+// OSTypeMap maps OS type names to their definitions.
+//
+// TrustIfExists: If ClusterVirtualImage (CVI) already exists in the k8s cluster, reuse it
+// instead of treating as a conflict. This allows sharing images across multiple test runs.
+//
+// CVI naming convention: The CVI name is derived from the image URL filename:
+//  1. Extract filename from URL (e.g., "jammy-server-cloudimg-amd64.img")
+//  2. Remove extension (.img, .qcow2)
+//  3. Convert to lowercase
+//  4. Replace underscores and dots with hyphens
+//  5. Remove consecutive hyphens
+//
+// Examples:
+//
+//	URL: https://cloud-images.ubuntu.com/.../jammy-server-cloudimg-amd64.img
+//	CVI name: jammy-server-cloudimg-amd64
+//
+//	URL: https://.../redos-8-1.x86_64.qcow2
+//	CVI name: redos-8-1-x86-64
 var OSTypeMap = map[string]OSType{
 	"Ubuntu 22.04 6.2.0-39-generic": {
 		ImageURL:      "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
-		KernelVersion: "6.2.0-39-generic",
+		KernelVersion: "5.15.0-164-generic",
+		TrustIfExists: true,
 	},
 	"Ubuntu 24.04 6.8.0-53-generic": {
 		ImageURL:      "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img",
-		KernelVersion: "6.8.0-53-generic",
+		KernelVersion: "6.8.0-90-generic",
+		TrustIfExists: true,
 	},
 	"RedOS 8.0 6.6.26-1.red80.x86_64": {
 		ImageURL:      "https://89d64382-20df-4581-8cc7-80df331f67fa.selstorage.ru/redos/redos-8-1.x86_64.qcow2",
 		KernelVersion: "6.6.26-1.red80.x86_64",
+		TrustIfExists: true,
 	},
 	"RedOS 7.3.6 5.15.78-2.el7.3.x86_64": {
 		ImageURL:      "https://89d64382-20df-4581-8cc7-80df331f67fa.selstorage.ru/redos/RO732_MIN-STD.qcow2",
 		KernelVersion: "5.15.78-2.el7.3.x86_64",
+		TrustIfExists: true,
+	},
+	"Debian 12 Bookworm": {
+		ImageURL:      "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2",
+		KernelVersion: "6.1.0-41-cloud-amd64",
+		TrustIfExists: true,
+	},
+	"Debian 13 Trixie": {
+		ImageURL:      "https://cdimage.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
+		KernelVersion: "6.12.57+deb13-amd64",
+		TrustIfExists: true,
+	},
+	"AltLinux 10.4": {
+		ImageURL:      "https://ftp.altlinux.org/pub/distributions/ALTLinux/p10/images/cloud/x86_64/alt-server-10.4-p10-cloud-x86_64.qcow2",
+		KernelVersion: "6.1.130-un-def-alt1",
+		TrustIfExists: true,
+	},
+	"AltLinux 11": {
+		ImageURL:      "https://ftp.altlinux.org/pub/distributions/ALTLinux/p11/images/cloud/x86_64/alt-server-11.0-p11-cloud-x86_64.qcow2",
+		KernelVersion: "6.12.34-6.12-alt1",
+		TrustIfExists: true,
 	},
 }
 
