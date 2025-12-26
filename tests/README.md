@@ -98,3 +98,13 @@ The template uses `test_template` as the package name. You need to update it to 
    chmod +x test_exports
    ```
 
+### Bootstrap SSH Key
+
+A temporary SSH key pair (without passphrase) is auto-generated in `temp/bootstrap_ssh/` for VM bootstrap. Both user's and bootstrap public keys are added to VMs for access.
+
+### Cloud-init Secret
+
+VM provisioning uses a Kubernetes Secret with cloud-init config (packages, SSH keys, etc.).
+- **Name:** `e2e-cloudinit-{namespace}-{config}` (e.g., `e2e-cloudinit-e2e-test-cluster-cluster-config`)
+- **Cleanup:** Automatically deleted with VMs when `TEST_CLUSTER_CLEANUP=true`
+

@@ -20,6 +20,7 @@ import (
 	"context"
 
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -37,6 +38,11 @@ func NewClient(ctx context.Context, config *rest.Config) (*Client, error) {
 
 	// Register virtualization API types with the scheme
 	if err := v1alpha2.SchemeBuilder.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+
+	// Register core v1 types (for Secrets, etc.)
+	if err := corev1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
 
@@ -71,4 +77,9 @@ func (c *Client) VirtualImages() *VirtualImageClient {
 // VirtualMachineBlockDeviceAttachments returns a VMBD client
 func (c *Client) VirtualMachineBlockDeviceAttachments() *VMBDClient {
 	return &VMBDClient{client: c.client}
+}
+
+// Secrets returns a Secret client for managing cloud-init secrets
+func (c *Client) Secrets() *SecretClient {
+	return &SecretClient{client: c.client}
 }

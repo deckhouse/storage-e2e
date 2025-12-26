@@ -51,6 +51,7 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		bootstrapConfig      string
 		testClusterResources *cluster.TestClusterResources
 		sshKeyPath           string
+		bootstrapKeyPath     string
 	)
 
 	BeforeAll(func() {
@@ -118,6 +119,13 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			sshKeyPath, err = cluster.GetSSHPrivateKeyPath()
 			Expect(err).NotTo(HaveOccurred(), "Failed to get SSH private key path")
 			GinkgoWriter.Printf("    ✅ SSH private key path obtained successfully\n")
+		})
+
+		By("Getting bootstrap SSH key path (for VM connections)", func() {
+			GinkgoWriter.Printf("    ▶️ Getting bootstrap SSH key path\n")
+			bootstrapKeyPath, err = cluster.GetBootstrapSSHPrivateKeyPath()
+			Expect(err).NotTo(HaveOccurred(), "Failed to get bootstrap SSH key path")
+			GinkgoWriter.Printf("    ✅ Bootstrap SSH key path: %s\n", bootstrapKeyPath)
 		})
 
 		// Stage 1: LoadConfig - verifies and parses the config from yaml file
@@ -398,11 +406,29 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 				config.VMSSHUser, setupNodeIP, config.SSHUser, config.SSHHost)
 			setupSSHClient, err = ssh.NewClientWithJumpHost(
 				config.SSHUser, config.SSHHost, sshKeyPath, // jump host
-				config.VMSSHUser, setupNodeIP, sshKeyPath, // target host
+				config.VMSSHUser, setupNodeIP, sshKeyPath, // target host (user's key added via cloud-init)
 			)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(setupSSHClient).NotTo(BeNil())
 			GinkgoWriter.Printf("    ✅ SSH connection to setup node established successfully\n")
+		})
+	})
+
+	// Step 6.5: Verify VM configuration (hostname, etc.)
+	// NOTE: This step can potentially be removed if DVP correctly sets hostname from VM name
+	It("should verify VM configuration on setup node", func() {
+		By("Verifying VM configuration on setup node", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+
+			GinkgoWriter.Printf("    ▶️ Verifying VM configuration on setup node\n")
+			err := cluster.VerifyVMConfig(ctx, setupSSHClient, "setup-node")
+			if err != nil {
+				GinkgoWriter.Printf("    ⚠️  Warning: VM configuration check failed: %v\n", err)
+				// Continue anyway - this is a verification step
+			} else {
+				GinkgoWriter.Printf("    ✅ VM configuration verified on setup node\n")
+			}
 		})
 	})
 
@@ -436,10 +462,10 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 			defer cancel()
 
 			GinkgoWriter.Printf("    ▶️ Uploading bootstrap files to setup node\n")
-			GinkgoWriter.Printf("    📁 Private key: %s -> /home/cloud/.ssh/id_rsa\n", sshKeyPath)
+			GinkgoWriter.Printf("    📁 Private key: %s -> /home/cloud/.ssh/id_rsa\n", bootstrapKeyPath)
 			GinkgoWriter.Printf("    📁 Config file: %s -> /home/cloud/config.yml\n", bootstrapConfig)
 
-			err = cluster.UploadBootstrapFiles(ctx, setupSSHClient, sshKeyPath, bootstrapConfig)
+			err = cluster.UploadBootstrapFiles(ctx, setupSSHClient, bootstrapKeyPath, bootstrapConfig)
 			Expect(err).NotTo(HaveOccurred(), "Failed to upload bootstrap files to setup node")
 			GinkgoWriter.Printf("    ✅ Bootstrap files uploaded successfully\n")
 		})

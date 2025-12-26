@@ -22,22 +22,24 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // VMResources tracks VM-related resources created for a test cluster
 type VMResources struct {
-	VirtClient  *virtualization.Client
-	Namespace   string
-	VMNames     []string
-	CVMINames   []string // ClusterVirtualImage names (cluster-scoped)
-	SetupVMName string   // Name of the setup VM (always created)
+	VirtClient          *virtualization.Client
+	Namespace           string
+	VMNames             []string
+	CVMINames           []string // ClusterVirtualImage names (cluster-scoped)
+	SetupVMName         string   // Name of the setup VM (always created)
+	CloudInitSecretName string   // Cloud-init secret name (for cleanup)
 }
 
 // CreateVirtualMachines creates virtual machines from cluster definition.
@@ -115,11 +117,12 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 	// Track setup VM separately
 	// The setup VM is always created, so it will exist in vmNames
 	resources := &VMResources{
-		VirtClient:  virtClient,
-		Namespace:   namespace,
-		VMNames:     vmNames,
-		CVMINames:   cvmiNames,
-		SetupVMName: setupVMName, // setupVMName was set above when creating setupVM
+		VirtClient:          virtClient,
+		Namespace:           namespace,
+		VMNames:             vmNames,
+		CVMINames:           cvmiNames,
+		SetupVMName:         setupVMName,              // setupVMName was set above when creating setupVM
+		CloudInitSecretName: getCloudInitSecretName(), // For cleanup
 	}
 
 	return vmNames, resources, nil
@@ -335,19 +338,19 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 		// If VirtualDisk already exists, we'll use it
 	}
 
-	// 3. Create VirtualMachine (check if it exists first)
+	// 3. Ensure cloud-init secret exists (shared by all VMs)
+	cloudInitSecretName, err := getOrCreateCloudInitSecret(ctx, virtClient, namespace)
+	if err != nil {
+		return "", fmt.Errorf("failed to ensure cloud-init secret: %w", err)
+	}
+
+	// 4. Create VirtualMachine (check if it exists first)
 	_, err = virtClient.VirtualMachines().Get(ctx, namespace, vmName)
 	if err != nil {
 		if !errors.IsNotFound(err) {
 			return "", fmt.Errorf("failed to check VirtualMachine %s: %w", vmName, err)
 		}
 		// VirtualMachine doesn't exist, create it
-		// Get SSH public key content
-		sshPublicKey, err := GetSSHPublicKeyContent()
-		if err != nil {
-			return "", fmt.Errorf("failed to get SSH public key content: %w", err)
-		}
-
 		memoryQuantity := resource.MustParse(fmt.Sprintf("%dGi", node.RAM))
 		vm := &v1alpha2.VirtualMachine{
 			ObjectMeta: metav1.ObjectMeta{
@@ -392,8 +395,11 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 					return refs
 				}(),
 				Provisioning: &v1alpha2.Provisioning{
-					Type:     "UserData",
-					UserData: generateCloudInitUserData(vmName, sshPublicKey),
+					Type: "UserDataRef",
+					UserDataRef: &v1alpha2.UserDataRef{
+						Kind: "Secret",
+						Name: cloudInitSecretName,
+					},
 				},
 			},
 		}
@@ -436,8 +442,24 @@ func getCVMINameFromImageURL(imageURL string) string {
 	return name
 }
 
-// generateCloudInitUserData generates cloud-init user data for VM provisioning
-func generateCloudInitUserData(hostname, sshPubKey string) string {
+// getCloudInitSecretName returns unique cloud-init secret name based on config and namespace.
+// Format: e2e-cloudinit-{namespace}-{config-name} (without .yml/.yaml extension)
+func getCloudInitSecretName() string {
+	// Get config filename and remove extension
+	configName := strings.TrimSuffix(config.YAMLConfigFilename, ".yml")
+	configName = strings.TrimSuffix(configName, ".yaml")
+	// Sanitize for Kubernetes naming
+	configName = strings.ToLower(configName)
+	configName = strings.ReplaceAll(configName, "_", "-")
+	namespace := strings.ToLower(config.TestClusterNamespace)
+	namespace = strings.ReplaceAll(namespace, "_", "-")
+	return fmt.Sprintf("e2e-cloudinit-%s-%s", namespace, configName)
+}
+
+// generateCloudInitConfig generates full cloud-init configuration.
+// Uses Secret to avoid 2048 byte limit of inline userData.
+// Hostname is set automatically by DVP from VM name.
+func generateCloudInitConfig(userPubKey, bootstrapPubKey string) string {
 	return fmt.Sprintf(`#cloud-config
 package_update: true
 packages:
@@ -463,21 +485,118 @@ users:
     lock_passwd: false
     ssh_authorized_keys:
       - %s
+      - %s
+
 write_files:
   - path: /etc/ssh/sshd_config.d/allow_tcp_forwarding.conf
     content: |
-      # Разрешить TCP forwarding
+      # Allow TCP forwarding for SSH jump host
       AllowTcpForwarding yes
 
 runcmd:
-  - systemctl restart ssh
-  - hostnamectl set-hostname %s
-  - systemctl daemon-reload
-  - systemctl enable --now qemu-guest-agent.service
-`, sshPubKey, hostname)
+  - systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+  - systemctl enable --now qemu-guest-agent
+
+final_message: "The system is finally up, after $UPTIME seconds"
+`, userPubKey, bootstrapPubKey)
 }
 
-// RemoveAllVMs forcefully stops and deletes virtual machines, virtual disks, and virtual images.
+// getOrCreateCloudInitSecret ensures the cloud-init secret exists in the namespace.
+// Creates it if not exists, returns the secret name.
+func getOrCreateCloudInitSecret(ctx context.Context, virtClient *virtualization.Client, namespace string) (string, error) {
+	secretName := getCloudInitSecretName()
+
+	// Check if secret already exists
+	_, err := virtClient.Secrets().Get(ctx, namespace, secretName)
+	if err == nil {
+		// Secret exists, return its name
+		return secretName, nil
+	}
+	if !errors.IsNotFound(err) {
+		return "", fmt.Errorf("failed to check cloud-init secret: %w", err)
+	}
+
+	// Secret doesn't exist, create it
+	fmt.Printf("    🔐 Creating cloud-init secret %s/%s\n", namespace, secretName)
+
+	// Get SSH public keys
+	userPubKey, err := GetSSHPublicKeyContent()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user SSH public key: %w", err)
+	}
+
+	bootstrapPubKey, err := GetBootstrapSSHPublicKeyContent()
+	if err != nil {
+		return "", fmt.Errorf("failed to get bootstrap SSH public key: %w", err)
+	}
+
+	// Generate cloud-init config
+	cloudInitConfig := generateCloudInitConfig(userPubKey, bootstrapPubKey)
+
+	// Create secret with cloud-init data
+	// Note: Kubernetes Secret.Data expects raw bytes, the API handles base64 encoding
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretType("provisioning.virtualization.deckhouse.io/cloud-init"),
+		Data: map[string][]byte{
+			"userData": []byte(cloudInitConfig),
+		},
+	}
+
+	err = virtClient.Secrets().Create(ctx, secret)
+	if err != nil {
+		return "", fmt.Errorf("failed to create cloud-init secret: %w", err)
+	}
+
+	fmt.Printf("    ✅ Cloud-init secret created\n")
+	return secretName, nil
+}
+
+// VerifyVMConfig verifies VM configuration and fixes hostname if needed.
+// Should be called after VM is running and before dhctl bootstrap.
+//
+// NOTE: This function can potentially be removed in the future if:
+// 1. DVP correctly sets hostname from VM name via metadata
+// 2. All packages are installed via cloud-init Secret (already done)
+// For now, we keep it to verify and fix hostname if DVP doesn't set it correctly.
+func VerifyVMConfig(ctx context.Context, sshClient interface {
+	Exec(ctx context.Context, cmd string) (string, error)
+}, vmName string) error {
+	fmt.Printf("    🔧 Verifying VM configuration on %s...\n", vmName)
+
+	// Check current hostname
+	currentHostname, err := sshClient.Exec(ctx, "hostname")
+	if err != nil {
+		return fmt.Errorf("failed to get hostname on %s: %w", vmName, err)
+	}
+	currentHostname = strings.TrimSpace(currentHostname)
+
+	// Fix hostname if it doesn't match VM name
+	// DVP should set hostname automatically from VM name, but we verify and fix if needed
+	if currentHostname != vmName {
+		fmt.Printf("    ⚠️  Hostname mismatch on %s: got '%s', expected '%s'. Fixing...\n", vmName, currentHostname, vmName)
+		_, err = sshClient.Exec(ctx, fmt.Sprintf("sudo hostnamectl set-hostname %s", vmName))
+		if err != nil {
+			return fmt.Errorf("failed to set hostname on %s: %w", vmName, err)
+		}
+		fmt.Printf("    ✅ Hostname fixed on %s\n", vmName)
+	} else {
+		fmt.Printf("    ✅ Hostname correct on %s: %s\n", vmName, currentHostname)
+	}
+
+	// Verify qemu-guest-agent is running (should be started by cloud-init)
+	_, err = sshClient.Exec(ctx, "sudo systemctl is-active qemu-guest-agent >/dev/null 2>&1 || sudo systemctl enable --now qemu-guest-agent 2>/dev/null || true")
+	if err != nil {
+		fmt.Printf("    ⚠️  Warning: qemu-guest-agent check failed on %s: %v\n", vmName, err)
+	}
+
+	return nil
+}
+
+// RemoveAllVMs forcefully stops and deletes virtual machines, virtual disks, cloud-init secret, and virtual images.
 // If a VirtualImage is in use by other resources, it will be skipped but VMs and VDs will still be deleted.
 func RemoveAllVMs(ctx context.Context, resources *VMResources) error {
 	if resources == nil {
@@ -498,6 +617,19 @@ func RemoveAllVMs(ctx context.Context, resources *VMResources) error {
 			fmt.Printf("    ❌ Failed to remove VM %s/%s: %v\n", resources.Namespace, vmName, err)
 		} else {
 			fmt.Printf("    ✅ VM %s/%s removed successfully\n", resources.Namespace, vmName)
+		}
+	}
+
+	// Delete cloud-init secret
+	if resources.CloudInitSecretName != "" {
+		fmt.Printf("    ⏳ Removing cloud-init secret %s/%s\n", resources.Namespace, resources.CloudInitSecretName)
+		err := resources.VirtClient.Secrets().Delete(ctx, resources.Namespace, resources.CloudInitSecretName)
+		if err != nil {
+			if !errors.IsNotFound(err) {
+				fmt.Printf("    ⚠️  Warning: Failed to delete cloud-init secret %s: %v\n", resources.CloudInitSecretName, err)
+			}
+		} else {
+			fmt.Printf("    ✅ Cloud-init secret %s deleted\n", resources.CloudInitSecretName)
 		}
 	}
 

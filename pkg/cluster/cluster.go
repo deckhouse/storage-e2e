@@ -146,6 +146,12 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("failed to get SSH private key path: %w", err)
 	}
 
+	// Get bootstrap SSH key (used for VM connections, has no passphrase)
+	bootstrapKeyPath, err := GetBootstrapSSHPrivateKeyPath()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bootstrap SSH private key path: %w", err)
+	}
+
 	fmt.Printf("    ▶️ Step 2: Connecting to base cluster %s@%s\n", sshUser, sshHost)
 	// Step 2: Connect to base cluster
 	baseClusterResources, err := ConnectToCluster(ctx, ConnectClusterOptions{
@@ -295,7 +301,7 @@ func CreateTestCluster(
 
 	setupSSHClient, err := ssh.NewClientWithJumpHost(
 		sshUser, sshHost, sshKeyPath, // jump host
-		config.VMSSHUser, setupNodeIP, sshKeyPath, // target host
+		config.VMSSHUser, setupNodeIP, sshKeyPath, // target host (user's key added via cloud-init)
 	)
 	if err != nil {
 		baseClusterResources.SSHClient.Close()
@@ -303,6 +309,17 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("failed to create SSH client to setup node: %w", err)
 	}
 	fmt.Printf("    ✅ Step 7: SSH connection to setup node established\n")
+
+	fmt.Printf("    ▶️ Step 7.5: Verifying VM configuration on setup node\n")
+	// Step 7.5: Verify VM config (hostname, etc.)
+	// NOTE: This step can potentially be removed if DVP correctly sets hostname from VM name
+	pkgCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	err = VerifyVMConfig(pkgCtx, setupSSHClient, "setup-node")
+	cancel()
+	if err != nil {
+		fmt.Printf("    ⚠️  Warning: VM configuration check failed on setup node: %v\n", err)
+		// Continue anyway - this is a verification step
+	}
 
 	fmt.Printf("    ▶️ Step 8: Installing Docker on setup node (this may take up to 15 minutes)\n")
 	// Step 8: Install Docker on setup node
@@ -329,9 +346,9 @@ func CreateTestCluster(
 	fmt.Printf("    ✅ Step 9: Bootstrap configuration prepared\n")
 
 	fmt.Printf("    ▶️ Step 10: Uploading bootstrap files to setup node\n")
-	// Step 10: Upload bootstrap files
+	// Step 10: Upload bootstrap files (using bootstrap key - no passphrase issues)
 	uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	err = UploadBootstrapFiles(uploadCtx, setupSSHClient, sshKeyPath, bootstrapConfig)
+	err = UploadBootstrapFiles(uploadCtx, setupSSHClient, bootstrapKeyPath, bootstrapConfig)
 	cancel()
 	if err != nil {
 		setupSSHClient.Close()
@@ -374,7 +391,7 @@ func CreateTestCluster(
 	fmt.Printf("    ✅ Step 12: Base cluster tunnel stopped\n")
 
 	fmt.Printf("    ▶️ Step 13: Connecting to test cluster master %s\n", firstMasterIP)
-	// Step 14: Connect to test cluster
+	// Step 14: Connect to test cluster (user's key works - added via cloud-init)
 	testClusterResources, err := ConnectToCluster(ctx, ConnectClusterOptions{
 		SSHUser:       sshUser,
 		SSHHost:       sshHost,
