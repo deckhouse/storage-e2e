@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -595,14 +596,49 @@ func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef 
 		}
 	}
 
-	// Process all workers
+	// Process all workers in parallel
 	workerCount := len(clusterDef.Workers)
 	if workerCount > 0 {
-		fmt.Printf("    ▶️ Adding %d worker node(s) to the cluster\n", workerCount)
+		fmt.Printf("    ▶️ Adding %d worker node(s) to the cluster (parallel)\n", workerCount)
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		errChan := make(chan error, workerCount)
+		completedCount := 0
+
 		for _, workerNode := range clusterDef.Workers {
-			if err := addNodeToCluster(ctx, workerNode, workerBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath); err != nil {
-				return fmt.Errorf("failed to add worker node %s: %w", workerNode.Hostname, err)
-			}
+			wg.Add(1)
+			go func(node config.ClusterNode) {
+				defer wg.Done()
+
+				mu.Lock()
+				fmt.Printf("    ⏳ Starting bootstrap on %s...\n", node.Hostname)
+				mu.Unlock()
+
+				err := addNodeToCluster(ctx, node, workerBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath)
+
+				mu.Lock()
+				if err != nil {
+					fmt.Printf("    ❌ Worker %s failed: %v\n", node.Hostname, err)
+					errChan <- fmt.Errorf("worker %s: %w", node.Hostname, err)
+				} else {
+					completedCount++
+					fmt.Printf("    ✅ [%d/%d] Worker %s bootstrapped successfully\n", completedCount, workerCount, node.Hostname)
+				}
+				mu.Unlock()
+			}(workerNode)
+		}
+
+		wg.Wait()
+		close(errChan)
+
+		// Collect all errors
+		var errs []error
+		for err := range errChan {
+			errs = append(errs, err)
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("failed to add %d worker(s): %v", len(errs), errs)
 		}
 	}
 

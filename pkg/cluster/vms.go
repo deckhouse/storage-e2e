@@ -495,6 +495,15 @@ write_files:
     content: |
       # Allow TCP forwarding for SSH jump host
       AllowTcpForwarding yes
+  - path: /etc/profile.d/kubectl-aliases.sh
+    permissions: '0644'
+    content: |
+      # kubectl aliases and completion
+      alias k=kubectl
+      if command -v kubectl &>/dev/null; then
+        source <(kubectl completion bash)
+        complete -o default -F __start_kubectl k
+      fi
 
 runcmd:
   - systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
