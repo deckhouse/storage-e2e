@@ -310,17 +310,6 @@ func CreateTestCluster(
 	}
 	fmt.Printf("    ✅ Step 7: SSH connection to setup node established\n")
 
-	fmt.Printf("    ▶️ Step 7.5: Verifying VM configuration on setup node\n")
-	// Step 7.5: Verify VM config (hostname, etc.)
-	// NOTE: This step can potentially be removed if DVP correctly sets hostname from VM name
-	pkgCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	err = VerifyVMConfig(pkgCtx, setupSSHClient, "setup-node")
-	cancel()
-	if err != nil {
-		fmt.Printf("    ⚠️  Warning: VM configuration check failed on setup node: %v\n", err)
-		// Continue anyway - this is a verification step
-	}
-
 	fmt.Printf("    ▶️ Step 8: Installing Docker on setup node (this may take up to 15 minutes)\n")
 	// Step 8: Install Docker on setup node
 	dockerCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)

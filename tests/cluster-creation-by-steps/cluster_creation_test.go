@@ -414,24 +414,6 @@ var _ = Describe("Cluster Creation Step-by-Step Test", Ordered, func() {
 		})
 	})
 
-	// Step 6.5: Verify VM configuration (hostname, etc.)
-	// NOTE: This step can potentially be removed if DVP correctly sets hostname from VM name
-	It("should verify VM configuration on setup node", func() {
-		By("Verifying VM configuration on setup node", func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-
-			GinkgoWriter.Printf("    ▶️ Verifying VM configuration on setup node\n")
-			err := cluster.VerifyVMConfig(ctx, setupSSHClient, "setup-node")
-			if err != nil {
-				GinkgoWriter.Printf("    ⚠️  Warning: VM configuration check failed: %v\n", err)
-				// Continue anyway - this is a verification step
-			} else {
-				GinkgoWriter.Printf("    ✅ VM configuration verified on setup node\n")
-			}
-		})
-	})
-
 	// Step 7: Install Docker on setup node (required for DKP bootstrap)
 	It("should ensure Docker is installed on the setup node", func() {
 		By("Installing Docker on setup node", func() {

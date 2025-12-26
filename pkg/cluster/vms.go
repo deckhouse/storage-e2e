@@ -458,7 +458,10 @@ func getCloudInitSecretName() string {
 
 // generateCloudInitConfig generates full cloud-init configuration.
 // Uses Secret to avoid 2048 byte limit of inline userData.
-// Hostname is set automatically by DVP from VM name.
+//
+// NOTE: Hostname is NOT set in cloud-init. DVP automatically sets the hostname
+// from the VirtualMachine name via cloud-init metadata. This was verified to work
+// correctly for all VMs (masters, workers, bootstrap). Do not add "hostname:" here.
 func generateCloudInitConfig(userPubKey, bootstrapPubKey string) string {
 	return fmt.Sprintf(`#cloud-config
 package_update: true
@@ -553,47 +556,6 @@ func getOrCreateCloudInitSecret(ctx context.Context, virtClient *virtualization.
 
 	fmt.Printf("    ✅ Cloud-init secret created\n")
 	return secretName, nil
-}
-
-// VerifyVMConfig verifies VM configuration and fixes hostname if needed.
-// Should be called after VM is running and before dhctl bootstrap.
-//
-// NOTE: This function can potentially be removed in the future if:
-// 1. DVP correctly sets hostname from VM name via metadata
-// 2. All packages are installed via cloud-init Secret (already done)
-// For now, we keep it to verify and fix hostname if DVP doesn't set it correctly.
-func VerifyVMConfig(ctx context.Context, sshClient interface {
-	Exec(ctx context.Context, cmd string) (string, error)
-}, vmName string) error {
-	fmt.Printf("    🔧 Verifying VM configuration on %s...\n", vmName)
-
-	// Check current hostname
-	currentHostname, err := sshClient.Exec(ctx, "hostname")
-	if err != nil {
-		return fmt.Errorf("failed to get hostname on %s: %w", vmName, err)
-	}
-	currentHostname = strings.TrimSpace(currentHostname)
-
-	// Fix hostname if it doesn't match VM name
-	// DVP should set hostname automatically from VM name, but we verify and fix if needed
-	if currentHostname != vmName {
-		fmt.Printf("    ⚠️  Hostname mismatch on %s: got '%s', expected '%s'. Fixing...\n", vmName, currentHostname, vmName)
-		_, err = sshClient.Exec(ctx, fmt.Sprintf("sudo hostnamectl set-hostname %s", vmName))
-		if err != nil {
-			return fmt.Errorf("failed to set hostname on %s: %w", vmName, err)
-		}
-		fmt.Printf("    ✅ Hostname fixed on %s\n", vmName)
-	} else {
-		fmt.Printf("    ✅ Hostname correct on %s: %s\n", vmName, currentHostname)
-	}
-
-	// Verify qemu-guest-agent is running (should be started by cloud-init)
-	_, err = sshClient.Exec(ctx, "sudo systemctl is-active qemu-guest-agent >/dev/null 2>&1 || sudo systemctl enable --now qemu-guest-agent 2>/dev/null || true")
-	if err != nil {
-		fmt.Printf("    ⚠️  Warning: qemu-guest-agent check failed on %s: %v\n", vmName, err)
-	}
-
-	return nil
 }
 
 // RemoveAllVMs forcefully stops and deletes virtual machines, virtual disks, cloud-init secret, and virtual images.
