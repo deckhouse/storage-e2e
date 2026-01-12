@@ -12,6 +12,11 @@ const (
 	ClusterCreateModeAlwaysUseExisting = "alwaysUseExisting"
 	// ClusterCreateModeAlwaysCreateNew indicates to always create a new cluster
 	ClusterCreateModeAlwaysCreateNew = "alwaysCreateNew"
+
+	// ImagePullPolicyAlways indicates to always create ClusterVirtualImage and fail if it exists
+	ImagePullPolicyAlways = "Always"
+	// ImagePullPolicyIfNotExists indicates to use existing ClusterVirtualImage without warnings if it exists
+	ImagePullPolicyIfNotExists = "IfNotExists"
 )
 
 var (
@@ -33,13 +38,11 @@ var (
 	SSHPrivateKeyDefaultValue = "~/.ssh/id_rsa"
 
 	// Public key. Can be either path to a file or a plain-text string.
-	SSHPublicKey = os.Getenv("SSH_PUBLIC_KEY")
-	//VMSSHPublicKeyDefaultValue = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC8WyGvnBNQp+v6CUweF1QYCRtR7Do/IA8IA2uMd2HuBsddFrc5xYon2ZtEvypZC4Vm1CzgcgUm9UkHgxytKEB4zOOWkmqFP62OSLNyuWMaFEW1fb0EDenup6B5SrjnA8ckm4Hf2NSLvwW9yS98TfN3nqPOPJKfQsN+OTiCerTtNyXjca//ppuGKsQd99jG7SqE9aDQ3sYCXatM53SXqhxS2nTew82bmzVmKXDxcIzVrS9f+2WmXIdY2cKo2I352yKWOIp1Nk0uji8ozLPHFQGvbAG8DGG1KNVcBl2qYUcttmCpN+iXEcGqyn/atUVJJMnZXGtp0fiL1rMLqAd/bb6TFNzZFSsS+zqGesxqLePe32vLCQ3xursP3BRZkrScM+JzIqevfP63INHJEZfYlUf4Ic+gfliS2yA1LwhU7hD4LSVXMQynlF9WeGjuv6ZYxmO8hC6IWCqWnIUqKUiGtvBSPXwsZo7wgljBr4ykJgBzS9MjZ0fzz1JKe80tH6clpjIOn6ReBPwQBq2zmDDrpa5GVqqqjXhRQuA0AfpHdhs5UKxs1PBr7/PTLA7PI39xkOAE/Zj1TYQ2dmqvpskshi7AtBStjinQBAlLXysLSHBtO+3+PLAYcMZMVfb0bVqfGGludO2prvXrrWWTku0eOsA5IRahrRdGhv5zhKgFV7cwUQ== ayakubov@MacBook-Pro-Alexey.local"
+	SSHPublicKey             = os.Getenv("SSH_PUBLIC_KEY")
 	SSHPublicKeyDefaultValue = "~/.ssh/id_rsa.pub"
 
 	// Base cluster SSH host
 	SSHHost = os.Getenv("SSH_HOST")
-	//SSHHostDefaultValue = "94.26.231.181"
 
 	// SSH credentials to deploy to VM
 	VMSSHUser             = os.Getenv("SSH_VM_USER")
@@ -71,6 +74,10 @@ var (
 
 	// RegistryDockerCfg specifies the docker registry key to download images from Deckhouse registry.
 	RegistryDockerCfg = os.Getenv("REGISTRY_DOCKER_CFG")
+
+	// Defines if the code will pull images for CVI or use existing ones. Can be always and ifNotExists. Default is ifNotExists.
+	ImagePullPolicy             = os.Getenv("IMAGE_PULL_POLICY")
+	ImagePullPolicyDefaultValue = ImagePullPolicyIfNotExists
 )
 
 func ValidateEnvironment() error {
@@ -115,6 +122,16 @@ func ValidateEnvironment() error {
 
 	if RegistryDockerCfg == "" {
 		return fmt.Errorf("REGISTRY_DOCKER_CFG environment variable is required but not set.")
+	}
+
+	if ImagePullPolicy == "" {
+		ImagePullPolicy = ImagePullPolicyDefaultValue
+	}
+
+	if ImagePullPolicy != ImagePullPolicyAlways && ImagePullPolicy != ImagePullPolicyIfNotExists {
+		return fmt.Errorf("IMAGE_PULL_POLICY has invalid value '%s'. "+
+			"Must be either '%s' or '%s'",
+			ImagePullPolicy, ImagePullPolicyAlways, ImagePullPolicyIfNotExists)
 	}
 
 	if TestClusterCreateMode == "" {

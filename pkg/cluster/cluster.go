@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -210,30 +211,59 @@ func CreateTestCluster(
 	fmt.Printf("    ✅ Step 5: Created %d virtual machines: %v\n", len(vmNames), vmNames)
 
 	fmt.Printf("    ▶️ Step 5.1: Waiting for all VMs to become Running (timeout: %v)\n", config.VMsRunningTimeout)
-	// Wait for all VMs to become Running
+	// Wait for all VMs to become Running in parallel
 	vmWaitCtx, cancel := context.WithTimeout(ctx, config.VMsRunningTimeout)
 	defer cancel()
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex // for thread-safe printing
+	errChan := make(chan error, len(vmNames))
+
 	for i, vmName := range vmNames {
-		fmt.Printf("    ⏳ Waiting for VM %d/%d: %s\n", i+1, len(vmNames), vmName)
-		vmReady := false
-		for !vmReady {
-			select {
-			case <-vmWaitCtx.Done():
-				baseClusterResources.SSHClient.Close()
-				baseClusterResources.TunnelInfo.StopFunc()
-				return nil, fmt.Errorf("timeout waiting for VM %s to become Running", vmName)
-			case <-time.After(20 * time.Second):
-				vm, err := virtClient.VirtualMachines().Get(vmWaitCtx, namespace, vmName)
-				if err != nil {
-					continue
-				}
-				if vm.Status.Phase == v1alpha2.MachineRunning {
-					vmReady = true
-					fmt.Printf("    ✅ VM %s is Running\n", vmName)
+		wg.Add(1)
+		go func(index int, name string) {
+			defer wg.Done()
+
+			mu.Lock()
+			fmt.Printf("    ⏳ Waiting for VM %d/%d: %s\n", index+1, len(vmNames), name)
+			mu.Unlock()
+
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-vmWaitCtx.Done():
+					errChan <- fmt.Errorf("timeout waiting for VM %s to become Running", name)
+					return
+				case <-ticker.C:
+					vm, err := virtClient.VirtualMachines().Get(vmWaitCtx, namespace, name)
+					if err != nil {
+						continue
+					}
+					if vm.Status.Phase == v1alpha2.MachineRunning {
+						mu.Lock()
+						fmt.Printf("    ✅ VM %s is Running\n", name)
+						mu.Unlock()
+						return
+					}
 				}
 			}
-		}
+		}(i, vmName)
 	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(errChan)
+
+	// Check if any errors occurred
+	if len(errChan) > 0 {
+		err := <-errChan
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, err
+	}
+
 	fmt.Printf("    ✅ Step 5.1: All VMs are Running\n")
 
 	fmt.Printf("    ▶️ Step 6: Gathering VM information\n")
@@ -378,7 +408,7 @@ func CreateTestCluster(
 	fmt.Printf("    ▶️ Step 14.1: Waiting for bootstrap secrets to appear (this may take a few minutes)\n")
 	// Step 14.1: Wait for bootstrap secrets to appear after NodeGroup creation
 	// The secrets are created by Deckhouse after the NodeGroup is created, so we need to wait
-	secretsWaitCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	secretsWaitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	secretNamespace := "d8-cloud-instance-manager"
 	secretClient, err := core.NewSecretClient(testClusterResources.Kubeconfig)

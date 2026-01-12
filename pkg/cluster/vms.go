@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -187,20 +188,23 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 	}
 
 	// Check for conflicting ClusterVirtualImages (cluster-scoped, no namespace)
-	cvmiNames := make([]string, 0, len(cvmiNamesSet))
-	for name := range cvmiNamesSet {
-		cvmiNames = append(cvmiNames, name)
-	}
-	for _, cvmiName := range cvmiNames {
-		_, err := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
-		if err == nil {
-			// CVMI exists
-			conflicts.ClusterVirtualImages = append(conflicts.ClusterVirtualImages, cvmiName)
-		} else if !errors.IsNotFound(err) {
-			// Some other error occurred
-			return nil, fmt.Errorf("failed to check ClusterVirtualImage %s: %w", cvmiName, err)
+	// Only check if IMAGE_PULL_POLICY is "Always" - if "IfNotExists", we want to use existing CVIs
+	if config.ImagePullPolicy == config.ImagePullPolicyAlways {
+		cvmiNames := make([]string, 0, len(cvmiNamesSet))
+		for name := range cvmiNamesSet {
+			cvmiNames = append(cvmiNames, name)
 		}
-		// If IsNotFound, the CVMI doesn't exist, which is fine
+		for _, cvmiName := range cvmiNames {
+			_, err := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
+			if err == nil {
+				// CVMI exists
+				conflicts.ClusterVirtualImages = append(conflicts.ClusterVirtualImages, cvmiName)
+			} else if !errors.IsNotFound(err) {
+				// Some other error occurred
+				return nil, fmt.Errorf("failed to check ClusterVirtualImage %s: %w", cvmiName, err)
+			}
+			// If IsNotFound, the CVMI doesn't exist, which is fine
+		}
 	}
 
 	return conflicts, nil
@@ -234,14 +238,13 @@ func getVMNodes(clusterDef *config.ClusterDefinition) []config.ClusterNode {
 func createVM(ctx context.Context, virtClient *virtualization.Client, namespace string, node config.ClusterNode, storageClass string) (string, error) {
 	vmName := node.Hostname
 
-	// 1. Create or get ClusterVirtualImage
+	// 1. Create or get ClusterVirtualImage based on IMAGE_PULL_POLICY
 	cvmiName := getCVMINameFromImageURL(node.OSType.ImageURL)
-	cvmi, err := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, err)
-		}
-		// CVMI doesn't exist, create it
+	var cvmi *v1alpha2.ClusterVirtualImage
+	var err error
+
+	if config.ImagePullPolicy == config.ImagePullPolicyAlways {
+		// Always mode: Always attempt to create CVI and fail if it exists
 		cvmi = &v1alpha2.ClusterVirtualImage{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: cvmiName,
@@ -257,8 +260,35 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 		}
 		err = virtClient.ClusterVirtualImages().Create(ctx, cvmi)
 		if err != nil {
-			return "", fmt.Errorf("failed to create ClusterVirtualImage %s: %w", cvmiName, err)
+			return "", fmt.Errorf("failed to create ClusterVirtualImage %s (IMAGE_PULL_POLICY=%s): %w", cvmiName, config.ImagePullPolicyAlways, err)
 		}
+	} else {
+		// IfNotExists mode: Use existing CVI without warnings, or create if not found
+		cvmi, err = virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
+		if err != nil {
+			if !errors.IsNotFound(err) {
+				return "", fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, err)
+			}
+			// CVMI doesn't exist, create it
+			cvmi = &v1alpha2.ClusterVirtualImage{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: cvmiName,
+				},
+				Spec: v1alpha2.ClusterVirtualImageSpec{
+					DataSource: v1alpha2.ClusterVirtualImageDataSource{
+						Type: "HTTP",
+						HTTP: &v1alpha2.DataSourceHTTP{
+							URL: node.OSType.ImageURL,
+						},
+					},
+				},
+			}
+			err = virtClient.ClusterVirtualImages().Create(ctx, cvmi)
+			if err != nil {
+				return "", fmt.Errorf("failed to create ClusterVirtualImage %s: %w", cvmiName, err)
+			}
+		}
+		// If CVI already exists (no error from Get), we use it without warnings
 	}
 
 	// 2. Create system VirtualDisk (check if it exists first)
@@ -484,40 +514,89 @@ func GetVMIPAddress(ctx context.Context, virtClient *virtualization.Client, name
 	return vm.Status.IPAddress, nil
 }
 
+// vmIPResult holds the result of fetching an IP address for a VM
+type vmIPResult struct {
+	node     *config.ClusterNode
+	ip       string
+	err      error
+	hostname string
+}
+
 // GatherVMInfo gathers IP addresses for all VMs in the cluster definition and fills them into ClusterDefinition.
 // This should be called once while connected to the base cluster, before switching to test cluster.
 // It modifies clusterDef in-place by setting IPAddress field for each VM node.
 func GatherVMInfo(ctx context.Context, virtClient *virtualization.Client, namespace string, clusterDef *config.ClusterDefinition, vmResources *VMResources) error {
-	// Gather info for all masters
+	var wg sync.WaitGroup
+	results := make(chan vmIPResult)
+
+	// Count total VMs to gather info for
+	totalVMs := 0
+	for i := range clusterDef.Masters {
+		if clusterDef.Masters[i].HostType == config.HostTypeVM {
+			totalVMs++
+		}
+	}
+	for i := range clusterDef.Workers {
+		if clusterDef.Workers[i].HostType == config.HostTypeVM {
+			totalVMs++
+		}
+	}
+	totalVMs++ // setup node
+
+	// Gather info for all masters in parallel
 	for i := range clusterDef.Masters {
 		master := &clusterDef.Masters[i]
 		if master.HostType == config.HostTypeVM {
-			ip, err := GetVMIPAddress(ctx, virtClient, namespace, master.Hostname)
-			if err != nil {
-				return fmt.Errorf("failed to get IP for master %s: %w", master.Hostname, err)
-			}
-			master.IPAddress = ip
+			wg.Add(1)
+			go func(node *config.ClusterNode) {
+				defer wg.Done()
+				ip, err := GetVMIPAddress(ctx, virtClient, namespace, node.Hostname)
+				results <- vmIPResult{node: node, ip: ip, err: err, hostname: node.Hostname}
+			}(master)
 		}
 	}
 
-	// Gather info for all workers
+	// Gather info for all workers in parallel
 	for i := range clusterDef.Workers {
 		worker := &clusterDef.Workers[i]
 		if worker.HostType == config.HostTypeVM {
-			ip, err := GetVMIPAddress(ctx, virtClient, namespace, worker.Hostname)
-			if err != nil {
-				return fmt.Errorf("failed to get IP for worker %s: %w", worker.Hostname, err)
-			}
-			worker.IPAddress = ip
+			wg.Add(1)
+			go func(node *config.ClusterNode) {
+				defer wg.Done()
+				ip, err := GetVMIPAddress(ctx, virtClient, namespace, node.Hostname)
+				results <- vmIPResult{node: node, ip: ip, err: err, hostname: node.Hostname}
+			}(worker)
 		}
 	}
 
-	// Gather info for setup node
-	// The setup node is always created dynamically, so we need to create/update clusterDef.Setup
+	// Gather info for setup node in parallel
 	setupVMName := vmResources.SetupVMName
-	ip, err := GetVMIPAddress(ctx, virtClient, namespace, setupVMName)
-	if err != nil {
-		return fmt.Errorf("failed to get IP for setup node %s: %w", setupVMName, err)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ip, err := GetVMIPAddress(ctx, virtClient, namespace, setupVMName)
+		results <- vmIPResult{node: nil, ip: ip, err: err, hostname: setupVMName}
+	}()
+
+	// Close results channel when all goroutines complete
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	var setupIP string
+	for result := range results {
+		if result.err != nil {
+			return fmt.Errorf("failed to get IP for VM %s: %w", result.hostname, result.err)
+		}
+		if result.node != nil {
+			// Master or worker node
+			result.node.IPAddress = result.ip
+		} else {
+			// Setup node
+			setupIP = result.ip
+		}
 	}
 
 	// Create or update clusterDef.Setup with the generated VM info
@@ -525,12 +604,12 @@ func GatherVMInfo(ctx context.Context, virtClient *virtualization.Client, namesp
 		// Create setup node from DefaultSetupVM template
 		setupNode := config.DefaultSetupVM
 		setupNode.Hostname = setupVMName
-		setupNode.IPAddress = ip
+		setupNode.IPAddress = setupIP
 		clusterDef.Setup = &setupNode
 	} else {
 		// Update existing setup node
 		clusterDef.Setup.Hostname = setupVMName
-		clusterDef.Setup.IPAddress = ip
+		clusterDef.Setup.IPAddress = setupIP
 	}
 
 	return nil

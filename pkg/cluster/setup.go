@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
@@ -582,34 +583,61 @@ func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef 
 		return fmt.Errorf("failed to get master bootstrap script: %w", err)
 	}
 
-	// Process additional masters (skip the first one)
+	// Process additional masters and all workers in parallel
 	masterCount := len(clusterDef.Masters) - 1
+	workerCount := len(clusterDef.Workers)
+	totalNodes := masterCount + workerCount
+
+	if totalNodes == 0 {
+		return nil
+	}
+
+	fmt.Printf("    ▶️ Adding %d node(s) to the cluster in parallel (%d master(s), %d worker(s))\n", totalNodes, masterCount, workerCount)
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex // for thread-safe printing
+	errChan := make(chan error, totalNodes)
+
+	// Add additional masters in parallel (skip the first one)
 	if masterCount > 0 {
-		fmt.Printf("    ▶️ Adding %d additional master node(s) to the cluster\n", masterCount)
 		for i := 1; i < len(clusterDef.Masters); i++ {
-			masterNode := clusterDef.Masters[i]
-			if err := addNodeToCluster(ctx, masterNode, masterBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath); err != nil {
-				return fmt.Errorf("failed to add master node %s: %w", masterNode.Hostname, err)
-			}
+			wg.Add(1)
+			go func(node config.ClusterNode) {
+				defer wg.Done()
+				if err := addNodeToCluster(ctx, node, masterBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath, &mu); err != nil {
+					errChan <- fmt.Errorf("failed to add master node %s: %w", node.Hostname, err)
+				}
+			}(clusterDef.Masters[i])
 		}
 	}
 
-	// Process all workers
-	workerCount := len(clusterDef.Workers)
+	// Add all workers in parallel
 	if workerCount > 0 {
-		fmt.Printf("    ▶️ Adding %d worker node(s) to the cluster\n", workerCount)
 		for _, workerNode := range clusterDef.Workers {
-			if err := addNodeToCluster(ctx, workerNode, workerBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath); err != nil {
-				return fmt.Errorf("failed to add worker node %s: %w", workerNode.Hostname, err)
-			}
+			wg.Add(1)
+			go func(node config.ClusterNode) {
+				defer wg.Done()
+				if err := addNodeToCluster(ctx, node, workerBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath, &mu); err != nil {
+					errChan <- fmt.Errorf("failed to add worker node %s: %w", node.Hostname, err)
+				}
+			}(workerNode)
 		}
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	// Check if any errors occurred
+	if len(errChan) > 0 {
+		return <-errChan
 	}
 
 	return nil
 }
 
 // addNodeToCluster adds a single node to the cluster by running the bootstrap script
-func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScript string, clusterDef *config.ClusterDefinition, baseSSHUser, baseSSHHost, sshKeyPath string) error {
+// mu parameter is optional - pass nil for sequential execution, or a mutex for thread-safe printing in parallel execution
+func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScript string, clusterDef *config.ClusterDefinition, baseSSHUser, baseSSHHost, sshKeyPath string, mu *sync.Mutex) error {
 	// Get node IP address from cluster definition
 	nodeIP, err := GetNodeIPAddress(clusterDef, node.Hostname)
 	if err != nil {
@@ -621,7 +649,14 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 	if node.Role == config.ClusterRoleMaster {
 		nodeType = "master"
 	}
+
+	if mu != nil {
+		mu.Lock()
+	}
 	fmt.Printf("    ▶️ Adding %s node %s (%s) to the cluster...\n", nodeType, node.Hostname, nodeIP)
+	if mu != nil {
+		mu.Unlock()
+	}
 
 	// Create SSH client to the node through jump host (base cluster master)
 	sshClient, err := ssh.NewClientWithJumpHost(
@@ -629,13 +664,25 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 		config.VMSSHUser, nodeIP, sshKeyPath, // target host
 	)
 	if err != nil {
+		if mu != nil {
+			mu.Lock()
+		}
 		fmt.Printf("    ❌ Failed to create SSH connection to node %s (%s): %v\n", node.Hostname, nodeIP, err)
+		if mu != nil {
+			mu.Unlock()
+		}
 		return fmt.Errorf("failed to create SSH client to node %s (%s): %w", node.Hostname, nodeIP, err)
 	}
 	defer sshClient.Close()
 
 	// Log that bootstrap script is starting
+	if mu != nil {
+		mu.Lock()
+	}
 	fmt.Printf("    ⏳ Running bootstrap script on node %s (%s)...\n", node.Hostname, nodeIP)
+	if mu != nil {
+		mu.Unlock()
+	}
 
 	// Run bootstrap script as root
 	// Note: The bootstrap script from secret is already decoded (Kubernetes API returns decoded data)
@@ -643,15 +690,27 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 
 	output, err := sshClient.Exec(ctx, cmd)
 	if err != nil {
+		if mu != nil {
+			mu.Lock()
+		}
 		fmt.Printf("    ❌ Bootstrap script failed on node %s (%s): %v\n", node.Hostname, nodeIP, err)
 		if output != "" {
 			fmt.Printf("    📋 Bootstrap script output from node %s:\n%s\n", node.Hostname, output)
+		}
+		if mu != nil {
+			mu.Unlock()
 		}
 		return fmt.Errorf("failed to run bootstrap script on node %s: %w\nOutput: %s", node.Hostname, err, output)
 	}
 
 	// Log successful completion (output is only shown on failure)
+	if mu != nil {
+		mu.Lock()
+	}
 	fmt.Printf("    ✅ Bootstrap script completed successfully on node %s (%s)\n", node.Hostname, nodeIP)
+	if mu != nil {
+		mu.Unlock()
+	}
 
 	return nil
 }
@@ -689,7 +748,7 @@ func WaitForNodeReady(ctx context.Context, kubeconfig *rest.Config, nodeName str
 	}
 }
 
-// WaitForAllNodesReady waits for all expected nodes to become Ready
+// WaitForAllNodesReady waits for all expected nodes to become Ready in parallel
 // It validates that:
 // 1. All expected nodes are present in the cluster
 // 2. All nodes are in Ready state
@@ -707,13 +766,13 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 		return fmt.Errorf("failed to create node client: %w", err)
 	}
 
-	// Build expected node names (all masters + all workers)
-	expectedNodeNames := make(map[string]bool)
+	// Build expected node names list
+	expectedNodeNames := make([]string, 0)
 	for _, master := range clusterDef.Masters {
-		expectedNodeNames[master.Hostname] = true
+		expectedNodeNames = append(expectedNodeNames, master.Hostname)
 	}
 	for _, worker := range clusterDef.Workers {
-		expectedNodeNames[worker.Hostname] = true
+		expectedNodeNames = append(expectedNodeNames, worker.Hostname)
 	}
 
 	expectedCount := len(expectedNodeNames)
@@ -721,94 +780,59 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 		return fmt.Errorf("no nodes expected in cluster definition")
 	}
 
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	// Create context with timeout for all goroutines
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			if time.Now().After(deadline) {
-				// Get current state for better error message
-				nodes, err := nodeClient.List(ctx)
-				if err != nil {
-					return fmt.Errorf("timeout waiting for nodes to be ready (failed to list nodes: %w)", err)
-				}
+	var wg sync.WaitGroup
+	var mu sync.Mutex // for thread-safe printing
+	errChan := make(chan error, expectedCount)
 
-				expectedReadyCount := 0
-				foundNodes := make(map[string]bool)
-				missingNodes := make([]string, 0)
-				for _, node := range nodes.Items {
-					foundNodes[node.Name] = true
-					// Only count ready nodes that are in our expected list
-					if expectedNodeNames[node.Name] && nodeClient.IsReady(ctx, &node) {
-						expectedReadyCount++
+	// Wait for each node to become ready in parallel
+	for i, nodeName := range expectedNodeNames {
+		wg.Add(1)
+		go func(index int, name string) {
+			defer wg.Done()
+
+			mu.Lock()
+			fmt.Printf("    ⏳ Waiting for node %d/%d: %s\n", index+1, expectedCount, name)
+			mu.Unlock()
+
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-waitCtx.Done():
+					errChan <- fmt.Errorf("timeout waiting for node %s to become Ready", name)
+					return
+				case <-ticker.C:
+					node, err := nodeClient.Get(waitCtx, name)
+					if err != nil {
+						// Node doesn't exist yet, continue waiting
+						continue
+					}
+
+					if nodeClient.IsReady(waitCtx, node) {
+						mu.Lock()
+						fmt.Printf("    ✅ Node %s is Ready\n", name)
+						mu.Unlock()
+						return
 					}
 				}
-
-				// Find missing expected nodes
-				for expectedName := range expectedNodeNames {
-					if !foundNodes[expectedName] {
-						missingNodes = append(missingNodes, expectedName)
-					}
-				}
-
-				errorMsg := fmt.Sprintf("timeout waiting for nodes to be ready: expected %d nodes (%v), found %d nodes, %d expected nodes ready",
-					expectedCount, getNodeNamesList(expectedNodeNames), len(foundNodes), expectedReadyCount)
-				if len(missingNodes) > 0 {
-					errorMsg += fmt.Sprintf(". Missing nodes: %v", missingNodes)
-				}
-				errorMsg += fmt.Sprintf(". Found nodes: %v", getNodeNamesList(foundNodes))
-
-				return fmt.Errorf("%s", errorMsg)
 			}
-
-			// List all nodes
-			nodes, err := nodeClient.List(ctx)
-			if err != nil {
-				// Continue waiting if we can't list nodes yet
-				continue
-			}
-
-			// Check if we have all expected nodes and they are all ready
-			foundNodes := make(map[string]bool)
-			expectedReadyCount := 0
-			for _, node := range nodes.Items {
-				foundNodes[node.Name] = true
-				// Only count ready nodes that are in our expected list
-				if expectedNodeNames[node.Name] && nodeClient.IsReady(ctx, &node) {
-					expectedReadyCount++
-				}
-			}
-
-			// Check if all expected nodes are present
-			allPresent := true
-			for expectedName := range expectedNodeNames {
-				if !foundNodes[expectedName] {
-					allPresent = false
-					break
-				}
-			}
-
-			// If all expected nodes are present and all expected nodes are ready, we're done
-			if allPresent && expectedReadyCount == expectedCount {
-				return nil
-			}
-		}
+		}(i, nodeName)
 	}
-}
 
-// getNodeNamesList converts a map of node names to a sorted list for error messages
-func getNodeNamesList(nodeMap map[string]bool) []string {
-	names := make([]string, 0, len(nodeMap))
-	for name := range nodeMap {
-		names = append(names, name)
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	// Check if any errors occurred
+	if len(errChan) > 0 {
+		return <-errChan
 	}
-	// Simple sort by iterating (for consistent error messages)
-	// In production, you might want to use sort.Strings
-	return names
+
+	return nil
 }
 
 // GetSSHPrivateKeyPath returns the path to the SSH private key file.
