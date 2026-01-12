@@ -28,6 +28,7 @@ import (
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
+	"github.com/deckhouse/storage-e2e/internal/logger"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -465,19 +466,19 @@ func RemoveAllVMs(ctx context.Context, resources *VMResources) error {
 	}
 
 	if len(resources.VMNames) == 0 {
-		fmt.Printf("    ⏭️  No VMs to remove\n")
+		logger.Skip("No VMs to remove")
 		return nil
 	}
 
 	// Delete all VMs using RemoveVM
 	for i, vmName := range resources.VMNames {
-		fmt.Printf("    ⏳ Removing VM %d/%d: %s/%s\n", i+1, len(resources.VMNames), resources.Namespace, vmName)
+		logger.Progress("Removing VM %d/%d: %s/%s", i+1, len(resources.VMNames), resources.Namespace, vmName)
 		err := RemoveVM(ctx, resources.VirtClient, resources.Namespace, vmName)
 		if err != nil {
 			// Log but continue - we'll try to clean up other VMs
-			fmt.Printf("    ❌ Failed to remove VM %s/%s: %v\n", resources.Namespace, vmName, err)
+			logger.Error("Failed to remove VM %s/%s: %v", resources.Namespace, vmName, err)
 		} else {
-			fmt.Printf("    ✅ VM %s/%s removed successfully\n", resources.Namespace, vmName)
+			logger.Success("VM %s/%s removed successfully", resources.Namespace, vmName)
 		}
 	}
 
@@ -656,7 +657,7 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// VM doesn't exist, nothing to clean up
-			fmt.Printf("      ⏭️  VM %s/%s doesn't exist, skipping\n", namespace, vmName)
+			logger.Skip("VM %s/%s doesn't exist, skipping", namespace, vmName)
 			return nil
 		}
 		return fmt.Errorf("failed to get VM %s/%s: %w", namespace, vmName, err)
@@ -670,7 +671,7 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 		}
 	}
 	if len(vdNames) > 0 {
-		fmt.Printf("      📋 Found %d VirtualDisk(s) associated with VM: %v\n", len(vdNames), vdNames)
+		logger.Debug("Found %d VirtualDisk(s) associated with VM: %v", len(vdNames), vdNames)
 	}
 
 	// Step 2: Collect ClusterVirtualImage names from VirtualDisks before deleting them
@@ -682,7 +683,7 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 				continue // Already deleted
 			}
 			// Log but continue
-			fmt.Printf("      ⚠️  Warning: Failed to get VirtualDisk %s/%s: %v\n", namespace, vdName, err)
+			logger.Warn("Failed to get VirtualDisk %s/%s: %v", namespace, vdName, err)
 			continue
 		}
 
@@ -694,7 +695,7 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 	}
 
 	// Step 3: Delete the VM
-	fmt.Printf("      🗑️  Deleting VirtualMachine %s/%s\n", namespace, vmName)
+	logger.Delete("Deleting VirtualMachine %s/%s", namespace, vmName)
 	err = virtClient.VirtualMachines().Delete(ctx, namespace, vmName)
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete VM %s/%s: %w", namespace, vmName, err)
@@ -702,17 +703,17 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 
 	// Step 3.5: Wait for VM to be fully deleted before deleting VirtualDisks
 	// Kubernetes deletion is asynchronous, so we need to wait until the VM is gone
-	fmt.Printf("      ⏳ Waiting for VirtualMachine %s/%s to be fully deleted...\n", namespace, vmName)
+	logger.Progress("Waiting for VirtualMachine %s/%s to be fully deleted...", namespace, vmName)
 	for {
 		_, err := virtClient.VirtualMachines().Get(ctx, namespace, vmName)
 		if errors.IsNotFound(err) {
 			// VirtualMachine is fully deleted
-			fmt.Printf("      ✅ VirtualMachine %s/%s deleted\n", namespace, vmName)
+			logger.Success("VirtualMachine %s/%s deleted", namespace, vmName)
 			break
 		}
 		if err != nil {
 			// Some other error occurred, log and break to avoid infinite loop
-			fmt.Printf("      ⚠️  Warning: Error checking if VirtualMachine %s/%s is deleted: %v\n", namespace, vmName, err)
+			logger.Warn("Error checking if VirtualMachine %s/%s is deleted: %v", namespace, vmName, err)
 			break
 		}
 		// Wait a bit before checking again
@@ -726,13 +727,13 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 
 	// Step 4: Delete all VirtualDisks associated with this VM
 	if len(vdNames) > 0 {
-		fmt.Printf("      🗑️  Deleting %d VirtualDisk(s)...\n", len(vdNames))
+		logger.Delete("Deleting %d VirtualDisk(s)...", len(vdNames))
 	}
 	deletedVDNames := make(map[string]bool)
 	for _, vdName := range vdNames {
 		err := virtClient.VirtualDisks().Delete(ctx, namespace, vdName)
 		if err != nil && !errors.IsNotFound(err) {
-			fmt.Printf("      ❌ Failed to delete VirtualDisk %s/%s: %v\n", namespace, vdName, err)
+			logger.Error("Failed to delete VirtualDisk %s/%s: %v", namespace, vdName, err)
 		} else {
 			deletedVDNames[vdName] = true
 		}
@@ -741,7 +742,7 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 	// Step 4.5: Wait for all VirtualDisks to be fully deleted before checking ClusterVirtualImage usage
 	// Poll until all VirtualDisks we deleted are no longer present
 	if len(deletedVDNames) > 0 {
-		fmt.Printf("      ⏳ Waiting for %d VirtualDisk(s) to be fully deleted...\n", len(deletedVDNames))
+		logger.Progress("Waiting for %d VirtualDisk(s) to be fully deleted...", len(deletedVDNames))
 	}
 	for len(deletedVDNames) > 0 {
 		allDeleted := true
@@ -752,7 +753,7 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 				delete(deletedVDNames, vdName)
 			} else if err != nil {
 				// Some other error occurred, log and remove from tracking to avoid infinite loop
-				fmt.Printf("      ⚠️  Warning: Error checking if VirtualDisk %s/%s is deleted: %v\n", namespace, vdName, err)
+				logger.Warn("Error checking if VirtualDisk %s/%s is deleted: %v", namespace, vdName, err)
 				delete(deletedVDNames, vdName)
 			} else {
 				// VirtualDisk still exists
@@ -761,7 +762,7 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 		}
 		if allDeleted {
 			if len(vdNames) > 0 {
-				fmt.Printf("      ✅ All VirtualDisks deleted\n")
+				logger.Success("All VirtualDisks deleted")
 			}
 			break
 		}
@@ -778,11 +779,11 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 	// Note: Since CVMI is cluster-scoped, it could be used by VDs in other namespaces too,
 	// but for simplicity we only check within the current namespace
 	if len(cvmiNamesSet) > 0 {
-		fmt.Printf("      🔍 Checking ClusterVirtualImage usage (%d image(s))...\n", len(cvmiNamesSet))
+		logger.Debug("Checking ClusterVirtualImage usage (%d image(s))...", len(cvmiNamesSet))
 	}
 	allVDs, err := virtClient.VirtualDisks().List(ctx, namespace)
 	if err != nil {
-		fmt.Printf("      ⚠️  Warning: Failed to list VirtualDisks to check ClusterVirtualImage usage: %v\n", err)
+		logger.Warn("Failed to list VirtualDisks to check ClusterVirtualImage usage: %v", err)
 		allVDs = []v1alpha2.VirtualDisk{}
 	}
 
@@ -800,20 +801,20 @@ func RemoveVM(ctx context.Context, virtClient *virtualization.Client, namespace,
 	deletedCVMICount := 0
 	for cvmiName := range cvmiNamesSet {
 		if cvmiInUse[cvmiName] {
-			fmt.Printf("      ⏭️  ClusterVirtualImage %s is still in use, skipping deletion\n", cvmiName)
+			logger.Skip("ClusterVirtualImage %s is still in use, skipping deletion", cvmiName)
 			continue // Still in use, skip deletion
 		}
 
-		fmt.Printf("      🗑️  Deleting ClusterVirtualImage %s\n", cvmiName)
+		logger.Delete("Deleting ClusterVirtualImage %s", cvmiName)
 		err := virtClient.ClusterVirtualImages().Delete(ctx, cvmiName)
 		if err != nil && !errors.IsNotFound(err) {
-			fmt.Printf("      ❌ Failed to delete ClusterVirtualImage %s: %v\n", cvmiName, err)
+			logger.Error("Failed to delete ClusterVirtualImage %s: %v", cvmiName, err)
 		} else {
 			deletedCVMICount++
 		}
 	}
 	if deletedCVMICount > 0 {
-		fmt.Printf("      ✅ Deleted %d ClusterVirtualImage(s)\n", deletedCVMICount)
+		logger.Success("Deleted %d ClusterVirtualImage(s)", deletedCVMICount)
 	}
 
 	return nil

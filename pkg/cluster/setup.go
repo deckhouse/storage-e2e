@@ -36,6 +36,7 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
+	"github.com/deckhouse/storage-e2e/internal/logger"
 )
 
 // OSInfo represents detected operating system information
@@ -592,7 +593,7 @@ func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef 
 		return nil
 	}
 
-	fmt.Printf("    ▶️ Adding %d node(s) to the cluster in parallel (%d master(s), %d worker(s))\n", totalNodes, masterCount, workerCount)
+	logger.Info("Adding %d node(s) to the cluster in parallel (%d master(s), %d worker(s))", totalNodes, masterCount, workerCount)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex // for thread-safe printing
@@ -653,7 +654,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 	if mu != nil {
 		mu.Lock()
 	}
-	fmt.Printf("    ▶️ Adding %s node %s (%s) to the cluster...\n", nodeType, node.Hostname, nodeIP)
+	logger.Info("Adding %s node %s (%s) to the cluster...", nodeType, node.Hostname, nodeIP)
 	if mu != nil {
 		mu.Unlock()
 	}
@@ -667,7 +668,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 		if mu != nil {
 			mu.Lock()
 		}
-		fmt.Printf("    ❌ Failed to create SSH connection to node %s (%s): %v\n", node.Hostname, nodeIP, err)
+		logger.Error("Failed to create SSH connection to node %s (%s): %v", node.Hostname, nodeIP, err)
 		if mu != nil {
 			mu.Unlock()
 		}
@@ -679,7 +680,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 	if mu != nil {
 		mu.Lock()
 	}
-	fmt.Printf("    ⏳ Running bootstrap script on node %s (%s)...\n", node.Hostname, nodeIP)
+	logger.Progress("Running bootstrap script on node %s (%s)...", node.Hostname, nodeIP)
 	if mu != nil {
 		mu.Unlock()
 	}
@@ -693,9 +694,9 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 		if mu != nil {
 			mu.Lock()
 		}
-		fmt.Printf("    ❌ Bootstrap script failed on node %s (%s): %v\n", node.Hostname, nodeIP, err)
+		logger.Error("Bootstrap script failed on node %s (%s): %v", node.Hostname, nodeIP, err)
 		if output != "" {
-			fmt.Printf("    📋 Bootstrap script output from node %s:\n%s\n", node.Hostname, output)
+			logger.Debug("Bootstrap script output from node %s:\n%s", node.Hostname, output)
 		}
 		if mu != nil {
 			mu.Unlock()
@@ -707,7 +708,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 	if mu != nil {
 		mu.Lock()
 	}
-	fmt.Printf("    ✅ Bootstrap script completed successfully on node %s (%s)\n", node.Hostname, nodeIP)
+	logger.Success("Bootstrap script completed successfully on node %s (%s)", node.Hostname, nodeIP)
 	if mu != nil {
 		mu.Unlock()
 	}
@@ -795,7 +796,7 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 			defer wg.Done()
 
 			mu.Lock()
-			fmt.Printf("    ⏳ Waiting for node %d/%d: %s\n", index+1, expectedCount, name)
+			logger.Progress("Waiting for node %d/%d: %s", index+1, expectedCount, name)
 			mu.Unlock()
 
 			ticker := time.NewTicker(5 * time.Second)
@@ -815,7 +816,7 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 
 					if nodeClient.IsReady(waitCtx, node) {
 						mu.Lock()
-						fmt.Printf("    ✅ Node %s is Ready\n", name)
+						logger.Success("Node %s is Ready", name)
 						mu.Unlock()
 						return
 					}
