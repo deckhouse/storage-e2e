@@ -152,7 +152,8 @@ func CreateTestCluster(
 	// Step 2: Connect to base cluster
 	baseClusterResources, err := ConnectToCluster(ctx, ConnectClusterOptions{
 		SSHUser:     sshUser,
-		SSHHost:     sshKeyPath,
+		SSHHost:     sshHost,
+		SSHKeyPath:  sshKeyPath,
 		UseJumpHost: false,
 	})
 	if err != nil {

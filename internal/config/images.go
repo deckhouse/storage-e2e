@@ -43,11 +43,11 @@ var OSTypeMap = map[string]OSType{
 		KernelVersion: "6.12.57+deb13-amd64",
 	},
 	"AltLinux Server 10.4": {
-		ImageURL:      "https://ftp.altlinux.org/pub/distributions/ALTLinux/p10/images/cloud/x86_64/alt-server-10.4-p10-cloud-x86_64.qcow2",
+		ImageURL:      "https://89d64382-20df-4581-8cc7-80df331f67fa.selstorage.ru/flant-cloud/altlinux/altlinux-10-4-p10.qcow2", // ATTENTION! Official images from AltLinux's site are not downloaded due to bot-protection. Download manually and upload to Selectel!
 		KernelVersion: "6.1.130-un-def-alt1",
 	},
 	"AltLinux Server 11": {
-		ImageURL:      "https://ftp.altlinux.org/pub/distributions/ALTLinux/p11/images/cloud/x86_64/alt-server-11.0-p11-cloud-x86_64.qcow2",
+		ImageURL:      "https://89d64382-20df-4581-8cc7-80df331f67fa.selstorage.ru/flant-cloud/altlinux/altlinux-11-0-p11.qcow2", // ATTENTION! Official images from AltLinux's site are not downloaded due to bot-protection. Download manually and upload to Selectel!
 		KernelVersion: "6.12.34-6.12-alt1",
 	},
 }
