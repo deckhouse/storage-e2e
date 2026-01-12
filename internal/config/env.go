@@ -17,6 +17,15 @@ const (
 	ImagePullPolicyAlways = "Always"
 	// ImagePullPolicyIfNotExists indicates to use existing ClusterVirtualImage without warnings if it exists
 	ImagePullPolicyIfNotExists = "IfNotExists"
+
+	// LogLevelDebug indicates debug log level
+	LogLevelDebug = "debug"
+	// LogLevelInfo indicates info log level
+	LogLevelInfo = "info"
+	// LogLevelWarn indicates warn log level
+	LogLevelWarn = "warn"
+	// LogLevelError indicates error log level
+	LogLevelError = "error"
 )
 
 var (
@@ -78,6 +87,10 @@ var (
 	// Defines if the code will pull images for CVI or use existing ones. Can be always and ifNotExists. Default is ifNotExists.
 	ImagePullPolicy             = os.Getenv("IMAGE_PULL_POLICY")
 	ImagePullPolicyDefaultValue = ImagePullPolicyIfNotExists
+
+	// LogLevel specifies the log level. Can be debug, info, warn, error. Default is info.
+	LogLevel             = os.Getenv("LOG_LEVEL")
+	LogLevelDefaultValue = LogLevelInfo
 )
 
 func ValidateEnvironment() error {
@@ -144,6 +157,16 @@ func ValidateEnvironment() error {
 		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE has invalid value '%s'. "+
 			"Must be either '%s' or '%s'",
 			TestClusterCreateMode, ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew)
+	}
+
+	if LogLevel == "" {
+		LogLevel = LogLevelDefaultValue
+	}
+
+	if LogLevel != LogLevelDebug && LogLevel != LogLevelInfo && LogLevel != LogLevelWarn && LogLevel != LogLevelError {
+		return fmt.Errorf("LOG_LEVEL has invalid value '%s'. "+
+			"Must be either '%s' or '%s' or '%s' or '%s'",
+			LogLevel, LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError)
 	}
 
 	return nil

@@ -34,19 +34,19 @@ var OSTypeMap = map[string]OSType{
 		ImageURL:      "https://89d64382-20df-4581-8cc7-80df331f67fa.selstorage.ru/redos/RO732_MIN-STD.qcow2",
 		KernelVersion: "5.15.78-2.el7.3.x86_64",
 	},
-	"Debian 12 Bookworm": {
+	"Debian 12": {
 		ImageURL:      "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2",
 		KernelVersion: "6.1.0-41-cloud-amd64",
 	},
-	"Debian 13 Trixie": {
+	"Debian 13": {
 		ImageURL:      "https://cdimage.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2",
 		KernelVersion: "6.12.57+deb13-amd64",
 	},
-	"AltLinux 10.4": {
+	"AltLinux Server 10.4": {
 		ImageURL:      "https://ftp.altlinux.org/pub/distributions/ALTLinux/p10/images/cloud/x86_64/alt-server-10.4-p10-cloud-x86_64.qcow2",
 		KernelVersion: "6.1.130-un-def-alt1",
 	},
-	"AltLinux 11": {
+	"AltLinux Server 11": {
 		ImageURL:      "https://ftp.altlinux.org/pub/distributions/ALTLinux/p11/images/cloud/x86_64/alt-server-11.0-p11-cloud-x86_64.qcow2",
 		KernelVersion: "6.12.34-6.12-alt1",
 	},

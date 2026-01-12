@@ -9,6 +9,14 @@ clusterDefinition:
       coreFraction: 50
       ram: 8
       diskSize: 30
+    - hostname: "master-2"
+      hostType: "vm"
+      role: "master"
+      osType: "AltLinux Server 11"
+      cpu: 4
+      coreFraction: 50
+      ram: 8
+      diskSize: 30
   workers: # Worker nodes configuration // TODO implement logic allowing to deploy different number of workes and masters with the same config.
     - hostname: "worker-1"
       hostType: "vm"
@@ -29,7 +37,7 @@ clusterDefinition:
     - hostname: "worker-3"
       hostType: "vm"
       role: "worker"
-      osType: "Ubuntu 24.04 6.8.0-53-generic"
+      osType: "AltLinux Server 10.4"
       cpu: 2
       coreFraction: 50
       ram: 6
