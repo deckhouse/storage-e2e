@@ -55,16 +55,14 @@ func TestConsoleHandler(t *testing.T) {
 	tests := []struct {
 		name        string
 		level       slog.Level
-		useEmojis   bool
 		useColors   bool
 		logFunc     func(*slog.Logger)
 		contains    []string
 		notContains []string
 	}{
 		{
-			name:      "info level without emojis",
+			name:      "info level",
 			level:     slog.LevelInfo,
-			useEmojis: false,
 			useColors: false,
 			logFunc: func(l *slog.Logger) {
 				l.Info("test message")
@@ -74,7 +72,6 @@ func TestConsoleHandler(t *testing.T) {
 		{
 			name:      "debug level with debug message",
 			level:     slog.LevelDebug,
-			useEmojis: false,
 			useColors: false,
 			logFunc: func(l *slog.Logger) {
 				l.Debug("debug message")
@@ -84,7 +81,6 @@ func TestConsoleHandler(t *testing.T) {
 		{
 			name:      "info level filters out debug",
 			level:     slog.LevelInfo,
-			useEmojis: false,
 			useColors: false,
 			logFunc: func(l *slog.Logger) {
 				l.Debug("debug message")
@@ -94,19 +90,17 @@ func TestConsoleHandler(t *testing.T) {
 			notContains: []string{"[DEBUG]", "debug message"},
 		},
 		{
-			name:      "with emoji attribute",
+			name:      "message with emoji in content",
 			level:     slog.LevelInfo,
-			useEmojis: true,
 			useColors: false,
 			logFunc: func(l *slog.Logger) {
-				l.Info("test message", "emoji", "✅")
+				l.Info("✅ test message")
 			},
 			contains: []string{"✅", "[INFO]", "test message"},
 		},
 		{
 			name:      "with attributes",
 			level:     slog.LevelInfo,
-			useEmojis: false,
 			useColors: false,
 			logFunc: func(l *slog.Logger) {
 				l.Info("test message", "key", "value", "num", 42)
@@ -120,7 +114,6 @@ func TestConsoleHandler(t *testing.T) {
 			var buf bytes.Buffer
 			handler := NewConsoleHandler(&buf, &ConsoleHandlerOptions{
 				Level:      tt.level,
-				UseEmojis:  tt.useEmojis,
 				UseColors:  tt.useColors,
 				TimeFormat: "",
 			})
@@ -151,19 +144,17 @@ func TestMultiHandler(t *testing.T) {
 
 	handler1 := NewConsoleHandler(&buf1, &ConsoleHandlerOptions{
 		Level:     slog.LevelInfo,
-		UseEmojis: false,
 		UseColors: false,
 	})
 	handler2 := NewConsoleHandler(&buf2, &ConsoleHandlerOptions{
 		Level:     slog.LevelInfo,
-		UseEmojis: true,
 		UseColors: false,
 	})
 
 	multiHandler := NewMultiHandler(handler1, handler2)
 	logger := slog.New(multiHandler)
 
-	logger.Info("test message", "emoji", "✅")
+	logger.Info("✅ test message")
 
 	output1 := buf1.String()
 	output2 := buf2.String()
@@ -176,9 +167,12 @@ func TestMultiHandler(t *testing.T) {
 		t.Errorf("Handler 2 did not receive the message\nOutput: %s", output2)
 	}
 
-	// Handler 2 should have emoji, handler 1 should not display it prominently
+	// Both should have emoji since it's part of the message
+	if !strings.Contains(output1, "✅") {
+		t.Errorf("Handler 1 did not show emoji\nOutput: %s", output1)
+	}
 	if !strings.Contains(output2, "✅") {
-		t.Errorf("Handler 2 with emojis enabled did not show emoji\nOutput: %s", output2)
+		t.Errorf("Handler 2 did not show emoji\nOutput: %s", output2)
 	}
 }
 

@@ -19,16 +19,16 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-
-	"os"
 
 	internalcluster "github.com/deckhouse/storage-e2e/internal/cluster"
 	"github.com/deckhouse/storage-e2e/internal/config"
@@ -690,7 +690,7 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 }
 
 // CheckClusterHealth checks if the deckhouse deployment has 1 pod running with 2/2 containers ready
-// in the d8-system namespace, and verifies that bootstrap secrets are available.
+// in the d8-system namespace, verifies that bootstrap secrets are available, and ensures webhook-handler pods are ready.
 // This function is widely used to check cluster health after certain steps.
 func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 	namespace := "d8-system"
@@ -753,6 +753,11 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 		return fmt.Errorf("pod %s/%s does not have all containers ready (expected 2/2 containers ready)", namespace, pod.Name)
 	}
 
+	// Check that webhook-handler pods are ready in d8-system namespace
+	if err := checkWebhookHandlerPods(ctx, podClient, namespace); err != nil {
+		return fmt.Errorf("webhook-handler pods not ready: %w", err)
+	}
+
 	return nil
 }
 
@@ -791,6 +796,43 @@ func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespa
 			return fmt.Errorf("master bootstrap secret not found: %w. Available secrets in namespace %s: %v", err, namespace, availableNames)
 		}
 		return fmt.Errorf("master bootstrap secret not found: %w", err)
+	}
+
+	return nil
+}
+
+// checkWebhookHandlerPods verifies that webhook-handler pods are running and ready in the namespace
+func checkWebhookHandlerPods(ctx context.Context, podClient *core.PodClient, namespace string) error {
+	// List all pods in the namespace
+	allPods, err := podClient.ListAll(ctx, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
+	}
+
+	// Find webhook-handler pods (matching names with "webhook-handler" prefix or substring)
+	var webhookHandlerPods []string
+	var readyWebhookHandlerCount int
+
+	for _, pod := range allPods.Items {
+		// Check if pod name contains "webhook-handler"
+		if strings.Contains(pod.Name, "webhook-handler") {
+			webhookHandlerPods = append(webhookHandlerPods, pod.Name)
+
+			// Check if this webhook-handler pod is running and all containers are ready
+			if podClient.IsRunning(ctx, &pod) && podClient.AllContainersReady(ctx, &pod) {
+				readyWebhookHandlerCount++
+			}
+		}
+	}
+
+	// Ensure at least one webhook-handler pod is found
+	if len(webhookHandlerPods) == 0 {
+		return fmt.Errorf("no webhook-handler pods found in namespace %s", namespace)
+	}
+
+	// Ensure at least one webhook-handler pod is ready
+	if readyWebhookHandlerCount == 0 {
+		return fmt.Errorf("webhook-handler pods found in namespace %s but none are ready: %v", namespace, webhookHandlerPods)
 	}
 
 	return nil

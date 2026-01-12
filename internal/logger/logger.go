@@ -35,17 +35,16 @@ var (
 )
 
 // Initialize sets up the global logger based on configuration.
-// It creates handlers for both console (with emojis) and file (JSON) output.
+// It creates handlers for both console and file (JSON) output.
 // File logging is enabled if config.LogFilePath is set and not empty.
 func Initialize() error {
 	level := ParseLevel(config.LogLevel)
 
 	handlers := make([]slog.Handler, 0, 2)
 
-	// Always add console handler with emojis for stdout
+	// Always add console handler for stdout
 	consoleHandler := NewConsoleHandler(os.Stdout, &ConsoleHandlerOptions{
 		Level:      level,
-		UseEmojis:  true,
 		UseColors:  true,
 		TimeFormat: "", // No timestamp for console (cleaner output)
 	})
@@ -118,22 +117,33 @@ func SetLogger(logger *slog.Logger) {
 
 // Helper functions that provide a clean API matching the current fmt.Printf style
 
+// addEmoji prepends an emoji to the message if emojis are enabled
+func addEmoji(emoji, msg string) string {
+	if UseEmojis {
+		return emoji + " " + msg
+	}
+	return msg
+}
+
 // Step logs a major step in the workflow with a step number
 func Step(step int, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Info(fmt.Sprintf("Step %d: %s", step, msg), "emoji", "▶️", "type", "step")
+	fullMsg := addEmoji("▶️", fmt.Sprintf("Step %d: %s", step, msg))
+	GetLogger().Info(fullMsg, "type", "step")
 }
 
 // StepComplete logs the completion of a step
 func StepComplete(step int, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Info(fmt.Sprintf("Step %d: %s", step, msg), "emoji", "✅", "type", "step_complete")
+	fullMsg := addEmoji("✅", fmt.Sprintf("Step %d Complete: %s", step, msg))
+	GetLogger().Info(fullMsg, "type", "step_complete")
 }
 
 // Success logs a successful operation
 func Success(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Info(msg, "emoji", "✅", "type", "success")
+	fullMsg := addEmoji("✅", msg)
+	GetLogger().Info(fullMsg, "type", "success")
 }
 
 // Info logs general informational messages
@@ -145,37 +155,43 @@ func Info(format string, args ...interface{}) {
 // Warn logs warning messages
 func Warn(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Warn(msg, "emoji", "⚠️", "type", "warning")
+	fullMsg := addEmoji("⚠️", msg)
+	GetLogger().Warn(fullMsg, "type", "warning")
 }
 
 // Error logs error messages
 func Error(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Error(msg, "emoji", "❌", "type", "error")
+	fullMsg := addEmoji("❌", msg)
+	GetLogger().Error(fullMsg, "type", "error")
 }
 
 // Debug logs detailed debugging information
 func Debug(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Debug(msg, "emoji", "🐛", "type", "debug")
+	fullMsg := addEmoji("🐛", msg)
+	GetLogger().Debug(fullMsg, "type", "debug")
 }
 
 // Progress logs progress indicators (like waiting, polling)
 func Progress(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Info(msg, "emoji", "⏳", "type", "progress")
+	fullMsg := addEmoji("⏳", msg)
+	GetLogger().Info(fullMsg, "type", "progress")
 }
 
 // Skip logs skipped operations
 func Skip(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Info(msg, "emoji", "⏭️", "type", "skip")
+	fullMsg := addEmoji("⏭️", msg)
+	GetLogger().Info(fullMsg, "type", "skip")
 }
 
 // Delete logs deletion operations
 func Delete(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Info(msg, "emoji", "🗑️", "type", "delete")
+	fullMsg := addEmoji("🗑️", msg)
+	GetLogger().Info(fullMsg, "type", "delete")
 }
 
 // WithField returns a logger with an additional field
@@ -196,7 +212,6 @@ func WithFields(fields map[string]interface{}) *slog.Logger {
 func NewTestLogger(w io.Writer, level slog.Level) *slog.Logger {
 	handler := NewConsoleHandler(w, &ConsoleHandlerOptions{
 		Level:      level,
-		UseEmojis:  false, // Disable emojis in tests for cleaner output
 		UseColors:  false, // Disable colors in tests
 		TimeFormat: "",
 	})

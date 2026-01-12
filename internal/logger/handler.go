@@ -27,7 +27,6 @@ import (
 // ConsoleHandlerOptions defines options for the console handler
 type ConsoleHandlerOptions struct {
 	Level      slog.Level
-	UseEmojis  bool
 	UseColors  bool
 	TimeFormat string // Empty string means no timestamp
 }
@@ -46,7 +45,6 @@ func NewConsoleHandler(w io.Writer, opts *ConsoleHandlerOptions) *ConsoleHandler
 	if opts == nil {
 		opts = &ConsoleHandlerOptions{
 			Level:      slog.LevelInfo,
-			UseEmojis:  true,
 			UseColors:  true,
 			TimeFormat: "",
 		}
@@ -71,22 +69,6 @@ func (h *ConsoleHandler) Handle(_ context.Context, r slog.Record) error {
 
 	var buf []byte
 
-	// Add emoji if enabled and present in attributes
-	if h.opts.UseEmojis {
-		emoji := ""
-		r.Attrs(func(a slog.Attr) bool {
-			if a.Key == "emoji" {
-				emoji = a.Value.String()
-				return false // Stop iteration
-			}
-			return true // Continue
-		})
-		if emoji != "" {
-			buf = append(buf, emoji...)
-			buf = append(buf, " "...)
-		}
-	}
-
 	// Add level indicator with optional color
 	if h.opts.UseColors {
 		buf = append(buf, h.colorizeLevel(r.Level)...)
@@ -94,13 +76,13 @@ func (h *ConsoleHandler) Handle(_ context.Context, r slog.Record) error {
 		buf = append(buf, fmt.Sprintf("[%s] ", LevelToString(r.Level))...)
 	}
 
-	// Add message
+	// Add message (emojis are now part of the message itself)
 	buf = append(buf, r.Message...)
 
-	// Add attributes (excluding emoji and type which are metadata)
+	// Add attributes (excluding type which is metadata)
 	var attrs []slog.Attr
 	r.Attrs(func(a slog.Attr) bool {
-		if a.Key != "emoji" && a.Key != "type" {
+		if a.Key != "type" {
 			attrs = append(attrs, a)
 		}
 		return true

@@ -51,6 +51,15 @@ func (c *PodClient) ListByLabelSelector(ctx context.Context, namespace, labelSel
 	return pods, nil
 }
 
+// ListAll lists all pods in a namespace
+func (c *PodClient) ListAll(ctx context.Context, namespace string) (*corev1.PodList, error) {
+	pods, err := c.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
+	}
+	return pods, nil
+}
+
 // IsRunning checks if a pod is in Running phase
 func (c *PodClient) IsRunning(ctx context.Context, pod *corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodRunning

@@ -4,9 +4,9 @@ A structured logging package built on Go's `log/slog` that supports dual output 
 
 ## Features
 
-- ✅ **Dual Output**: Logs to both console (human-readable with emojis) and file (structured JSON)
+- ✅ **Dual Output**: Logs to both console (human-readable) and file (structured JSON)
 - ✅ **Log Levels**: Debug, Info, Warn, Error with filtering
-- ✅ **Emoji Support**: Visual indicators for different log types
+- ✅ **Emoji Support**: Visual indicators for different log types (configurable)
 - ✅ **Colored Output**: ANSI colors for better readability (console only)
 - ✅ **Structured Logging**: Fields and context support via `slog`
 - ✅ **Zero External Dependencies**: Built on standard library
@@ -41,6 +41,10 @@ The logger is configured via environment variables:
 - Not set or empty: Logs to console only
 - Set to a file path: Logs to both console and the specified file
 
+**`USE_EMOJIS`** - Controls emoji display in log messages:
+- `true` - Show emojis in log messages (default)
+- `false` - Disable emojis for cleaner output
+
 Examples:
 ```bash
 # Console only
@@ -49,6 +53,9 @@ export LOG_LEVEL=info
 # Console + file
 export LOG_LEVEL=debug
 export LOG_FILE_PATH=/tmp/e2e-tests/test.log
+
+# Disable emojis
+export USE_EMOJIS=false
 
 # Or with timestamp
 export LOG_FILE_PATH=/tmp/e2e-tests/test-$(date +%Y%m%d-%H%M%S).log
@@ -111,21 +118,33 @@ log.Error("error occurred", "error", err)
 ### Console Output (with emojis and colors)
 
 ```
-▶️  [INFO]  Step 1: Loading cluster configuration
-✅ [INFO]  Step 1: Cluster configuration loaded successfully
-⏳ [INFO]  Waiting for VM 1/3: master-1
-✅ [INFO]  VM master-1 is Running
-⚠️  [WARN]  Resource already exists, skipping creation
-❌ [ERROR] Failed to create VM: connection timeout
-🐛 [DEBUG] SSH command output: total 42K...
+[INFO]  ▶️ Step 1: Loading cluster configuration
+[INFO]  ✅ Step 1 Complete: Cluster configuration loaded successfully
+[INFO]  ⏳ Waiting for VM 1/3: master-1
+[INFO]  ✅ VM master-1 is Running
+[WARN]  ⚠️ Resource already exists, skipping creation
+[ERROR] ❌ Failed to create VM: connection timeout
+[DEBUG] 🐛 SSH command output: total 42K...
+```
+
+### Console Output (without emojis, USE_EMOJIS=false)
+
+```
+[INFO]  Step 1: Loading cluster configuration
+[INFO]  Step 1 Complete: Cluster configuration loaded successfully
+[INFO]  Waiting for VM 1/3: master-1
+[INFO]  VM master-1 is Running
+[WARN]  Resource already exists, skipping creation
+[ERROR] Failed to create VM: connection timeout
+[DEBUG] SSH command output: total 42K...
 ```
 
 ### File Output (JSON)
 
 ```json
-{"time":"2025-01-12T15:04:05Z","level":"INFO","msg":"Step 1: Loading cluster configuration","emoji":"▶️","type":"step"}
-{"time":"2025-01-12T15:04:06Z","level":"INFO","msg":"Cluster configuration loaded","emoji":"✅","type":"success"}
-{"time":"2025-01-12T15:04:07Z","level":"ERROR","msg":"Failed to create VM","emoji":"❌","type":"error","error":"connection timeout"}
+{"time":"2025-01-12T15:04:05Z","level":"INFO","msg":"▶️ Step 1: Loading cluster configuration","type":"step"}
+{"time":"2025-01-12T15:04:06Z","level":"INFO","msg":"✅ Step 1 Complete: Cluster configuration loaded","type":"step_complete"}
+{"time":"2025-01-12T15:04:07Z","level":"ERROR","msg":"❌ Failed to create VM","type":"error","error":"connection timeout"}
 ```
 
 ## Testing
