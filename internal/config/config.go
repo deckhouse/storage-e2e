@@ -36,7 +36,7 @@ var DefaultSetupVM = ClusterNode{
 // Timeout constants for various operations during cluster creation and management
 const (
 	// VM operations
-	VMCreationTimeout = 15 * time.Minute // Timeout for creating VMs
+	VMCreationTimeout = 20 * time.Second // Timeout for creating VMs
 	VMsRunningTimeout = 20 * time.Minute // Timeout for waiting for all VMs to become Running state
 	VMInfoTimeout     = 30 * time.Second // Timeout for gathering VM information
 

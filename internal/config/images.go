@@ -50,4 +50,8 @@ var OSTypeMap = map[string]OSType{
 		ImageURL:      "https://89d64382-20df-4581-8cc7-80df331f67fa.selstorage.ru/flant-cloud/altlinux/altlinux-11-0-p11.qcow2", // ATTENTION! Official images from AltLinux's site are not downloaded due to bot-protection. Download manually and upload to Selectel!
 		KernelVersion: "6.12.34-6.12-alt1",
 	},
+	"Astra 1.8.3": {
+		ImageURL:      "https://89d64382-20df-4581-8cc7-80df331f67fa.selstorage.ru/flant-cloud/astra/astra-1-8-3-adv-20251016.qcow2", // TODO: check is МКЦ is disabled here!
+		KernelVersion: "6.1",
+	},
 }

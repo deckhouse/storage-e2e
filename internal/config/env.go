@@ -90,7 +90,7 @@ var (
 
 	// LogLevel specifies the log level. Can be debug, info, warn, error. Default is info.
 	LogLevel             = os.Getenv("LOG_LEVEL")
-	LogLevelDefaultValue = LogLevelInfo
+	LogLevelDefaultValue = LogLevelDebug
 
 	// LogFilePath specifies the path to the log file. If not set or empty, logs only to console.
 	// If set, logs to both console and the specified file.

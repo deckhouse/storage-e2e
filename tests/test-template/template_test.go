@@ -80,9 +80,24 @@ var _ = Describe("Template Test", Ordered, func() {
 				GinkgoWriter.Printf("      TEST_CLUSTER_STORAGE_CLASS: %s\n", config.TestClusterStorageClass)
 			}
 
+			// SSH_HOST - no masking
+			if config.SSHHost != "" {
+				GinkgoWriter.Printf("      SSH_HOST: %s\n", config.SSHHost)
+			}
+
+			// SSH_USER - no masking
+			if config.SSHUser != "" {
+				GinkgoWriter.Printf("      SSH_USER: %s\n", config.SSHUser)
+			}
+
 			// SSH_PASSPHRASE - no masking (optional, may be empty)
 			if config.SSHPassphrase != "" {
 				GinkgoWriter.Printf("      SSH_PASSPHRASE: <set>\n")
+			}
+
+			// LOG_LEVEL - no masking
+			if config.LogLevel != "" {
+				GinkgoWriter.Printf("      LOG_LEVEL: %s\n", config.LogLevel)
 			}
 
 			// KUBE_CONFIG_PATH - no masking (optional, may be empty)

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
@@ -374,30 +375,54 @@ func EnableAndConfigureModules(ctx context.Context, kubeconfig *rest.Config, clu
 	}
 
 	// Process modules level by level
+	// Modules within each level are processed in parallel since they have no dependencies on each other
 	for levelIndex, level := range levels {
-		for _, moduleConfig := range level {
-			// Configure ModuleConfig
-			if sshClient != nil {
-				if err := configureModuleConfigViaSSH(ctx, sshClient, moduleConfig); err != nil {
-					return err
-				}
-			} else {
-				if err := configureModuleConfig(ctx, kubeconfig, moduleConfig); err != nil {
-					return err
-				}
-			}
+		var wg sync.WaitGroup
+		errChan := make(chan error, len(level))
 
-			// Configure ModulePullOverride
-			if sshClient != nil {
-				if err := configureModulePullOverrideViaSSH(ctx, sshClient, moduleConfig, clusterDef.DKPParameters.RegistryRepo); err != nil {
-					return err
+		// Process all modules in this level in parallel
+		for _, moduleConfig := range level {
+			wg.Add(1)
+			go func(mc *config.ModuleConfig) {
+				defer wg.Done()
+
+				// Configure ModuleConfig
+				if sshClient != nil {
+					if err := configureModuleConfigViaSSH(ctx, sshClient, mc); err != nil {
+						errChan <- err
+						return
+					}
+				} else {
+					if err := configureModuleConfig(ctx, kubeconfig, mc); err != nil {
+						errChan <- err
+						return
+					}
 				}
-			} else {
-				if err := configureModulePullOverride(ctx, kubeconfig, moduleConfig, clusterDef.DKPParameters.RegistryRepo); err != nil {
-					return err
+
+				// Configure ModulePullOverride
+				if sshClient != nil {
+					if err := configureModulePullOverrideViaSSH(ctx, sshClient, mc, clusterDef.DKPParameters.RegistryRepo); err != nil {
+						errChan <- err
+						return
+					}
+				} else {
+					if err := configureModulePullOverride(ctx, kubeconfig, mc, clusterDef.DKPParameters.RegistryRepo); err != nil {
+						errChan <- err
+						return
+					}
 				}
-			}
+			}(moduleConfig)
 		}
+
+		// Wait for all modules in this level to complete
+		wg.Wait()
+		close(errChan)
+
+		// Check if any errors occurred
+		if len(errChan) > 0 {
+			return <-errChan
+		}
+
 		// All modules at this level are now configured
 		// Next level modules can be processed as their dependencies are satisfied
 		_ = levelIndex // Can be used for logging if needed

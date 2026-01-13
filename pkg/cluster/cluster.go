@@ -171,7 +171,7 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to get virtualization module: %w", err)
 	}
-	if module.Status.Phase != "Ready" {
+	if module.Status.Phase != "Ready" && module.Status.Phase != "Reconciling" { // TODO: Remove Reconciling from here - it's just for storage san stand test
 		baseClusterResources.SSHClient.Close()
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("virtualization module is not Ready (phase: %s)", module.Status.Phase)
