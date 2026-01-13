@@ -593,7 +593,7 @@ func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef 
 		return nil
 	}
 
-	logger.Info("Adding %d node(s) to the cluster in parallel (%d master(s), %d worker(s))", totalNodes, masterCount, workerCount)
+	logger.Debug("Adding %d node(s) to the cluster in parallel (%d master(s), %d worker(s))", totalNodes, masterCount, workerCount)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex // for thread-safe printing
@@ -654,7 +654,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 	if mu != nil {
 		mu.Lock()
 	}
-	logger.Info("Adding %s node %s (%s) to the cluster...", nodeType, node.Hostname, nodeIP)
+	logger.Debug("Adding %s node %s (%s) to the cluster...", nodeType, node.Hostname, nodeIP)
 	if mu != nil {
 		mu.Unlock()
 	}
