@@ -18,7 +18,6 @@ package test_template
 
 import (
 	"context"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -98,7 +97,7 @@ var _ = Describe("Template Test", Ordered, func() {
 		// Note: Bootstrap node (setup VM) is always removed.
 		// Test cluster VMs (masters and workers) are only removed if TEST_CLUSTER_CLEANUP='true' or 'True'
 		if testClusterResources != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), config.ClusterCleanupTimeout)
 			defer cancel()
 
 			cleanupEnabled := config.TestClusterCleanup == "true" || config.TestClusterCleanup == "True"
@@ -120,10 +119,10 @@ var _ = Describe("Template Test", Ordered, func() {
 
 	It("should create test cluster and wait for it to become ready", func() {
 		By("Creating test cluster", func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), config.ClusterCreationTimeout)
 			defer cancel()
 
-			GinkgoWriter.Printf("    ▶️ Creating test cluster (this may take up to 35 minutes)...\n")
+			GinkgoWriter.Printf("    ▶️ Creating test cluster")
 			var err error
 			testClusterResources, err = cluster.CreateTestCluster(ctx, config.YAMLConfigFilename)
 			if err != nil {

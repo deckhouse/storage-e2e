@@ -396,7 +396,7 @@ func getDevBranchFromConfig(configPath string) (string, error) {
 // BootstrapCluster bootstraps a Kubernetes cluster from the setup node to the first master node.
 // It performs the following steps:
 // 1. Logs into the Docker registry using DKP_LICENSE_KEY from config
-// 2. Runs the dhctl bootstrap command in a Docker container (can take up to 30 minutes)
+// 2. Runs the dhctl bootstrap command in a Docker container
 // Note: clusterDef must have IPAddress fields filled in for all VM nodes (via GatherVMInfo)
 func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *config.ClusterDefinition, configPath string) error {
 	if sshClient == nil {
@@ -520,7 +520,7 @@ echo "%s"
 		config.VMSSHUser, actualAgentSocket, config.VMSSHUser, actualAgentSocket, installImage, masterIP, config.VMSSHUser, remoteLogPath,
 	)
 
-	// Run the bootstrap command (this can take up to 30 minutes)
+	// Run the bootstrap command
 	// Output is redirected to remote log file, so output variable will be empty
 	output, err = sshClient.Exec(ctx, bootstrapCmd)
 

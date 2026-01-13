@@ -33,11 +33,31 @@ var DefaultSetupVM = ClusterNode{
 	DiskSize:     20,
 }
 
-// VMsRunningTimeout is the timeout for waiting for all VMs to become Running state
+// Timeout constants for various operations during cluster creation and management
 const (
-	VMsRunningTimeout   = 20 * time.Minute
-	NodesReadyTimeout   = 15 * time.Minute
-	DKPDeployTimeout    = 30 * time.Minute // Timeout for DKP deployment
-	ModuleDeployTimeout = 30 * time.Minute // Timeout for module deployment
-	HostReadyTimeout    = 10 * time.Minute // Timeout for hosts to be ready
+	// VM operations
+	VMCreationTimeout = 15 * time.Minute // Timeout for creating VMs
+	VMsRunningTimeout = 20 * time.Minute // Timeout for waiting for all VMs to become Running state
+	VMInfoTimeout     = 30 * time.Second // Timeout for gathering VM information
+
+	// Node operations
+	NodesReadyTimeout = 15 * time.Minute // Timeout for waiting for nodes to become Ready
+
+	// Cluster bootstrap and setup
+	DKPDeployTimeout       = 30 * time.Minute // Timeout for DKP deployment (dhctl bootstrap)
+	DockerInstallTimeout   = 10 * time.Minute // Timeout for Docker installation on setup node
+	BootstrapUploadTimeout = 5 * time.Minute  // Timeout for uploading bootstrap files
+
+	// Kubernetes operations
+	ModuleCheckTimeout   = 10 * time.Second // Timeout for checking module status
+	NamespaceTimeout     = 30 * time.Second // Timeout for creating namespace
+	NodeGroupTimeout     = 3 * time.Second  // Timeout for creating NodeGroup
+	SecretsWaitTimeout   = 2 * time.Minute  // Timeout for waiting for bootstrap secrets to appear
+	ClusterHealthTimeout = 15 * time.Minute // Timeout for cluster health check
+	ModuleConfigTimeout  = 5 * time.Minute  // Timeout for enabling and configuring modules
+	ModuleDeployTimeout  = 30 * time.Minute // Timeout for waiting for modules to be ready
+
+	// Test operations
+	ClusterCreationTimeout = 40 * time.Minute // Total timeout for test cluster creation
+	ClusterCleanupTimeout  = 10 * time.Minute // Timeout for cleaning up test cluster resources
 )

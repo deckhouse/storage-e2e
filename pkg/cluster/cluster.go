@@ -163,7 +163,7 @@ func CreateTestCluster(
 
 	logger.Step(3, "Verifying virtualization module is Ready")
 	// Step 3: Verify virtualization module is Ready
-	moduleCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	moduleCtx, cancel := context.WithTimeout(ctx, config.ModuleCheckTimeout)
 	module, err := deckhouse.GetModule(moduleCtx, baseClusterResources.Kubeconfig, "virtualization")
 	cancel()
 	if err != nil {
@@ -180,7 +180,7 @@ func CreateTestCluster(
 
 	logger.Step(4, "Creating test namespace %s", config.TestClusterNamespace)
 	// Step 4: Create test namespace
-	namespaceCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	namespaceCtx, cancel := context.WithTimeout(ctx, config.NamespaceTimeout)
 	namespace := config.TestClusterNamespace
 	_, err = kubernetes.CreateNamespaceIfNotExists(namespaceCtx, baseClusterResources.Kubeconfig, namespace)
 	cancel()
@@ -191,9 +191,9 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(4, "Test namespace created")
 
-	logger.Step(5, "Creating virtual machines (this will take a while)")
+	logger.Step(5, "Creating virtual machines (this may take up to %v)", config.VMCreationTimeout)
 	// Step 5: Create virtualization client and virtual machines
-	virtCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	virtCtx, cancel := context.WithTimeout(ctx, config.VMCreationTimeout)
 	virtClient, err := virtualization.NewClient(virtCtx, baseClusterResources.Kubeconfig)
 	if err != nil {
 		cancel()
@@ -211,7 +211,7 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(5, "Created %d virtual machines: %v", len(vmNames), vmNames)
 
-	logger.Debug("Waiting for all VMs to become Running (timeout: %v)", config.VMsRunningTimeout)
+	logger.Info("Waiting for all VMs to become Running (this may take up to %v)", config.VMsRunningTimeout)
 	// Wait for all VMs to become Running in parallel
 	vmWaitCtx, cancel := context.WithTimeout(ctx, config.VMsRunningTimeout)
 	defer cancel()
@@ -269,7 +269,7 @@ func CreateTestCluster(
 
 	logger.Step(6, "Gathering VM information")
 	// Step 6: Gather VM information
-	gatherCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	gatherCtx, cancel := context.WithTimeout(ctx, config.VMInfoTimeout)
 	err = GatherVMInfo(gatherCtx, virtClient, namespace, clusterDefinition, vmResources)
 	cancel()
 	if err != nil {
@@ -305,9 +305,9 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(7, "SSH connection to setup node established")
 
-	logger.Step(8, "Installing Docker on setup node")
+	logger.Step(8, "Installing Docker on setup node (this may take up to %v)", config.DockerInstallTimeout)
 	// Step 8: Install Docker on setup node
-	dockerCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	dockerCtx, cancel := context.WithTimeout(ctx, config.DockerInstallTimeout)
 	err = InstallDocker(dockerCtx, setupSSHClient)
 	cancel()
 	if err != nil {
@@ -331,7 +331,7 @@ func CreateTestCluster(
 
 	logger.Step(10, "Uploading bootstrap files to setup node")
 	// Step 10: Upload bootstrap files
-	uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	uploadCtx, cancel := context.WithTimeout(ctx, config.BootstrapUploadTimeout)
 	err = UploadBootstrapFiles(uploadCtx, setupSSHClient, sshKeyPath, bootstrapConfig)
 	cancel()
 	if err != nil {
@@ -342,7 +342,7 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(10, "Bootstrap files uploaded")
 
-	logger.Step(11, "Bootstrapping cluster (timeout: 35 minutes)")
+	logger.Step(11, "Bootstrapping cluster (this may take up to %v)", config.DKPDeployTimeout)
 	// Step 11: Bootstrap cluster
 	firstMasterIP := clusterDefinition.Masters[0].IPAddress
 	if firstMasterIP == "" {
@@ -352,7 +352,7 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("first master IP address is not set")
 	}
 
-	bootstrapCtx, cancel := context.WithTimeout(ctx, 35*time.Minute)
+	bootstrapCtx, cancel := context.WithTimeout(ctx, config.DKPDeployTimeout)
 	err = BootstrapCluster(bootstrapCtx, setupSSHClient, clusterDefinition, bootstrapConfig)
 	cancel()
 	if err != nil {
@@ -394,7 +394,7 @@ func CreateTestCluster(
 
 	logger.Step(14, "Creating NodeGroup for workers")
 	// Step 14: Create NodeGroup for workers
-	nodegroupCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	nodegroupCtx, cancel := context.WithTimeout(ctx, config.NodeGroupTimeout)
 	err = CreateStaticNodeGroup(nodegroupCtx, testClusterResources.Kubeconfig, "worker")
 	cancel()
 	if err != nil {
@@ -407,9 +407,10 @@ func CreateTestCluster(
 	logger.StepComplete(14, "NodeGroup for workers created")
 
 	logger.Debug("Waiting for bootstrap secrets to appear")
+	logger.Debug("Waiting for bootstrap secrets to appear")
 	// Step 14.1: Wait for bootstrap secrets to appear after NodeGroup creation
 	// The secrets are created by Deckhouse after the NodeGroup is created, so we need to wait
-	secretsWaitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	secretsWaitCtx, cancel := context.WithTimeout(ctx, config.SecretsWaitTimeout)
 	defer cancel()
 	secretNamespace := "d8-cloud-instance-manager"
 	secretClient, err := core.NewSecretClient(testClusterResources.Kubeconfig)
@@ -447,9 +448,9 @@ func CreateTestCluster(
 	}
 	logger.Success("Bootstrap secrets appeared")
 
-	logger.Step(15, "Verifying cluster is ready")
+	logger.Step(15, "Verifying cluster is ready (this may take up to %v)", config.ClusterHealthTimeout)
 	// Step 15: Verify cluster is ready
-	healthCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	healthCtx, cancel := context.WithTimeout(ctx, config.ClusterHealthTimeout)
 	err = CheckClusterHealth(healthCtx, testClusterResources.Kubeconfig)
 	cancel()
 	if err != nil {
@@ -475,7 +476,7 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(16, "Nodes added to cluster")
 
-	logger.Debug("Waiting for all nodes to become Ready (timeout: %v)", config.NodesReadyTimeout)
+	logger.Info("Waiting for all nodes to become Ready (this may take up to %v)", config.NodesReadyTimeout)
 	// Wait for all nodes to become Ready
 	nodesReadyCtx, cancel := context.WithTimeout(ctx, config.NodesReadyTimeout)
 	err = WaitForAllNodesReady(nodesReadyCtx, testClusterResources.Kubeconfig, clusterDefinition, config.NodesReadyTimeout)
@@ -491,7 +492,7 @@ func CreateTestCluster(
 
 	logger.Step(17, "Enabling and configuring modules")
 	// Step 17: Enable and configure modules
-	modulesCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	modulesCtx, cancel := context.WithTimeout(ctx, config.ModuleConfigTimeout)
 	err = EnableAndConfigureModules(modulesCtx, testClusterResources.Kubeconfig, clusterDefinition, testClusterResources.SSHClient)
 	cancel()
 	if err != nil {
@@ -528,7 +529,7 @@ func WaitForTestClusterReady(ctx context.Context, resources *TestClusterResource
 		return fmt.Errorf("cluster definition cannot be nil")
 	}
 
-	logger.Debug("Waiting for all modules to be ready (timeout: %v)", config.ModuleDeployTimeout)
+	logger.Info("Waiting for all modules to become Ready (this may take up to %v)", config.ModuleDeployTimeout)
 	err := WaitForModulesReady(ctx, resources.Kubeconfig, resources.ClusterDefinition, config.ModuleDeployTimeout)
 	if err != nil {
 		logger.Error("Failed to wait for modules to be ready: %v", err)
