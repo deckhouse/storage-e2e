@@ -137,7 +137,7 @@ var _ = Describe("Template Test", Ordered, func() {
 			ctx, cancel := context.WithTimeout(context.Background(), config.ClusterCreationTimeout)
 			defer cancel()
 
-			GinkgoWriter.Printf("    ▶️ Creating test cluster")
+			GinkgoWriter.Printf("    ▶️ Creating test cluster\n")
 			var err error
 			testClusterResources, err = cluster.CreateTestCluster(ctx, config.YAMLConfigFilename)
 			if err != nil {

@@ -21,7 +21,22 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/deckhouse/storage-e2e/internal/logger"
 )
+
+var _ = BeforeSuite(func() {
+	// Initialize logger with configured log level (from LOG_LEVEL env var)
+	err := logger.Initialize()
+	Expect(err).NotTo(HaveOccurred(), "Failed to initialize logger")
+})
+
+var _ = AfterSuite(func() {
+	// Close logger and any open log files
+	if err := logger.Close(); err != nil {
+		GinkgoWriter.Printf("Warning: Failed to close logger: %v\n", err)
+	}
+})
 
 func TestTemplate(t *testing.T) {
 	RegisterFailHandler(Fail)
