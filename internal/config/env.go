@@ -163,6 +163,12 @@ func ValidateEnvironment() error {
 			TestClusterCreateMode, ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew)
 	}
 
+	// Currently only alwaysCreateNew mode is supported
+	if TestClusterCreateMode != ClusterCreateModeAlwaysCreateNew {
+		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE must be set to '%s'. Current value: '%s'. Using existing cluster is not yet supported",
+			ClusterCreateModeAlwaysCreateNew, TestClusterCreateMode)
+	}
+
 	if LogLevel == "" {
 		LogLevel = LogLevelDefaultValue
 	}

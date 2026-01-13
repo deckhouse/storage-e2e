@@ -43,14 +43,9 @@ type VMResources struct {
 }
 
 // CreateVirtualMachines creates virtual machines from cluster definition.
-// It validates CLUSTER_CREATE_MODE, handles VM name conflicts, creates all VMs,
+// It handles VM name conflicts, creates all VMs in parallel,
 // and returns the list of VM names that were created along with resource tracking info.
 func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Client, clusterDef *config.ClusterDefinition) ([]string, *VMResources, error) {
-	// Check CLUSTER_CREATE_MODE
-	if config.TestClusterCreateMode != config.ClusterCreateModeAlwaysCreateNew {
-		return nil, nil, fmt.Errorf("CLUSTER_CREATE_MODE must be set to '%s'. Current value: '%s'. Using existing cluster currently is not supported", config.ClusterCreateModeAlwaysCreateNew, config.TestClusterCreateMode)
-	}
-
 	namespace := config.TestClusterNamespace
 
 	// Get all VM nodes from cluster definition
@@ -96,16 +91,36 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 		return nil, nil, fmt.Errorf("the following VM-related resources already exist (CLUSTER_CREATE_MODE=%s): %s", config.TestClusterCreateMode, strings.Join(conflictMessages, ", "))
 	}
 
-	// Create all VMs
+	// Create all VMs in parallel
 	storageClass := config.TestClusterStorageClass
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	errChan := make(chan error, len(vmNodes))
+
 	for _, node := range vmNodes {
-		cvmiName, err := createVM(ctx, virtClient, namespace, node, storageClass)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create VM %s: %w", node.Hostname, err)
-		}
-		if cvmiName != "" {
-			cvmiNamesMap[cvmiName] = true
-		}
+		wg.Add(1)
+		go func(n config.ClusterNode) {
+			defer wg.Done()
+			cvmiName, err := createVM(ctx, virtClient, namespace, n, storageClass)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to create VM %s: %w", n.Hostname, err)
+				return
+			}
+			if cvmiName != "" {
+				mu.Lock()
+				cvmiNamesMap[cvmiName] = true
+				mu.Unlock()
+			}
+		}(node)
+	}
+
+	// Wait for all VM creations to complete
+	wg.Wait()
+	close(errChan)
+
+	// Check if any errors occurred
+	if len(errChan) > 0 {
+		return nil, nil, <-errChan
 	}
 
 	// Convert CVMI names map to slice
