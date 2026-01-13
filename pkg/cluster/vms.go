@@ -449,12 +449,18 @@ write_files:
     content: |
       # Разрешить TCP forwarding
       AllowTcpForwarding yes
+  - path: /root/.kubectl_aliases
+    content: |
+      # kubectl alias and completion
+      alias k=kubectl
+      complete -o default -F __start_kubectl k
 
 runcmd:
   - systemctl restart ssh
   - hostnamectl set-hostname %s
   - systemctl daemon-reload
   - systemctl enable --now qemu-guest-agent.service
+  - echo 'source /root/.kubectl_aliases' >> /root/.bashrc
 `, sshPubKey, hostname)
 }
 

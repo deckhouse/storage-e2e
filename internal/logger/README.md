@@ -32,8 +32,8 @@ func main() {
 The logger is configured via environment variables:
 
 **`LOG_LEVEL`** - Controls log verbosity:
-- `debug` - Show all messages
-- `info` - Show info, warn, and error (default)
+- `debug` - Show all messages (debug, success, info, progress, skip, delete, steps, warnings, errors)
+- `info` - Show major steps, info, warnings, and errors only (default) - cleaner output for production
 - `warn` - Show warnings and errors only
 - `error` - Show errors only
 
@@ -189,18 +189,20 @@ logger.Error("Failed to load: %v", err)
 ## Log Levels Usage Guidelines
 
 ### DEBUG Level
+- Detailed debug information
+- Success messages
+- General info messages
+- Progress indicators (waiting, polling)
+- Skip operations
+- Delete operations
 - Detailed SSH command outputs
-- Polling iterations ("Waiting for...")
 - File upload/download details
 - Resource inspection details
 - Bootstrap log content
 
 ### INFO Level (Default)
-- Major step start/completion
-- VM/Node state changes (Running, Ready)
-- Resource creation counts
-- Cluster health checks
-- Important status updates
+- Major step start/completion (Step, StepComplete)
+- Important workflow milestones
 
 ### WARN Level
 - Resources already exist (skipping)

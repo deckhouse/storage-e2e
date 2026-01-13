@@ -139,14 +139,14 @@ func StepComplete(step int, format string, args ...interface{}) {
 	GetLogger().Info(fullMsg, "type", "step_complete")
 }
 
-// Success logs a successful operation
+// Success logs a successful operation (DEBUG level only)
 func Success(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	fullMsg := addEmoji("✅", msg)
-	GetLogger().Info(fullMsg, "type", "success")
+	GetLogger().Debug(fullMsg, "type", "success")
 }
 
-// Info logs general informational messages
+// Info logs general informational messages (DEBUG level only)
 func Info(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	GetLogger().Info(msg)
@@ -173,25 +173,25 @@ func Debug(format string, args ...interface{}) {
 	GetLogger().Debug(fullMsg, "type", "debug")
 }
 
-// Progress logs progress indicators (like waiting, polling)
+// Progress logs progress indicators (like waiting, polling) (DEBUG level only)
 func Progress(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	fullMsg := addEmoji("⏳", msg)
-	GetLogger().Info(fullMsg, "type", "progress")
+	GetLogger().Debug(fullMsg, "type", "progress")
 }
 
-// Skip logs skipped operations
+// Skip logs skipped operations (DEBUG level only)
 func Skip(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	fullMsg := addEmoji("⏭️", msg)
-	GetLogger().Info(fullMsg, "type", "skip")
+	GetLogger().Debug(fullMsg, "type", "skip")
 }
 
-// Delete logs deletion operations
+// Delete logs deletion operations (DEBUG level only)
 func Delete(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	fullMsg := addEmoji("🗑️", msg)
-	GetLogger().Info(fullMsg, "type", "delete")
+	GetLogger().Debug(fullMsg, "type", "delete")
 }
 
 // WithField returns a logger with an additional field
