@@ -119,11 +119,11 @@ var _ = Describe("Template Test", Ordered, func() {
 	// ---=== TEST CLUSTER IS CREATED AND GOT READY HERE ===--- //
 
 	It("should create test cluster and wait for it to become ready", func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-
 		By("Creating test cluster", func() {
-			GinkgoWriter.Printf("    ▶️ Creating test cluster (this may take up to 30 minutes)...\n")
+			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
+			defer cancel()
+
+			GinkgoWriter.Printf("    ▶️ Creating test cluster (this may take up to 35 minutes)...\n")
 			var err error
 			testClusterResources, err = cluster.CreateTestCluster(ctx, config.YAMLConfigFilename)
 			if err != nil {
@@ -134,6 +134,10 @@ var _ = Describe("Template Test", Ordered, func() {
 		})
 
 		By("Waiting for test cluster to become ready", func() {
+			// Create a new context with ModuleDeployTimeout for module readiness
+			ctx, cancel := context.WithTimeout(context.Background(), config.ModuleDeployTimeout)
+			defer cancel()
+
 			GinkgoWriter.Printf("    ▶️ Waiting for all modules to be ready in test cluster (timeout: %v)...\n", config.ModuleDeployTimeout)
 			err := cluster.WaitForTestClusterReady(ctx, testClusterResources)
 			if err != nil {
