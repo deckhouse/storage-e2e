@@ -1,110 +1,127 @@
-# Architecture Analysis and Refactoring Plan
+# E2E Test Framework Architecture
 
 ## Executive Summary
 
-This document provides a deep analysis of the current `testkit_v2` codebase structure and proposes a clear, modular architecture to replace the current "pasta code" implementation. The analysis covers:
+This document describes the current architecture of the E2E test framework for Deckhouse storage components. The framework provides a modular, maintainable structure for creating and running end-to-end tests with automatic cluster lifecycle management.
 
-1. Current structure and dependencies
-2. Architectural problems identified
-3. Proposed target architecture
-4. Detailed refactoring plan with step-by-step migration strategy
+**Key Features:**
+- Modular package structure with clear separation of concerns
+- Automatic test cluster creation and teardown
+- Comprehensive logging with configurable levels
+- Template-based test creation via `create-test.sh` script
+- Environment-based configuration management
 
 ---
 
-
-## 1. Target Architecture
+## 1. Current Architecture
 
 ### 1.1 Package Structure
 
 ```
-testkit_v2/
-├── cmd/
-│   └── runner/                    # Test runner CLI (optional, for future)
-│
-├── internal/                      # Internal packages (not importable)
+storage-e2e/
+├── internal/                      # Internal packages (not importable outside module)
 │   ├── config/                    # Configuration management
-│   │   ├── env.go                # Environment variables
-│   │   ├── flags.go              # CLI flags
-│   │   ├── types.go                # Cluster type definitions
+│   │   ├── config.go             # Main configuration struct
+│   │   ├── env.go                # Environment variable parsing
+│   │   ├── types.go              # Configuration type definitions
 │   │   └── images.go             # OS image definitions
 │   │
-│   ├── cluster/                   # Cluster management
-│   │   ├── manager.go            # Cluster manager (singleton replacement)
-│   │   ├── client.go             # Kubernetes client factory
-│   │   └── types.go              # Cluster types
+│   ├── cluster/                   # Cluster lifecycle management
+│   │   ├── cluster.go            # Core cluster operations
+│   │   └── interface.go          # Cluster interface definition
 │   │
 │   ├── kubernetes/                # Kubernetes API operations
+│   │   ├── client.go             # Base Kubernetes client setup
+│   │   ├── namespace.go          # Namespace operations (in pkg/kubernetes/)
 │   │   ├── core/                 # Core K8s resources
 │   │   │   ├── namespace.go
 │   │   │   ├── pod.go
 │   │   │   ├── node.go
+│   │   │   ├── secret.go
 │   │   │   └── service.go
-│   │   ├── apps/                 # Apps resources
+│   │   ├── apps/                 # Apps API resources
 │   │   │   ├── deployment.go
 │   │   │   └── daemonset.go
 │   │   ├── storage/              # Storage resources
+│   │   │   ├── client.go
 │   │   │   ├── pvc.go
 │   │   │   ├── storageclass.go
 │   │   │   ├── blockdevice.go
-│   │   │   └── lvmvolumegroup.go
-│   │   ├── virtualization/       # VM resources
-│   │   │   ├── vm.go
-│   │   │   ├── vdisk.go
-│   │   │   └── vmbd.go
-│   │   └── deckhouse/            # Deckhouse resources
+│   │   │   ├── lvmvolumegroup.go
+│   │   │   └── volumesnapshot.go
+│   │   ├── virtualization/       # Virtualization resources
+│   │   │   ├── client.go
+│   │   │   ├── virtual_machine.go
+│   │   │   ├── virtual_disk.go
+│   │   │   ├── virtual_image.go
+│   │   │   ├── cluster_virtual_image.go
+│   │   │   └── vm_block_device.go
+│   │   └── deckhouse/            # Deckhouse-specific resources
+│   │       ├── client.go
 │   │       ├── modules.go
 │   │       ├── nodegroups.go
-│   │       └── staticinstance.go
+│   │       └── types.go
 │   │
-│   ├── infrastructure/            # Infrastructure operations
-│   │   ├── ssh/                  # SSH operations
-│   │   │   ├── client.go
-│   │   │   ├── keys.go
-│   │   │   └── tunnel.go
-│   │   └── vm/                   # VM provisioning
-│   │       ├── provider.go       # Interface
-│   │       └── deckhouse/        # Deckhouse VM provider
-│   │           └── provider.go
+│   ├── infrastructure/            # Infrastructure layer
+│   │   └── ssh/                  # SSH operations
+│   │       ├── client.go
+│   │       ├── interface.go
+│   │       ├── tunnel.go
+│   │       └── types.go
 │   │
-│   ├── test/                     # Test framework utilities
-│   │   ├── framework.go          # Test framework
-│   │   ├── filters.go            # Filter implementations
-│   │   ├── runner.go             # Test runner
-│   │   └── node_test_context.go  # Node test context
-│   │
-│   └── utils/                    # Pure utility functions
-│       ├── retry.go
-│       ├── random.go
-│       └── crypto.go
+│   └── logger/                    # Structured logging
+│       ├── logger.go             # Logger implementation
+│       ├── handler.go            # Custom console handler
+│       ├── level.go              # Log level parsing
+│       ├── config.go             # Logger configuration
+│       ├── multi_handler.go      # Multi-handler support
+│       └── README.md             # Logging documentation
 │
-├── pkg/                           # Public API (importable)
-│   ├── cluster/                  # Public cluster interface
-│   │   ├── interface.go          # Cluster interface
-│   │   └── config.go             # Cluster config types
+├── pkg/                           # Public API (importable by external packages)
+│   ├── cluster/                  # Public cluster management API
+│   │   ├── cluster.go            # Main cluster creation/management
+│   │   ├── setup.go              # Cluster setup operations
+│   │   ├── modules.go            # Module management
+│   │   ├── nodegroup.go          # NodeGroup operations
+│   │   ├── secrets.go            # Secret management
+│   │   └── vms.go                # VM lifecycle management
 │   │
-│   └── testkit/                  # Testkit public API
-│       ├── test.go               # Test helpers
-│       └── fixtures.go           # Test fixtures
+│   ├── kubernetes/               # Public Kubernetes utilities
+│   │   └── namespace.go          # Namespace utilities
+│   │
+│   └── testkit/                  # Test framework utilities
+│       └── stress-tests.go       # Stress test helpers
 │
-├── tests/                         # Test files
-│   ├── healthcheck/
-│   │   └── healthcheck_test.go
-│   ├── storage/
-│   │   ├── lvg_test.go
-│   │   ├── pvc_test.go
-│   │   └── lvm_test.go
-│   ├── node_configurator/
-│   │   └── node_configurator_test.go
-│   ├── data_exporter/
-│   │   └── data_exporter_test.go
-│   └── cleanup/
-│       └── finalizer_test.go
+├── tests/                         # Test suites
+│   ├── test-template/            # Template for creating new tests
+│   │   ├── template_suite_test.go
+│   │   ├── template_test.go
+│   │   ├── cluster_config.yml
+│   │   └── test_exports          # Environment variables template
+│   │
+│   ├── create-test.sh            # Script to create new tests from template
+│   └── README.md                 # Test creation guide
+│
+├── files/                         # Static files and templates
+│   └── bootstrap/
+│       └── config.yml.tpl        # Bootstrap configuration template
+│
+├── legacy/                        # Legacy code (being phased out)
+│   ├── testkit/
+│   ├── testkit_v2/
+│   └── images/
+│
+├── temp/                          # Temporary files (gitignored)
+│   └── cluster/                  # Cluster artifacts
 │
 ├── go.mod
-└── README.md
+├── go.sum
+├── README.md                      # Main documentation
+├── ARCHITECTURE.md                # This file
+└── LICENSE
 ```
 
-### 2.2 Layer Architecture
+### 1.2 Layer Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -139,852 +156,574 @@ testkit_v2/
 └──────────────────────────────────────────────────────────┘
 ```
 
-### 2.3 Core Interfaces
+### 1.3 Core Components
 
-#### Cluster Interface
+#### Test Cluster Management
+
+The framework provides automated test cluster lifecycle management through `pkg/cluster`:
+
 ```go
-// pkg/cluster/interface.go
-type Cluster interface {
-    // Core operations
-    Name() string
-    Context() context.Context
+// pkg/cluster/cluster.go
+type TestClusterResources struct {
+    // Base cluster information
+    BaseClusterClient  *kubernetes.Clientset
+    SSHClient          ssh.Client
     
-    // Resource operations
-    Namespaces() NamespaceClient
-    Nodes() NodeClient
-    Pods() PodClient
-    Storage() StorageClient
-    Virtualization() VirtualizationClient
-    Deckhouse() DeckhouseClient
+    // Test cluster information  
+    TestNamespace      string
+    VirtualMachines    []VM
+    TestClusterClient  *kubernetes.Clientset
+    KubeConfigPath     string
     
-    // Lifecycle
-    EnsureReady(ctx context.Context) error
-    Close() error
+    // Configuration
+    ClusterConfig      *ClusterConfig
 }
+
+// Main functions
+func CreateTestCluster(ctx context.Context, configPath string) (*TestClusterResources, error)
+func WaitForTestClusterReady(ctx context.Context, resources *TestClusterResources) error
+func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) error
 ```
 
-#### Resource Clients
+#### Configuration Management
+
+Configuration is managed through environment variables validated in `internal/config`:
+
 ```go
-// Internal interfaces for resource operations
-type StorageClient interface {
-    BlockDevices() BlockDeviceClient
-    LVMVolumeGroups() LVMVolumeGroupClient
-    PersistentVolumeClaims() PersistentVolumeClaimClient
-    StorageClasses() StorageClassClient
-}
-
-type NodeClient interface {
-    List(ctx context.Context, filters ...NodeFilter) ([]Node, error)
-    Get(ctx context.Context, name string) (*Node, error)
-    Execute(ctx context.Context, name string, cmd []string) (stdout, stderr string, err error)
-    // ...
-}
-
-type VirtualizationClient interface {
-    VMs() VMClient
-    VirtualDisks() VirtualDiskClient
-    VirtualMachineBlockDevices() VMBDClient
-}
-```
-
-### 2.4 Dependency Injection
-
-**Cluster Manager Pattern**:
-```go
-// internal/cluster/manager.go
-type Manager struct {
-    config     *config.Config
-    clusters   map[string]Cluster
-    mu         sync.RWMutex
-    logger     logger.Logger
-    sshFactory ssh.Factory
-}
-
-func NewManager(cfg *config.Config, opts ...Option) *Manager {
-    // Constructor with options for dependency injection
-}
-
-func (m *Manager) GetOrCreate(ctx context.Context, configPath, name string) (Cluster, error) {
-    // Lazy initialization with proper error handling
-}
-```
-
-### 2.5 Configuration Management
-
-**Structured Configuration**:
-```go
-// internal/config/config.go
-type Config struct {
-    // Environment
-    TestNS           string
-    TestNSCleanUp    string
-    KeepState        bool
+// internal/config/env.go - Key environment variables
+const (
+    // Cluster creation modes
+    ClusterCreateModeAlwaysUseExisting = "alwaysUseExisting"
+    ClusterCreateModeAlwaysCreateNew   = "alwaysCreateNew"
     
-    // Cluster configuration
-    NestedCluster    NestedClusterConfig
-    Hypervisor       HypervisorConfig
-    
-    // Feature flags
-    SkipOptional     bool
-    Parallel         bool
-    TreeMode         bool
-    
-    // Logging
-    Verbose          bool
-    Debug            bool
-    LogFile          string
-}
-
-type NestedClusterConfig struct {
-    KubeConfig     string
-    Host           string
-    SSHUser        string
-    SSHKey         string
-    K8sPort        string
-    StorageClass   string
-}
-```
-
----
-
-## 3. Refactoring Plan
-
-### 3.1 Phase 1: Foundation (Low Risk)
-
-**Goal**: Extract configuration and utilities without breaking existing code.
-
-#### Step 1.1: Extract Configuration
-- [ ] Create `internal/config/` package
-- [ ] Move `env.go` → `internal/config/env.go`
-- [ ] Move cluster types → `internal/config/cluster_types.go`
-- [ ] Move image definitions → `internal/config/images.go`
-- [ ] Create `Config` struct to hold all configuration
-- [ ] Create constructor `config.Load()` to initialize from flags/env
-- [ ] Keep global variables temporarily with deprecation comments
-
-**Migration Strategy**:
-```go
-// Keep existing globals for backward compatibility
-var TestNS = config.Current().TestNS
-
-// But internally use structured config
-func EnsureCluster(...) {
-    cfg := config.Current()
-    // Use cfg instead of globals
-}
-```
-
-#### Step 1.2: Extract Pure Utilities
-- [ ] Create `internal/utils/` package
-- [ ] Move `tools.go` utilities → `internal/utils/`
-- [ ] Move `log.go` → `internal/logger/` with interface
-- [ ] Create logger interface for testability
-- [ ] Update all files to use logger interface
-
-**Files Affected**:
-- `util/tools.go` → `internal/utils/retry.go`, `random.go`, `crypto.go`
-- `util/log.go` → `internal/logger/logger.go`
-
-#### Step 1.3: Extract Filters
-- [ ] Create `internal/test/filters.go`
-- [ ] Move `filter.go` → `internal/test/filters.go`
-- [ ] Make filters type-safe and well-documented
-- [ ] Keep old imports working temporarily
-
-**Estimated Time**: 1-2 days
-**Risk Level**: Low (internal changes, maintain compatibility)
-
----
-
-### 3.2 Phase 2: Extract Kubernetes Clients (Medium Risk)
-
-**Goal**: Separate Kubernetes API operations from business logic.
-
-#### Step 2.1: Create Kubernetes Client Packages
-- [ ] Create `internal/kubernetes/` structure
-- [ ] Extract core operations:
-  - `kube.go` → `internal/kubernetes/client.go` (client factory)
-  - `kube.go` (namespace) → `internal/kubernetes/core/namespace.go`
-  - `kube_node.go` → `internal/kubernetes/core/node.go`
-  - `kube_deploy.go` → `internal/kubernetes/apps/deployment.go`
-- [ ] Extract storage operations:
-  - `kube_storage.go` → `internal/kubernetes/storage/*.go`
-  - Split into separate files per resource type
-- [ ] Extract virtualization operations:
-  - `kube_vm.go` → `internal/kubernetes/virtualization/*.go`
-
-#### Step 2.2: Create Client Interfaces
-- [ ] Define interfaces for each resource client
-- [ ] Implement interfaces with existing code
-- [ ] Update `KCluster` to use clients via composition
-
-**Before**:
-```go
-type KCluster struct {
-    controllerRuntimeClient ctrlrtclient.Client
-    goClient                *kubernetes.Clientset
-    // ... 60+ methods directly on KCluster
-}
-```
-
-**After**:
-```go
-type KCluster struct {
-    client kubernetes.Client
-    storage *storage.Client
-    nodes   *node.Client
-    // ... composition instead of methods
-}
-
-type Client struct {
-    controller ctrlrtclient.Client
-    goClient   *kubernetes.Clientset
-    // Resource clients
-    namespaces  NamespaceClient
-    nodes       NodeClient
-    pods        PodClient
-    storage     StorageClient
-    // ...
-}
-```
-
-#### Step 2.3: Update Tests Gradually
-- [ ] Create wrapper functions in old package that delegate to new structure
-- [ ] Update tests one by one to use new interfaces
-- [ ] Remove old methods once all tests migrated
-
-**Migration Helper**:
-```go
-// In old package (temporary compatibility layer)
-func (cluster *KCluster) CreateLVG(...) error { // TODO: asergunov: Maybe D8Cluster? Or Cluster interface and d8.Cluster as its implementation
-    return cluster.storage.LVMVolumeGroups().Create(...)
-}
-```
-
-**Estimated Time**: 3-5 days
-**Risk Level**: Medium (interface changes, needs careful testing)
-
----
-
-### 3.3 Phase 3: Extract Infrastructure (Medium Risk)
-
-**Goal**: Separate infrastructure concerns (SSH, VM provisioning).
-
-#### Step 3.1: Extract SSH Operations
-- [ ] Create `internal/infrastructure/ssh/` package
-- [ ] Move `ssh.go` → `internal/infrastructure/ssh/`
-- [ ] Create SSH client factory interface
-- [ ] Make SSH client mockable for tests
-- [ ] Update all SSH usages to use factory
-
-#### Step 3.2: Extract VM Cluster Operations
-- [ ] Create `internal/infrastructure/vm/` package
-- [ ] Extract Deckhouse VM provider
-- [ ] Move `kube_vm_cluster.go` logic → `internal/infrastructure/vm/deckhouse/`
-- [ ] Create VM provider interface for extensibility
-- [ ] Separate VM lifecycle from cluster operations
-
-**Structure**:
-```go
-// internal/infrastructure/vm/provider.go
-type Provider interface {
-    CreateVM(ctx context.Context, spec VMSpec) (*VM, error)
-    DeleteVM(ctx context.Context, name string) error
-    WaitForVMReady(ctx context.Context, name string) error
-}
-
-// internal/infrastructure/vm/deckhouse/provider.go
-type DeckhouseProvider struct {
-    cluster Cluster
-    // ...
-}
-```
-
-#### Step 3.3: Extract Cluster Creation Logic
-- [ ] Move cluster creation from `kube_vm_cluster.go`
-- [ ] Create `internal/cluster/builder.go` for cluster creation
-- [ ] Separate concerns: VM creation, Deckhouse installation, node registration
-
-**Estimated Time**: 3-4 days
-**Risk Level**: Medium (infrastructure changes affect tests)
-
----
-
-### 3.4 Phase 4: Refactor Cluster Management (High Risk)
-
-**Goal**: Replace singleton pattern with proper dependency injection.
-
-#### Step 4.1: Create Cluster Manager
-- [ ] Create `internal/cluster/manager.go`
-- [ ] Replace `EnsureCluster` singleton with Manager
-- [ ] Implement proper lifecycle management
-- [ ] Add context support for cancellation
-
-#### Step 4.2: Refactor KCluster to Cluster Interface
-- [ ] Create `pkg/cluster/interface.go` with public Cluster interface
-- [ ] Implement interface in `internal/cluster/cluster.go`
-- [ ] Break up `KCluster` into smaller, focused structs
-- [ ] Use composition instead of 60+ methods
-
-#### Step 4.3: Update All Tests
-- [ ] Update test files to use new Cluster interface
-- [ ] Remove dependency on singleton
-- [ ] Enable dependency injection in tests
-
-**Before**:
-```go
-func TestSomething(t *testing.T) {
-    cluster := util.EnsureCluster("", "")  // Singleton
-    // ...
-}
-```
-
-**After**:
-```go
-func TestSomething(t *testing.T) {
-    ctx := context.Background()
-    cfg := config.Load()
-    manager := cluster.NewManager(cfg)
-    cl, err := manager.GetOrCreate(ctx, "", "")
-    // ...
-}
-```
-
-**Or with test helper**:
-```go
-func TestSomething(t *testing.T) {
-    cluster := testkit.GetCluster(t)  // Helper that manages lifecycle
-    // ...
-}
-```
-
-**Estimated Time**: 5-7 days
-**Risk Level**: High (touches all test files)
-
----
-
-### 3.5 Phase 5: Organize Tests (Low Risk)
-
-**Goal**: Organize test files into logical packages.
-
-#### Step 5.1: Reorganize Test Files
-- [ ] Move tests into domain-specific packages:
-  - `tests/healthcheck/`
-  - `tests/storage/`
-  - `tests/node_configurator/`
-  - `tests/data_exporter/`
-  - `tests/cleanup/`
-- [ ] Create shared test utilities in `pkg/testkit/`
-- [ ] Update package names appropriately
-
-#### Step 5.2: Create Test Framework
-- [ ] Create `internal/test/framework.go` for test helpers
-- [ ] Extract common test patterns
-- [ ] Create fixtures for common scenarios
-
-**Estimated Time**: 2-3 days
-**Risk Level**: Low (mostly moving files)
-
----
-
-### 3.6 Phase 6: Cleanup and Documentation (Low Risk)
-
-**Goal**: Remove old code, add documentation, improve developer experience.
-
-#### Step 6.1: Remove Deprecated Code
-- [ ] Remove compatibility wrappers
-- [ ] Remove old package structure
-- [ ] Clean up unused imports
-- [ ] Remove global variables
-
-#### Step 6.2: Add Documentation
-- [ ] Write package-level documentation
-- [ ] Document public APIs
-- [ ] Create architecture diagrams
-- [ ] Add examples for common use cases
-
-#### Step 6.3: Improve Developer Experience
-- [ ] Add clear error messages
-- [ ] Improve logging
-- [ ] Add validation
-- [ ] Create helper functions for common operations
-
-**Estimated Time**: 2-3 days
-**Risk Level**: Low (cleanup phase)
-
----
-
-## 4. Migration Strategy Details
-
-### 4.1 Compatibility Layer Approach
-
-During migration, maintain a compatibility layer that delegates to new implementation:
-
-```go
-// Old location: util/kube_storage.go (temporary)
-package integration
-
-import (
-    newStorage "github.com/deckhouse/sds-e2e/internal/kubernetes/storage"
+    // Log levels
+    LogLevelDebug = "debug"
+    LogLevelInfo  = "info"
+    LogLevelWarn  = "warn"
+    LogLevelError = "error"
 )
 
-func (cluster *KCluster) CreateLVG(name, nodeName string, bds []string) error {
-    // Delegate to new implementation
-    return cluster.storageClient.LVMVolumeGroups().Create(
-        cluster.ctx,
-        newStorage.LVGCreateRequest{
-            Name:     name,
-            NodeName: nodeName,
-            BlockDevices: bds,
-        },
-    )
+// Required environment variables
+var (
+    SSHUser               string  // SSH username for base cluster
+    SSHHost               string  // SSH host for base cluster
+    TestClusterStorageClass string  // Storage class for test cluster VMs
+    DKPLicenseKey         string  // Deckhouse license key
+    RegistryDockerCfg     string  // Docker registry credentials
+    TestClusterCreateMode string  // Cluster creation mode
+    // ... more variables
+)
+
+func ValidateEnvironment() error {
+    // Validates all required variables and sets defaults
 }
 ```
 
-This allows:
-- Gradual migration of tests
-- Running old and new code side-by-side
-- Easy rollback if issues arise
-- Zero-downtime refactoring
+#### Logging System
 
-### 4.2 Testing Strategy
+The framework includes a structured logging system in `internal/logger`:
 
-1. **Unit Tests First**: Test new packages in isolation
-2. **Integration Tests**: Ensure new code works with existing tests
-3. **Parallel Running**: Run old and new implementations in parallel
-4. **Gradual Cutover**: Move tests one by one to new implementation
+```go
+// Logging functions with emoji indicators
+logger.Step(step int, format string, args ...interface{})      // ▶️ Major steps
+logger.StepComplete(step int, format string, args ...interface{}) // ✅ Step completion
+logger.Success(format string, args ...interface{})              // ✅ Success (DEBUG)
+logger.Info(format string, args ...interface{})                 // Info messages
+logger.Warn(format string, args ...interface{})                 // ⚠️ Warnings
+logger.Error(format string, args ...interface{})                // ❌ Errors
+logger.Debug(format string, args ...interface{})                // 🐛 Debug info
+logger.Progress(format string, args ...interface{})             // ⏳ Progress (DEBUG)
+```
 
-### 4.3 Rollback Plan
-
-At each phase:
-- Keep old code in place until new code is proven
-- Use feature flags if needed
-- Maintain compatibility layer
-- Document rollback procedure
+Log levels are controlled via `LOG_LEVEL` environment variable.
 
 ---
 
-## 5. Detailed Module Structure
+## 2. Creating New Tests
 
-### 5.1 Configuration Module (`internal/config/`)
+### 2.1 Test Creation Workflow
+
+The framework provides an automated script to create new tests from a template:
+
+```bash
+cd tests/
+./create-test.sh <your-test-name>
+```
+
+This script:
+1. Copies the `test-template` folder
+2. Renames files appropriately
+3. Updates package names and identifiers
+4. Creates a `test_exports` file for environment variables
+
+### 2.2 Test Template Structure
+
+```
+test-template/
+├── template_suite_test.go    # Ginkgo suite setup (BeforeSuite/AfterSuite)
+├── template_test.go           # Test implementation (BeforeAll/AfterAll/It)
+├── cluster_config.yml         # Cluster configuration (VMs, modules, etc.)
+└── test_exports               # Environment variables template
+```
+
+### 2.3 Test Lifecycle Hooks
+
+Tests use Ginkgo's lifecycle hooks:
+
+**BeforeSuite** (runs once before all specs):
+- Validates environment variables
+- Initializes logger with configured log level
+
+**BeforeAll** (runs once before ordered container):
+- Outputs environment configuration
+- Creates test cluster
+- Waits for cluster to become ready
+
+**AfterAll** (runs after all tests in container):
+- Cleans up test cluster resources
+- Removes VMs based on `TEST_CLUSTER_CLEANUP` setting
+
+**Test Execution**:
+- First `It` block: Creates and initializes test cluster
+- Subsequent `It` blocks: Run actual tests against the cluster
+
+---
+
+## 3. Module Details
+
+### 3.1 Configuration Module (`internal/config/`)
 
 ```
 config/
-├── config.go           # Main Config struct and Load()
-├── env.go              # Environment variable parsing
-├── flags.go            # CLI flag definitions
-├── cluster_types.go    # Cluster type definitions and validation
-├── images.go           # OS image URL definitions
-└── defaults.go         # Default values
+├── config.go           # Main configuration operations
+├── env.go              # Environment variable definitions and validation
+├── types.go            # Configuration type definitions
+└── images.go           # OS image URL definitions
 ```
 
 **Responsibilities**:
-- Configuration loading from flags, env vars, files
-- Configuration validation
+- Environment variable parsing and validation
+- Configuration validation with clear error messages
+- Default value management
 - Type-safe configuration access
-- No business logic
 
-### 5.2 Cluster Module (`internal/cluster/`)
+**Key Features**:
+- Validates required vs optional variables
+- Provides helpful error messages for missing configuration
+- Sets sensible defaults for optional values
+- Supports multiple cluster creation modes
+
+### 3.2 Cluster Module (`pkg/cluster/` and `internal/cluster/`)
 
 ```
-cluster/
-├── manager.go          # Cluster manager (replaces EnsureCluster singleton)
-├── cluster.go          # Cluster implementation
-├── client.go           # Kubernetes client factory
-├── cache.go            # Cluster caching logic
-└── types.go            # Cluster-related types
+pkg/cluster/
+├── cluster.go          # Main cluster lifecycle functions
+├── setup.go            # Cluster setup and bootstrap
+├── modules.go          # Module management
+├── nodegroup.go        # NodeGroup operations
+├── secrets.go          # Secret management
+└── vms.go              # VM lifecycle management
+
+internal/cluster/
+├── cluster.go          # Internal cluster operations
+└── interface.go        # Cluster interface definitions
 ```
 
 **Responsibilities**:
-- Cluster lifecycle management
-- Client initialization and caching
-- Context management
-- No resource operations (delegates to kubernetes clients)
+- Complete cluster lifecycle management (create, ready, cleanup)
+- VM provisioning and configuration
+- Deckhouse bootstrap process
+- Module enablement and readiness checking
+- NodeGroup and node management
+- SSH connection and tunnel management
 
-### 5.3 Kubernetes Module (`internal/kubernetes/`)
+**Key Functions**:
+```go
+CreateTestCluster(ctx, configPath) (*TestClusterResources, error)
+WaitForTestClusterReady(ctx, resources) error
+CleanupTestCluster(ctx, resources) error
+```
+
+### 3.3 Kubernetes Module (`internal/kubernetes/`)
 
 ```
-kubernetes/
-├── client.go           # Base client setup and scheme registration
+internal/kubernetes/
+├── client.go           # Base Kubernetes client setup
 ├── core/
-│   ├── namespace.go
-│   ├── node.go
-│   ├── pod.go
-│   └── service.go
+│   ├── namespace.go    # Namespace CRUD operations
+│   ├── node.go         # Node operations and queries
+│   ├── pod.go          # Pod management
+│   ├── secret.go       # Secret operations
+│   └── service.go      # Service management
 ├── apps/
-│   ├── deployment.go
-│   └── daemonset.go
+│   ├── deployment.go   # Deployment operations
+│   └── daemonset.go    # DaemonSet operations
 ├── storage/
-│   ├── client.go       # Storage client interface
-│   ├── blockdevice.go
-│   ├── lvmvolumegroup.go
-│   ├── pvc.go
-│   └── storageclass.go
+│   ├── client.go       # Storage client initialization
+│   ├── blockdevice.go  # BlockDevice operations
+│   ├── lvmvolumegroup.go  # LVMVolumeGroup operations
+│   ├── pvc.go          # PVC operations
+│   ├── storageclass.go # StorageClass operations
+│   └── volumesnapshot.go  # VolumeSnapshot operations
 ├── virtualization/
-│   ├── client.go
-│   ├── vm.go
-│   ├── vdisk.go
-│   ├── vmbd.go
-│   └── cluster_virtual_image.go
+│   ├── client.go       # Virtualization client
+│   ├── virtual_machine.go  # VirtualMachine CRUD
+│   ├── virtual_disk.go     # VirtualDisk operations
+│   ├── virtual_image.go    # VirtualImage management
+│   ├── cluster_virtual_image.go  # ClusterVirtualImage ops
+│   └── vm_block_device.go  # VMBlockDevice operations
 └── deckhouse/
-    ├── client.go
-    ├── modules.go
-    ├── nodegroups.go
-    └── staticinstance.go
+    ├── client.go       # Deckhouse client setup
+    ├── modules.go      # Module operations
+    ├── nodegroups.go   # NodeGroup management
+    └── types.go        # Deckhouse type definitions
 ```
 
 **Responsibilities**:
 - All Kubernetes API operations
-- Resource-specific logic
-- Filtering and querying
-- CRUD operations
-- No infrastructure concerns (SSH, VM provisioning handled elsewhere)
+- Resource-specific CRUD operations
+- Status checking and waiting
+- Query and filter operations
+- Type-safe resource management
 
-### 5.4 Infrastructure Module (`internal/infrastructure/`)
+**Key Features**:
+- Organized by Kubernetes API groups
+- Consistent error handling
+- Wait/poll operations for resource readiness
+- Support for custom resources (Deckhouse, storage, virtualization)
 
-```
-infrastructure/
-├── ssh/
-│   ├── client.go       # SSH client implementation
-│   ├── factory.go      # SSH client factory
-│   ├── keys.go         # SSH key generation
-│   └── tunnel.go       # SSH tunnel management
-└── vm/
-    ├── provider.go     # VM provider interface
-    └── deckhouse/
-        ├── provider.go # Deckhouse VM provider
-        └── installer.go # Deckhouse installation logic
-```
-
-**Responsibilities**:
-- SSH connection management
-- VM provisioning (via providers)
-- Infrastructure setup
-- No Kubernetes operations (uses kubernetes clients)
-
-### 5.5 Test Module (`internal/test/`)
+### 3.4 Infrastructure Module (`internal/infrastructure/`)
 
 ```
-test/
-├── framework.go        # Test framework and helpers
-├── filters.go          # Filter implementations
-├── runner.go           # Test execution runner
-├── node_context.go     # Node test context
-└── fixtures.go         # Test fixtures
+infrastructure/ssh/
+├── client.go           # SSH client implementation
+├── interface.go        # SSH client interface
+├── tunnel.go           # Port forwarding and tunneling
+└── types.go            # SSH-related types
 ```
 
 **Responsibilities**:
-- Test execution utilities
-- Filter implementations
-- Test context management
-- Node-specific test helpers
+- SSH connection establishment and management
+- SSH key handling
+- Port forwarding (e.g., for Kubernetes API access)
+- Remote command execution
+- File transfer operations
 
-### 5.6 Public API (`pkg/`)
+**Key Features**:
+- Support for password and key-based authentication
+- SSH tunneling for accessing remote Kubernetes clusters
+- Connection pooling and reuse
+- Proper resource cleanup
+
+### 3.5 Logger Module (`internal/logger/`)
+
+```
+logger/
+├── logger.go           # Main logger implementation
+├── handler.go          # Custom console handler with colors
+├── level.go            # Log level parsing
+├── config.go           # Logger configuration
+├── multi_handler.go    # Multiple output support
+└── README.md           # Logging documentation
+```
+
+**Responsibilities**:
+- Structured logging with slog
+- Colorized console output
+- Optional JSON file logging
+- Emoji indicators for different message types
+- Configurable log levels
+
+**Key Features**:
+- DEBUG, INFO, WARN, ERROR levels
+- Emoji prefixes for visual clarity (▶️ ✅ ⚠️ ❌ 🐛 ⏳)
+- Dual output (console + file)
+- Context-aware logging
+
+### 3.6 Public API (`pkg/`)
 
 ```
 pkg/
 ├── cluster/
-│   ├── interface.go    # Public Cluster interface
-│   └── config.go       # Public config types
+│   ├── cluster.go      # Main cluster management functions
+│   ├── setup.go        # Cluster setup operations
+│   ├── modules.go      # Module management
+│   ├── nodegroup.go    # NodeGroup operations
+│   ├── secrets.go      # Secret management
+│   └── vms.go          # VM management
+├── kubernetes/
+│   └── namespace.go    # Namespace utilities
 └── testkit/
-    ├── test.go         # Public test helpers
-    └── fixtures.go     # Public fixtures
+    └── stress-tests.go # Stress test helpers
 ```
 
 **Responsibilities**:
-- Public API for external consumers
-- Stable interfaces
-- Well-documented
-- Backward compatibility guarantees
+- Public API for test implementations
+- Cluster lifecycle management
+- Test utilities and helpers
+- Well-documented interfaces
 
 ---
 
-## 6. Key Design Decisions
+## 4. Key Design Principles
 
-### 6.1 Why Internal Packages?
+### 4.1 Modular Package Structure
 
-- **Encapsulation**: Internal packages cannot be imported outside the module
-- **Flexibility**: Can refactor internal packages without breaking external API
-- **Clear Boundaries**: Makes it obvious what is public vs private
+**Internal vs Public Packages**:
+- `internal/` - Cannot be imported outside the module, allows for safe refactoring
+- `pkg/` - Public API, stable interfaces for test implementations
+- Clear separation between implementation details and public API
 
-### 6.2 Why Composition Over Inheritance?
+### 4.2 Configuration via Environment Variables
 
-- **Flexibility**: Easier to swap implementations
-- **Testability**: Can mock individual components
-- **Single Responsibility**: Each client has one job
+- All configuration through environment variables
+- Clear validation with helpful error messages
+- Sensible defaults for optional settings
+- `test_exports` file pattern for easy configuration management
 
-### 6.3 Why Interface-Based Design?
+### 4.3 Automatic Cluster Lifecycle Management
 
-- **Testability**: Easy to create mocks
-- **Extensibility**: Can add new implementations
-- **Dependency Inversion**: High-level code doesn't depend on low-level details
+- Tests focus on testing, not infrastructure
+- Cluster creation, readiness checking, and cleanup automated
+- Configurable cleanup behavior (`TEST_CLUSTER_CLEANUP`)
+- Proper context handling for timeouts and cancellation
 
-### 6.4 Why Separate Infrastructure?
+### 4.4 Ginkgo Test Framework
 
-- **Clear Boundaries**: Infrastructure is separate from business logic
-- **Testability**: Can mock infrastructure in tests
-- **Flexibility**: Can swap VM providers, SSH implementations, etc.
+- Uses Ginkgo v2 for BDD-style testing
+- Ordered test execution with proper dependency handling
+- Clear lifecycle hooks (BeforeSuite, BeforeAll, AfterAll, AfterSuite)
+- Descriptive test output with step-by-step progress
 
----
+### 4.5 Comprehensive Logging
 
-## 7. Migration Checklist
+- Structured logging with slog
+- Multiple log levels (DEBUG, INFO, WARN, ERROR)
+- Visual indicators (emojis) for different message types
+- Dual output (console + optional file logging)
+- Configurable via `LOG_LEVEL` environment variable
 
-### Phase 1: Foundation
-- [ ] Extract configuration to `internal/config/`
-- [ ] Extract utilities to `internal/utils/`
-- [ ] Extract filters to `internal/test/filters.go`
-- [ ] Extract logging to `internal/logger/`
-- [ ] All existing tests still pass
+### 4.6 Template-Based Test Creation
 
-### Phase 2: Kubernetes Clients
-- [ ] Create `internal/kubernetes/` structure
-- [ ] Extract all K8s operations to appropriate packages
-- [ ] Create client interfaces
-- [ ] Update KCluster to use composition
-- [ ] All existing tests still pass
-
-### Phase 3: Infrastructure
-- [ ] Extract SSH to `internal/infrastructure/ssh/`
-- [ ] Extract VM operations to `internal/infrastructure/vm/`
-- [ ] Create provider interfaces
-- [ ] All existing tests still pass
-
-### Phase 4: Cluster Management
-- [ ] Create Cluster Manager
-- [ ] Create Cluster interface
-- [ ] Refactor KCluster implementation
-- [ ] Update all tests to use new interface
-- [ ] All tests still pass
-
-### Phase 5: Test Organization
-- [ ] Reorganize test files
-- [ ] Create test framework
-- [ ] Update package names
-- [ ] All tests still pass
-
-### Phase 6: Cleanup
-- [ ] Remove deprecated code
-- [ ] Add documentation
-- [ ] Improve error messages
-- [ ] Final verification
+- Automated test creation via `create-test.sh` script
+- Consistent test structure across all test suites
+- Reduces boilerplate and setup time
+- Easy onboarding for new tests
 
 ---
 
-## 8. Benefits of New Architecture
+## 5. Benefits of Current Architecture
 
-### 8.1 Maintainability
-- **Clear Structure**: Easy to find code
-- **Single Responsibility**: Each package has one job
-- **Documented**: Clear purpose for each module
+### 5.1 Maintainability
+- **Clear Structure**: Easy to locate functionality by domain
+- **Modular Design**: Each package has a single, well-defined responsibility
+- **Documentation**: Comprehensive README files and inline documentation
+- **Standardized**: All tests follow the same pattern
 
-### 8.2 Testability
-- **Mockable**: Can mock dependencies via interfaces
-- **Isolated**: Test individual components
-- **Fast**: Unit tests run quickly
+### 5.2 Developer Experience
+- **Fast Onboarding**: Create new tests in minutes with `create-test.sh`
+- **Clear Configuration**: Environment variables with validation and defaults
+- **Rich Logging**: Visual progress indicators and detailed debug output
+- **Helpful Errors**: Clear error messages guide troubleshooting
 
-### 8.3 Extensibility
-- **Pluggable**: Can add new VM providers, storage backends, etc.
-- **Modular**: Can add new features without touching existing code
-- **Interface-Based**: New implementations satisfy existing interfaces
+### 5.3 Test Quality
+- **Consistent Structure**: All tests use the same lifecycle pattern
+- **Automatic Cleanup**: Resources cleaned up regardless of test outcome
+- **Proper Ordering**: Tests run in correct dependency order
+- **Isolation**: Each test suite has its own cluster namespace
 
-### 8.4 Developer Experience
-- **Clear API**: Public interfaces are well-defined
-- **Better Errors**: Structured error handling
-- **Documentation**: Each package is documented
-- **Examples**: Common patterns documented
+### 5.4 Extensibility
+- **Modular Kubernetes Clients**: Easy to add new resource types
+- **Configuration System**: Easy to add new configuration options
+- **Template Pattern**: New tests inherit all framework improvements
+- **Clean Interfaces**: Well-defined boundaries between components
 
-### 8.5 Performance
-- **Efficient**: No unnecessary allocations
-- **Cached**: Client reuse via manager
-- **Context-Aware**: Proper context propagation for cancellation
-
----
-
-## 9. Risks and Mitigations
-
-### Risk 1: Breaking Existing Tests
-**Mitigation**: 
-- Maintain compatibility layer
-- Gradual migration
-- Extensive testing at each phase
-
-### Risk 2: Time Investment
-**Mitigation**:
-- Phased approach (can stop at any phase)
-- Parallel development possible
-- Each phase delivers value
-
-### Risk 3: Learning Curve
-**Mitigation**:
-- Good documentation
-- Clear examples
-- Code reviews and knowledge sharing
-
-### Risk 4: Over-Engineering
-**Mitigation**:
-- Start with minimum viable structure
-- Add complexity only when needed
-- Keep it simple
+### 5.5 Observability
+- **Structured Logging**: Consistent log format across all operations
+- **Progress Tracking**: Clear indication of long-running operations
+- **Debug Mode**: Detailed information when troubleshooting
+- **Step-by-Step Output**: Major operations clearly marked and tracked
 
 ---
 
-## 10. Success Criteria
+## 6. Usage Examples
 
-1. **All existing tests pass** after refactoring
-2. **No performance regression** (ideally improvement)
-3. **Code is easier to understand** (measured by code review time)
-4. **New features are easier to add** (measured by time to implement)
-5. **Tests are easier to write** (measured by lines of test code)
-6. **Documentation is comprehensive** (all public APIs documented)
+### 6.1 Creating a New Test
 
----
+```bash
+# Create a new test
+cd tests/
+./create-test.sh pvc-operations
 
-## 11. Next Steps
+# Configure environment
+cd pvc-operations/
+vi test_exports  # Edit with your credentials
 
-1. **Review this document** with team
-2. **Prioritize phases** based on immediate needs
-3. **Create GitHub issues** for each phase
-4. **Start with Phase 1** (lowest risk)
-5. **Iterate and adjust** based on learnings
-
----
-
-## Appendix A: Current vs Proposed Structure Comparison
-
-### Current Structure Issues
-
-```
-❌ Everything in one package
-❌ Global state everywhere
-❌ 60+ methods on one struct
-❌ Mixed concerns
-❌ Hard to test
-❌ Circular dependencies
+# Run the test
+source test_exports
+go test -v -timeout=60m
 ```
 
-### Proposed Structure Benefits
-
-```
-✅ Clear package boundaries
-✅ Structured configuration
-✅ Interface-based design
-✅ Separated concerns
-✅ Easy to test
-✅ No circular dependencies
-```
-
----
-
-## Appendix B: Code Examples
-
-### Example 1: Using New Cluster Interface
+### 6.2 Test Implementation Example
 
 ```go
-// tests/storage/pvc_test.go
-package storage
+// pvc_operations_test.go
+var _ = Describe("PVC Operations", Ordered, func() {
+    var testClusterResources *cluster.TestClusterResources
 
-import (
-    "context"
-    "testing"
-    
-    "github.com/deckhouse/sds-e2e/pkg/cluster"
-    "github.com/deckhouse/sds-e2e/pkg/testkit"
-)
-
-func TestPVCCreate(t *testing.T) {
-    ctx := context.Background()
-    
-    // Get cluster via testkit helper (manages lifecycle)
-    cl := testkit.GetCluster(t)
-    defer cl.Close()
-    
-    // Use typed client interfaces
-    pvc, err := cl.Storage().PersistentVolumeClaims().Create(ctx, testkit.PVCSpec{
-        Name:      "test-pvc",
-        Namespace: testkit.TestNS,
-        Size:      "1Gi",
-        StorageClass: "test-lvm-thick",
+    BeforeAll(func() {
+        // Output environment configuration
+        // ... (automatically generated)
     })
-    if err != nil {
-        t.Fatal(err)
-    }
-    
-    // Wait for ready
-    err = cl.Storage().PersistentVolumeClaims().WaitReady(ctx, pvc.Name, 30*time.Second)
-    if err != nil {
-        t.Fatal(err)
-    }
-}
+
+    AfterAll(func() {
+        // Cleanup test cluster
+        // ... (automatically generated)
+    })
+
+    It("should create test cluster and wait for it to become ready", func() {
+        ctx := context.Background()
+        
+        By("Creating test cluster", func() {
+            var err error
+            testClusterResources, err = cluster.CreateTestCluster(ctx, "cluster_config.yml")
+            Expect(err).NotTo(HaveOccurred())
+        })
+
+        By("Waiting for test cluster to become ready", func() {
+            err := cluster.WaitForTestClusterReady(ctx, testClusterResources)
+            Expect(err).NotTo(HaveOccurred())
+        })
+    })
+
+    It("should create and resize PVC", func() {
+        // Your test logic here
+        By("Creating PVC", func() {
+            // ... test implementation
+        })
+
+        By("Resizing PVC", func() {
+            // ... test implementation
+        })
+    })
+})
 ```
 
-### Example 2: Using Configuration
+### 6.3 Using the Logger
 
 ```go
-// internal/config/config.go
-package config
+import "github.com/deckhouse/storage-e2e/internal/logger"
 
-type Config struct {
-    TestNS        string
-    NestedCluster NestedClusterConfig
-    // ...
-}
+// Major step
+logger.Step(1, "Creating virtual machines")
 
-func Load() *Config {
-    cfg := &Config{
-        TestNS: getTestNS(),
-        // ...
-    }
-    return cfg
-}
+// Step completion
+logger.StepComplete(1, "Created %d VMs successfully", len(vms))
 
-// Usage
-cfg := config.Load()
-cluster := cluster.NewManager(cfg)
+// Debug information (only shown at DEBUG level)
+logger.Debug("VM details: %+v", vmDetails)
+
+// Progress indicator (only shown at DEBUG level)
+logger.Progress("Waiting for pods to become ready (%d/%d)", ready, total)
+
+// Warnings
+logger.Warn("Resource limit approaching: %d%%", percentage)
+
+// Errors
+logger.Error("Failed to create resource: %v", err)
 ```
 
-### Example 3: Mocking for Tests
+---
 
-```go
-// internal/kubernetes/storage/mock.go (generated)
-type MockLVMVolumeGroupClient struct {
-    CreateFunc func(ctx context.Context, req LVGCreateRequest) error
-    // ...
-}
+## 7. Environment Variables Reference
 
-func (m *MockLVMVolumeGroupClient) Create(ctx context.Context, req LVGCreateRequest) error {
-    return m.CreateFunc(ctx, req)
-}
+### Required Variables
 
-// In test
-func TestLVGCreate(t *testing.T) {
-    mockClient := &MockLVMVolumeGroupClient{
-        CreateFunc: func(ctx context.Context, req LVGCreateRequest) error {
-            // Test-specific behavior
-            return nil
-        },
-    }
-    // Use mock in test
-}
-```
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `TEST_CLUSTER_CREATE_MODE` | Cluster creation mode | `alwaysCreateNew` |
+| `DKP_LICENSE_KEY` | Deckhouse license key | `X7Yig...` |
+| `REGISTRY_DOCKER_CFG` | Docker registry credentials | `eyJhd...` |
+| `SSH_USER` | SSH username for base cluster | `tfadm` |
+| `SSH_HOST` | SSH host for base cluster | `172.17.1.67` |
+| `TEST_CLUSTER_STORAGE_CLASS` | Storage class for test VMs | `lsc-thick` |
+
+### Optional Variables (with defaults)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `YAML_CONFIG_FILENAME` | `cluster_config.yml` | Cluster configuration file |
+| `SSH_PRIVATE_KEY` | `~/.ssh/id_rsa` | SSH private key path |
+| `SSH_PUBLIC_KEY` | `~/.ssh/id_rsa.pub` | SSH public key path |
+| `SSH_VM_USER` | `cloud` | SSH user for VMs |
+| `TEST_CLUSTER_NAMESPACE` | `e2e-test-cluster` | Test namespace name |
+| `TEST_CLUSTER_CLEANUP` | `false` | Cleanup cluster after tests |
+| `LOG_LEVEL` | `debug` | Log level (debug/info/warn/error) |
+| `KUBE_CONFIG_PATH` | - | Fallback kubeconfig path |
+
+---
+
+## 8. Best Practices
+
+### 8.1 Test Organization
+
+- One test suite per major feature area
+- Use `BeforeAll` for setup, `AfterAll` for cleanup
+- First `It` block creates/initializes cluster
+- Subsequent `It` blocks run actual tests
+- Use `Ordered` container for dependent tests
+
+### 8.2 Configuration Management
+
+- Use `test_exports` file for environment variables
+- Never commit credentials to git (already in `.gitignore`)
+- Validate environment early (in `BeforeSuite`)
+- Provide clear error messages for missing configuration
+
+### 8.3 Resource Cleanup
+
+- Set `TEST_CLUSTER_CLEANUP=true` for CI/CD
+- Set `TEST_CLUSTER_CLEANUP=false` for debugging
+- Bootstrap node always cleaned up
+- Test VMs cleaned up only if cleanup enabled
+
+### 8.4 Logging
+
+- Use `logger.Step()` for major operations
+- Use `logger.Debug()` for detailed information
+- Use `logger.Progress()` for wait operations
+- Include relevant context in log messages
+
+---
+
+## 9. Future Improvements
+
+### 9.1 Potential Enhancements
+
+- [ ] Support for existing cluster reuse (`alwaysUseExisting` mode)
+- [ ] Parallel test execution support
+- [ ] Test result reporting and metrics
+- [ ] Integration with CI/CD systems
+- [ ] Performance benchmarking framework
+- [ ] More granular cleanup options
+
+### 9.2 Technical Debt
+
+- Legacy code in `legacy/` directory (to be removed)
+- Some global state in configuration (being phased out)
+- Limited unit test coverage (focus on E2E currently)
 
 ---
 
 ## Conclusion
 
-This architecture refactoring will transform the codebase from a monolithic "pasta code" structure into a clean, maintainable, and testable modular architecture. The phased approach minimizes risk while delivering incremental value.
+The E2E test framework provides a robust, maintainable foundation for testing Deckhouse storage components. Key strengths include:
 
-The key principles:
-1. **Separation of Concerns**: Each package has one responsibility
-2. **Interface-Based Design**: Easy to test and extend
-3. **Dependency Injection**: No globals, proper lifecycle management
-4. **Clear Boundaries**: Internal vs public API
-5. **Gradual Migration**: Low risk, incremental progress
+1. **Automated Lifecycle Management**: Complete cluster creation, ready-checking, and cleanup
+2. **Developer-Friendly**: Quick test creation with templates and scripts
+3. **Observable**: Rich logging with visual indicators
+4. **Modular**: Clean package structure with clear responsibilities
+5. **Configurable**: Environment-based configuration with validation
 
-With this structure, the codebase will be:
-- **Easier to understand** (clear package organization)
-- **Easier to test** (mockable interfaces)
-- **Easier to extend** (modular design)
-- **Easier to maintain** (single responsibility)
-
-Start with Phase 1 and iterate based on learnings!
+The framework enables rapid development of comprehensive E2E tests while maintaining code quality and developer productivity.
 
