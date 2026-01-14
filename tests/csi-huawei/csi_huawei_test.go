@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package test_template
+package csi_huawei
 
 import (
 	"context"
@@ -26,7 +26,7 @@ import (
 	"github.com/deckhouse/storage-e2e/pkg/cluster"
 )
 
-var _ = Describe("Template Test", Ordered, func() {
+var _ = Describe("Csi Huawei", Ordered, func() {
 	var (
 		testClusterResources *cluster.TestClusterResources
 	)
@@ -167,4 +167,4 @@ var _ = Describe("Template Test", Ordered, func() {
 
 	///////////////////////////////////////////////////// ---=== TESTS END HERE ===--- /////////////////////////////////////////////////////
 
-}) // Describe: Template Test
+}) // Describe: Csi Huawei

@@ -12,7 +12,37 @@ The test template provides a complete framework for creating and managing test c
 
 ## Quick Start
 
-### Step 1: Copy the Template Folder
+### Automated Method (Recommended)
+
+Use the `create-test.sh` script to automatically create a new test from the template:
+
+```bash
+cd tests/
+./create-test.sh your-test-name
+```
+
+Replace `your-test-name` with a descriptive name for your test (e.g., `storage-class-test`, `volume-snapshot-test`, etc.).
+
+The script will:
+- Copy the template folder
+- Rename all files appropriately
+- Update package names and identifiers
+- Create a `test_exports` file for environment variables
+
+**Example:**
+```bash
+./create-test.sh pvc-resize-test
+```
+
+This creates a new test at `tests/pvc-resize-test/` with all files properly configured.
+
+---
+
+### Manual Method
+
+If you prefer to create the test manually, follow these steps:
+
+#### Step 1: Copy the Template Folder
 
 Copy the `test-template` folder to create your new test:
 
@@ -69,7 +99,7 @@ The template uses `test_template` as the package name. You need to update it to 
 
 ### Step 3: Configure Environment Variables
 
-1. You can create here `test_exports` with your values - it's included in .gitignore:
+1. Edit the `test_exports` file (automatically created if you used `create-test.sh`) with your values:
    ```bash
    #!/bin/bash
    
@@ -90,10 +120,12 @@ The template uses `test_template` as the package name. You need to update it to 
    export SSH_VM_USER='cloud'
    export TEST_CLUSTER_NAMESPACE='e2e-test-cluster'
    export TEST_CLUSTER_CLEANUP='false'  # Set to 'true' to enable cleanup
+   export LOG_LEVEL='debug'  # Set to 'debug' for detailed logs
    ```
 
-2. Make it executable and run to export all the envvars:
+2. Source the file to export all environment variables:
    ```bash
-   chmod +x test_exports
+   source test_exports
    ```
 
+   **Note:** The `test_exports` file is included in `.gitignore` to prevent accidental commit of sensitive credentials.

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package test_template
+package csi_huawei
 
 import (
 	"testing"
@@ -43,11 +43,11 @@ var _ = AfterSuite(func() {
 	}
 })
 
-func TestTemplate(t *testing.T) {
+func TestCsiHuawei(t *testing.T) {
 	RegisterFailHandler(Fail)
 	// Configure Ginkgo to show verbose output
 	suiteConfig, reporterConfig := GinkgoConfiguration()
 	reporterConfig.Verbose = true
 	reporterConfig.ShowNodeEvents = false
-	RunSpecs(t, "Template Test Suite", suiteConfig, reporterConfig)
+	RunSpecs(t, "Csi Huawei Suite", suiteConfig, reporterConfig)
 }
