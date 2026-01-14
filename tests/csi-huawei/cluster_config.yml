@@ -4,7 +4,7 @@ clusterDefinition:
     - hostname: "master-1"
       hostType: "vm"
       role: "master"
-      osType: "Ubuntu 22.04 6.2.0-39-generic"
+      osType: "Ubuntu 22.04 6.2.0-39-generic" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
       ram: 8
@@ -12,7 +12,7 @@ clusterDefinition:
     - hostname: "master-2"
       hostType: "vm"
       role: "master"
-      osType: "AltLinux Server 11"
+      osType: "AltLinux Server 11" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
       ram: 8
@@ -20,7 +20,7 @@ clusterDefinition:
     - hostname: "master-3"
       hostType: "vm"
       role: "master"
-      osType: "Debian 12"
+      osType: "Debian 12" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
       ram: 8
@@ -29,7 +29,7 @@ clusterDefinition:
     - hostname: "worker-1"
       hostType: "vm"
       role: "worker"
-      osType: "RedOS 8.0 6.6.26-1.red80.x86_64"
+      osType: "RedOS 8.0 6.6.26-1.red80.x86_64" # See internal/config/images.go
       cpu: 2
       coreFraction: 50
       ram: 6
@@ -37,7 +37,7 @@ clusterDefinition:
     - hostname: "worker-2"
       hostType: "vm"
       role: "worker"
-      osType: "RedOS 7.3.6 5.15.78-2.el7.3.x86_64"
+      osType: "RedOS 7.3.6 5.15.78-2.el7.3.x86_64" # See internal/config/images.go
       cpu: 2
       coreFraction: 50
       ram: 6
@@ -45,7 +45,7 @@ clusterDefinition:
     - hostname: "worker-3"
       hostType: "vm"
       role: "worker"
-      osType: "AltLinux Server 10.4"
+      osType: "AltLinux Server 10.4" # See internal/config/images.go
       cpu: 2
       coreFraction: 50
       ram: 6
