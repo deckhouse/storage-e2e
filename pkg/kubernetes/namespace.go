@@ -22,25 +22,29 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
 )
 
 // CreateNamespaceIfNotExists creates a namespace if it doesn't exist, or returns the existing one.
-// This is a high-level function that uses the low-level core namespace client.
 func CreateNamespaceIfNotExists(ctx context.Context, config *rest.Config, name string) (*corev1.Namespace, error) {
-	nsClient, err := core.NewNamespaceClient(config)
+	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create namespace client: %w", err)
+		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
 	// Try to get the namespace to check if it exists
-	ns, err := nsClient.Get(ctx, name)
+	ns, err := clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		// If namespace doesn't exist, create it
 		if apierrors.IsNotFound(err) {
-			return nsClient.Create(ctx, name)
+			ns := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+			}
+			return clientset.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
 		}
 		// For other errors, return them
 		return nil, fmt.Errorf("failed to get namespace %s: %w", name, err)

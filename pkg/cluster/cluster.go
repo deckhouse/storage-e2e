@@ -26,15 +26,15 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	internalcluster "github.com/deckhouse/storage-e2e/internal/cluster"
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/apps"
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/internal/logger"
@@ -413,13 +413,13 @@ func CreateTestCluster(
 	secretsWaitCtx, cancel := context.WithTimeout(ctx, config.SecretsWaitTimeout)
 	defer cancel()
 	secretNamespace := "d8-cloud-instance-manager"
-	secretClient, err := core.NewSecretClient(testClusterResources.Kubeconfig)
+	clientset, err := k8s.NewForConfig(testClusterResources.Kubeconfig)
 	if err != nil {
 		testClusterResources.SSHClient.Close()
 		testClusterResources.TunnelInfo.StopFunc()
 		setupSSHClient.Close()
 		baseClusterResources.SSHClient.Close()
-		return nil, fmt.Errorf("failed to create secret client: %w", err)
+		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
 	secretsReady := false
@@ -435,8 +435,8 @@ func CreateTestCluster(
 			return nil, fmt.Errorf("timeout waiting for bootstrap secrets to appear")
 		case <-ticker.C:
 			// Check for both secrets
-			_, workerErr := secretClient.Get(secretsWaitCtx, secretNamespace, "manual-bootstrap-for-worker")
-			_, masterErr := secretClient.Get(secretsWaitCtx, secretNamespace, "manual-bootstrap-for-master")
+			_, workerErr := clientset.CoreV1().Secrets(secretNamespace).Get(secretsWaitCtx, "manual-bootstrap-for-worker", metav1.GetOptions{})
+			_, masterErr := clientset.CoreV1().Secrets(secretNamespace).Get(secretsWaitCtx, "manual-bootstrap-for-master", metav1.GetOptions{})
 			if workerErr == nil && masterErr == nil {
 				secretsReady = true
 				logger.Success("Bootstrap secrets are available")
@@ -697,14 +697,14 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 	namespace := "d8-system"
 	deploymentName := "deckhouse"
 
-	// Create deployment client
-	deploymentClient, err := apps.NewDeploymentClient(kubeconfig)
+	// Get clientset for checking deployment
+	clientset, err := k8s.NewForConfig(kubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to create deployment client: %w", err)
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
 	// Get the deployment
-	deployment, err := deploymentClient.Get(ctx, namespace, deploymentName)
+	deployment, err := clientset.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
 	}
@@ -712,12 +712,6 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 	// Check if deployment has 1 ready replica (1 pod)
 	if deployment.Status.ReadyReplicas != 1 {
 		return fmt.Errorf("deployment %s/%s has %d ready replicas, expected 1", namespace, deploymentName, deployment.Status.ReadyReplicas)
-	}
-
-	// Create pod client
-	podClient, err := core.NewPodClient(kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to create pod client: %w", err)
 	}
 
 	// Check that bootstrap secrets are available
@@ -728,7 +722,9 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 
 	// Get pods for the deployment using the deployment's selector
 	labelSelector := metav1.FormatLabelSelector(deployment.Spec.Selector)
-	pods, err := podClient.ListByLabelSelector(ctx, namespace, labelSelector)
+	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to list pods for deployment %s/%s: %w", namespace, deploymentName, err)
 	}
@@ -740,7 +736,7 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 
 	// Check the pod is running and has 2/2 containers ready
 	pod := pods.Items[0]
-	if !podClient.IsRunning(ctx, &pod) {
+	if pod.Status.Phase != corev1.PodRunning {
 		return fmt.Errorf("pod %s/%s is not running (phase: %s)", namespace, pod.Name, pod.Status.Phase)
 	}
 
@@ -750,12 +746,21 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 	}
 
 	// Check all containers are ready
-	if !podClient.AllContainersReady(ctx, &pod) {
+	allReady := len(pod.Status.ContainerStatuses) == len(pod.Spec.Containers)
+	if allReady {
+		for _, status := range pod.Status.ContainerStatuses {
+			if !status.Ready {
+				allReady = false
+				break
+			}
+		}
+	}
+	if !allReady {
 		return fmt.Errorf("pod %s/%s does not have all containers ready (expected 2/2 containers ready)", namespace, pod.Name)
 	}
 
 	// Check that webhook-handler pods are ready in d8-system namespace
-	if err := checkWebhookHandlerPods(ctx, podClient, namespace); err != nil {
+	if err := checkWebhookHandlerPods(ctx, clientset, namespace); err != nil {
 		return fmt.Errorf("webhook-handler pods not ready: %w", err)
 	}
 
@@ -764,16 +769,16 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 
 // checkBootstrapSecrets verifies that both bootstrap secrets are available
 func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespace string) error {
-	secretClient, err := core.NewSecretClient(kubeconfig)
+	clientset, err := k8s.NewForConfig(kubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to create secret client: %w", err)
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
 	// Check for worker bootstrap secret
-	_, err = secretClient.Get(ctx, namespace, "manual-bootstrap-for-worker")
+	_, err = clientset.CoreV1().Secrets(namespace).Get(ctx, "manual-bootstrap-for-worker", metav1.GetOptions{})
 	if err != nil {
 		// List available secrets for debugging
-		secretList, listErr := secretClient.List(ctx, namespace)
+		secretList, listErr := clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
 		if listErr == nil {
 			availableNames := make([]string, 0, len(secretList.Items))
 			for _, s := range secretList.Items {
@@ -785,10 +790,10 @@ func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespa
 	}
 
 	// Check for master bootstrap secret
-	_, err = secretClient.Get(ctx, namespace, "manual-bootstrap-for-master")
+	_, err = clientset.CoreV1().Secrets(namespace).Get(ctx, "manual-bootstrap-for-master", metav1.GetOptions{})
 	if err != nil {
 		// List available secrets for debugging
-		secretList, listErr := secretClient.List(ctx, namespace)
+		secretList, listErr := clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
 		if listErr == nil {
 			availableNames := make([]string, 0, len(secretList.Items))
 			for _, s := range secretList.Items {
@@ -803,9 +808,9 @@ func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespa
 }
 
 // checkWebhookHandlerPods verifies that webhook-handler pods are running and ready in the namespace
-func checkWebhookHandlerPods(ctx context.Context, podClient *core.PodClient, namespace string) error {
+func checkWebhookHandlerPods(ctx context.Context, clientset *k8s.Clientset, namespace string) error {
 	// List all pods in the namespace
-	allPods, err := podClient.ListAll(ctx, namespace)
+	allPods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
 	}
@@ -820,7 +825,17 @@ func checkWebhookHandlerPods(ctx context.Context, podClient *core.PodClient, nam
 			webhookHandlerPods = append(webhookHandlerPods, pod.Name)
 
 			// Check if this webhook-handler pod is running and all containers are ready
-			if podClient.IsRunning(ctx, &pod) && podClient.AllContainersReady(ctx, &pod) {
+			isRunning := pod.Status.Phase == corev1.PodRunning
+			allReady := len(pod.Status.ContainerStatuses) == len(pod.Spec.Containers) && len(pod.Spec.Containers) > 0
+			if allReady {
+				for _, status := range pod.Status.ContainerStatuses {
+					if !status.Ready {
+						allReady = false
+						break
+					}
+				}
+			}
+			if isRunning && allReady {
 				readyWebhookHandlerCount++
 			}
 		}

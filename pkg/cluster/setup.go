@@ -31,11 +31,13 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
 	"github.com/deckhouse/storage-e2e/internal/logger"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
@@ -730,9 +732,9 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 		return fmt.Errorf("clusterDef cannot be nil")
 	}
 
-	nodeClient, err := core.NewNodeClient(kubeconfig)
+	clientset, err := k8s.NewForConfig(kubeconfig)
 	if err != nil {
-		return fmt.Errorf("failed to create node client: %w", err)
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
 	// Build expected node names list
@@ -776,13 +778,22 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 					errChan <- fmt.Errorf("timeout waiting for node %s to become Ready", name)
 					return
 				case <-ticker.C:
-					node, err := nodeClient.Get(waitCtx, name)
+					node, err := clientset.CoreV1().Nodes().Get(waitCtx, name, metav1.GetOptions{})
 					if err != nil {
 						// Node doesn't exist yet, continue waiting
 						continue
 					}
 
-					if nodeClient.IsReady(waitCtx, node) {
+					// Check if node is ready
+					isReady := false
+					for _, condition := range node.Status.Conditions {
+						if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+							isReady = true
+							break
+						}
+					}
+
+					if isReady {
 						mu.Lock()
 						logger.Success("Node %s is Ready", name)
 						mu.Unlock()

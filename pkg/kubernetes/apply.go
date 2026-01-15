@@ -22,14 +22,13 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/serializer/yaml"
 	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
-	
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ApplyClient handles applying YAML manifests to a Kubernetes cluster
@@ -62,19 +61,19 @@ func NewApplyClient(config *rest.Config) (*ApplyClient, error) {
 func (c *ApplyClient) ApplyYAML(ctx context.Context, yamlContent string, namespace string) error {
 	// Split YAML content by document separator
 	documents := splitYAMLDocuments(yamlContent)
-	
+
 	var errs []error
 	for i, doc := range documents {
 		doc = strings.TrimSpace(doc)
 		if doc == "" {
 			continue
 		}
-		
+
 		if err := c.applyDocument(ctx, doc, namespace); err != nil {
 			errs = append(errs, fmt.Errorf("document %d: %w", i+1, err))
 		}
 	}
-	
+
 	return errors.NewAggregate(errs)
 }
 
@@ -83,35 +82,35 @@ func (c *ApplyClient) applyDocument(ctx context.Context, yamlDoc string, default
 	// Decode YAML to unstructured object
 	decoder := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 	obj := &unstructured.Unstructured{}
-	
+
 	_, _, err := decoder.Decode([]byte(yamlDoc), nil, obj)
 	if err != nil {
 		return fmt.Errorf("failed to decode YAML: %w", err)
 	}
-	
+
 	// Set namespace if not specified in manifest
 	if obj.GetNamespace() == "" && defaultNamespace != "" {
 		obj.SetNamespace(defaultNamespace)
 	}
-	
+
 	// Get GVK
 	gvk := obj.GroupVersionKind()
 	if gvk.Empty() {
 		return fmt.Errorf("GroupVersionKind is empty for object: %s", obj.GetName())
 	}
-	
+
 	// Get REST mapping for the GVK
 	groupResources, err := restmapper.GetAPIGroupResources(c.discoveryClient)
 	if err != nil {
 		return fmt.Errorf("failed to get API group resources: %w", err)
 	}
-	
+
 	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
 	mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
 		return fmt.Errorf("failed to get REST mapping for %s: %w", gvk.String(), err)
 	}
-	
+
 	// Get dynamic resource interface
 	var dr dynamic.ResourceInterface
 	if mapping.Scope.Name() == "namespace" {
@@ -125,7 +124,7 @@ func (c *ApplyClient) applyDocument(ctx context.Context, yamlDoc string, default
 		// Cluster-scoped resource
 		dr = c.dynamicClient.Resource(mapping.Resource)
 	}
-	
+
 	// Try to get existing resource
 	existing, err := dr.Get(ctx, obj.GetName(), metav1.GetOptions{})
 	if err == nil {
@@ -142,7 +141,7 @@ func (c *ApplyClient) applyDocument(ctx context.Context, yamlDoc string, default
 			return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -151,19 +150,19 @@ func (c *ApplyClient) applyDocument(ctx context.Context, yamlDoc string, default
 func (c *ApplyClient) CreateYAML(ctx context.Context, yamlContent string, namespace string) error {
 	// Split YAML content by document separator
 	documents := splitYAMLDocuments(yamlContent)
-	
+
 	var errs []error
 	for i, doc := range documents {
 		doc = strings.TrimSpace(doc)
 		if doc == "" {
 			continue
 		}
-		
+
 		if err := c.createDocument(ctx, doc, namespace); err != nil {
 			errs = append(errs, fmt.Errorf("document %d: %w", i+1, err))
 		}
 	}
-	
+
 	return errors.NewAggregate(errs)
 }
 
@@ -172,35 +171,35 @@ func (c *ApplyClient) createDocument(ctx context.Context, yamlDoc string, defaul
 	// Decode YAML to unstructured object
 	decoder := yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 	obj := &unstructured.Unstructured{}
-	
+
 	_, _, err := decoder.Decode([]byte(yamlDoc), nil, obj)
 	if err != nil {
 		return fmt.Errorf("failed to decode YAML: %w", err)
 	}
-	
+
 	// Set namespace if not specified in manifest
 	if obj.GetNamespace() == "" && defaultNamespace != "" {
 		obj.SetNamespace(defaultNamespace)
 	}
-	
+
 	// Get GVK
 	gvk := obj.GroupVersionKind()
 	if gvk.Empty() {
 		return fmt.Errorf("GroupVersionKind is empty for object: %s", obj.GetName())
 	}
-	
+
 	// Get REST mapping for the GVK
 	groupResources, err := restmapper.GetAPIGroupResources(c.discoveryClient)
 	if err != nil {
 		return fmt.Errorf("failed to get API group resources: %w", err)
 	}
-	
+
 	mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
 	mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
 	if err != nil {
 		return fmt.Errorf("failed to get REST mapping for %s: %w", gvk.String(), err)
 	}
-	
+
 	// Get dynamic resource interface
 	var dr dynamic.ResourceInterface
 	if mapping.Scope.Name() == "namespace" {
@@ -214,13 +213,13 @@ func (c *ApplyClient) createDocument(ctx context.Context, yamlDoc string, defaul
 		// Cluster-scoped resource
 		dr = c.dynamicClient.Resource(mapping.Resource)
 	}
-	
+
 	// Create resource
 	_, err = dr.Create(ctx, obj, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 	}
-	
+
 	return nil
 }
 
@@ -228,7 +227,7 @@ func (c *ApplyClient) createDocument(ctx context.Context, yamlDoc string, defaul
 func splitYAMLDocuments(yamlContent string) []string {
 	// Split by document separator
 	docs := strings.Split(yamlContent, "\n---\n")
-	
+
 	// Clean up each document
 	var result []string
 	for _, doc := range docs {
@@ -237,6 +236,6 @@ func splitYAMLDocuments(yamlContent string) []string {
 			result = append(result, doc)
 		}
 	}
-	
+
 	return result
 }

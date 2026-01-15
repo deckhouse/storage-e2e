@@ -26,7 +26,6 @@ import (
 	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	k8sapply "github.com/deckhouse/storage-e2e/internal/kubernetes"
 	"github.com/deckhouse/storage-e2e/internal/logger"
 )
 
@@ -34,7 +33,7 @@ import (
 // The yamlContent can contain multiple YAML documents separated by "---"
 // namespace parameter is optional - if empty, uses namespace from manifest or "default"
 func ApplyYAMLManifest(ctx context.Context, kubeconfig *rest.Config, yamlContent string, namespace string) error {
-	applyClient, err := k8sapply.NewApplyClient(kubeconfig)
+	applyClient, err := NewApplyClient(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create apply client: %w", err)
 	}
@@ -62,7 +61,7 @@ func ApplyYAMLFile(ctx context.Context, kubeconfig *rest.Config, filePath string
 // CreateYAMLManifest creates resources from YAML manifest(s) in the test cluster
 // Unlike ApplyYAMLManifest, this will fail if resources already exist
 func CreateYAMLManifest(ctx context.Context, kubeconfig *rest.Config, yamlContent string, namespace string) error {
-	applyClient, err := k8sapply.NewApplyClient(kubeconfig)
+	applyClient, err := NewApplyClient(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create apply client: %w", err)
 	}

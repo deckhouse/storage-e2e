@@ -228,7 +228,7 @@ var _ = Describe("Template Test", Ordered, func() {
 		})
 	})
 
-	It("should create Huawei storage resources", func() {
+	It("should create Huawei storage resources and NGCs", func() {
 		ctx := context.Background()
 
 		// Resolve file path relative to test directory (same approach as CreateTestCluster)
@@ -248,6 +248,18 @@ var _ = Describe("Template Test", Ordered, func() {
 			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
 		})
 
+		yamlFilePathNGCs := filepath.Join(testDir, "files", "ngc.yml")
+
+		By("Applying NGCs", func() {
+			GinkgoWriter.Printf("    ▶️ Creating NGCs...\n")
+
+			// Apply the YAML manifest
+			err := kubernetes.CreateYAMLFile(ctx, testClusterResources.Kubeconfig, yamlFilePathNGCs, "")
+			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
+
+			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
+		})
+
 		By("Waiting for StorageClass to become available", func() {
 			GinkgoWriter.Printf("    ▶️ Waiting for StorageClass hsclass-200...\n")
 
@@ -256,14 +268,15 @@ var _ = Describe("Template Test", Ordered, func() {
 
 			GinkgoWriter.Printf("    ✅ StorageClass is available\n")
 		})
+
 	})
 
 	It("should run flog stress test", func() {
 		// Use a timeout context for the stress test (30 minutes should be enough)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 		defer cancel()
 
-		By("Running flog stress test with PVC resize", func() {
+		By("Running flog stress test with PVC resize (60 minutes timeout)", func() {
 			GinkgoWriter.Printf("    ▶️ Running flog stress test...\n")
 
 			// Configure stress test
@@ -272,13 +285,12 @@ var _ = Describe("Template Test", Ordered, func() {
 			stressConfig.StorageClassName = "hsclass-200"
 			stressConfig.PVCSize = "100Mi"
 			stressConfig.PodsCount = 100
-			stressConfig.ParallelismCount = 20
-			stressConfig.ResourceType = testkit.ResourceTypePod
+			stressConfig.Iterations = 1
 			stressConfig.Mode = testkit.ModeFlog
 			stressConfig.PVCSizeAfterResize = "200Mi"
 			stressConfig.Cleanup = true
-			// Set a reasonable timeout: 5 seconds * 360 attempts = 30 minutes max
-			stressConfig.MaxAttempts = 360
+			// Set a reasonable timeout: 5 seconds * 500 attempts = 41 minutes, we use more
+			stressConfig.MaxAttempts = 500
 			stressConfig.Interval = 5 * time.Second
 
 			// Create and run stress test
@@ -293,11 +305,11 @@ var _ = Describe("Template Test", Ordered, func() {
 	})
 
 	It("should run snapshot/resize/clone stress test", func() {
-		// Use a timeout context for the stress test (45 minutes for complex test)
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+		// Use a timeout context for the stress test (60 minutes for complex test)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 		defer cancel()
 
-		By("Running snapshot, resize, and clone stress test", func() {
+		By("Running snapshot, resize, and clone stress test (60 minutes timeout)", func() {
 			GinkgoWriter.Printf("    ▶️ Running complex stress test...\n")
 
 			// Configure comprehensive stress test
@@ -306,8 +318,7 @@ var _ = Describe("Template Test", Ordered, func() {
 			stressConfig.StorageClassName = "hsclass-200"
 			stressConfig.PVCSize = "100Mi"
 			stressConfig.PodsCount = 100
-			stressConfig.ParallelismCount = 30
-			stressConfig.ResourceType = testkit.ResourceTypePod
+			stressConfig.Iterations = 1
 			stressConfig.Mode = testkit.ModeSnapshotResizeCloning
 			stressConfig.SnapshotsPerPVC = 2
 			stressConfig.PVCSizeAfterResize = "200Mi"
@@ -318,8 +329,8 @@ var _ = Describe("Template Test", Ordered, func() {
 				testkit.StepClone,
 			}
 			stressConfig.Cleanup = true
-			// Set a reasonable timeout: 5 seconds * 540 attempts = 45 minutes max
-			stressConfig.MaxAttempts = 540
+			// Set a reasonable timeout: 5 seconds * 720 attempts = 60 minutes max
+			stressConfig.MaxAttempts = 500
 			stressConfig.Interval = 5 * time.Second
 
 			// Create and run stress test

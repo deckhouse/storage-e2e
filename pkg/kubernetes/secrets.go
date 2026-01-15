@@ -21,7 +21,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
 
@@ -32,19 +33,19 @@ import (
 // 3. Fuzzy match (ignoring common Unicode issues like non-breaking spaces)
 // Returns the actual secret name found (which may differ from the requested name due to Unicode issues)
 func FindSecretByName(ctx context.Context, kubeconfig *rest.Config, namespace, name string) (string, error) {
-	secretClient, err := core.NewSecretClient(kubeconfig)
+	clientset, err := kubernetes.NewForConfig(kubeconfig)
 	if err != nil {
-		return "", fmt.Errorf("failed to create secret client: %w", err)
+		return "", fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
 	// First try exact match
-	secret, err := secretClient.Get(ctx, namespace, name)
+	secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
 		return secret.Name, nil
 	}
 
 	// If exact match fails, list all secrets and try to find a match
-	secretList, err := secretClient.List(ctx, namespace)
+	secretList, err := clientset.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to list secrets: %w", err)
 	}
@@ -83,12 +84,23 @@ func GetSecretDataValue(ctx context.Context, kubeconfig *rest.Config, namespace,
 		return "", err
 	}
 
-	secretClient, err := core.NewSecretClient(kubeconfig)
+	clientset, err := kubernetes.NewForConfig(kubeconfig)
 	if err != nil {
-		return "", fmt.Errorf("failed to create secret client: %w", err)
+		return "", fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
-	return secretClient.GetDataValue(ctx, namespace, actualName, key)
+	secret, err := clientset.CoreV1().Secrets(namespace).Get(ctx, actualName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to get secret %s/%s: %w", namespace, actualName, err)
+	}
+
+	value, exists := secret.Data[key]
+	if !exists {
+		return "", fmt.Errorf("key %s not found in secret %s/%s", key, namespace, actualName)
+	}
+
+	// Kubernetes secret.Data is already decoded from base64
+	return string(value), nil
 }
 
 // normalizeSecretName normalizes a secret name by removing/replacing problematic Unicode characters
