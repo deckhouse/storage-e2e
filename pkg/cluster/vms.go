@@ -25,12 +25,12 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/internal/logger"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // VMResources tracks VM-related resources created for a test cluster

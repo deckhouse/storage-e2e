@@ -20,9 +20,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
+
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 )
 
 // CreateStaticNodeGroup creates a NodeGroup resource with Static nodeType

@@ -20,9 +20,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 )
 
 // VirtualDiskClient provides operations on VirtualDisk resources

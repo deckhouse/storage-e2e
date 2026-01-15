@@ -127,7 +127,7 @@ func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePo
 }
 
 // EstablishSSHTunnel establishes an SSH tunnel with port forwarding from remote node to local port on the client
-// It uses the exact port specified in remotePort and fails immediately if the port is busy
+// It automatically finds a free local port to avoid conflicts when running parallel tests
 // Returns the tunnel info, local port and error if the tunnel fails to start
 func EstablishSSHTunnel(ctx context.Context, sshClient SSHClient, remotePort string) (*TunnelInfo, error) {
 	// Parse remote port to integer
@@ -136,18 +136,37 @@ func EstablishSSHTunnel(ctx context.Context, sshClient SSHClient, remotePort str
 		return nil, fmt.Errorf("invalid remote port %s: %w", remotePort, err)
 	}
 
+	// Find a free local port automatically
+	localPort, err := findFreePort()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find free local port: %w", err)
+	}
+	localPortStr := strconv.Itoa(localPort)
+
 	// Start the SSH tunnel with context
 	// --== NOTE! If sshClient was created with NewClientWithJumpHost, it already handles jump host routing ==--
-	stopFunc, err := sshClient.StartTunnel(ctx, remotePort, remotePort)
+	stopFunc, err := sshClient.StartTunnel(ctx, localPortStr, remotePort)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start SSH tunnel on port %d (port may be busy): %w", remotePortInt, err)
+		return nil, fmt.Errorf("failed to start SSH tunnel (local:%d -> remote:%d): %w", localPort, remotePortInt, err)
 	}
 
 	tunnelInfo := &TunnelInfo{
-		LocalPort:  remotePortInt,
+		LocalPort:  localPort,
 		RemotePort: remotePortInt,
 		StopFunc:   stopFunc,
 	}
 
 	return tunnelInfo, nil
+}
+
+// findFreePort finds an available TCP port on localhost
+func findFreePort() (int, error) {
+	listener, err := netstd.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+
+	addr := listener.Addr().(*netstd.TCPAddr)
+	return addr.Port, nil
 }

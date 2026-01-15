@@ -168,10 +168,35 @@ type TestClusterResources struct {
     SetupSSHClient     ssh.SSHClient
 }
 
-// Main functions
-func CreateTestCluster(ctx context.Context, yamlConfigFilename string) (*TestClusterResources, error)
+// Main functions for creating new clusters
+func CreateTestCluster(ctx context.Context, configPath string) (*TestClusterResources, error)
+func WaitForTestClusterReady(ctx context.Context, resources *TestClusterResources) error
 func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) error
+
+// Functions for using existing clusters
+func UseExistingCluster(ctx context.Context) (*TestClusterResources, error)
+func CleanupExistingCluster(ctx context.Context, resources *TestClusterResources) error
+
+// Cluster locking functions (for exclusive access in alwaysUseExisting mode)
+func AcquireClusterLock(ctx context.Context, kubeconfig *rest.Config, testName string) error
+func ReleaseClusterLock(ctx context.Context, kubeconfig *rest.Config) error
+func IsClusterLocked(ctx context.Context, kubeconfig *rest.Config) (bool, error)
+func GetClusterLockInfo(ctx context.Context, kubeconfig *rest.Config) (*ClusterLockInfo, error)
 ```
+
+#### Cluster Locking Mechanism
+
+When using the `alwaysUseExisting` mode, the framework implements a cluster locking mechanism to ensure exclusive access:
+
+- **Lock Location**: A ConfigMap named `e2e-cluster-lock` is created in the `default` namespace
+- **Lock Information**: The ConfigMap contains:
+  - `test-name`: Name of the test holding the lock
+  - `locked-at`: Timestamp when the lock was acquired
+  - `locked-by`: Username of the person running the test
+  - `hostname`: Hostname of the machine running the test
+  - `pid`: Process ID of the test process
+- **Automatic Cleanup**: The lock is automatically released when `CleanupExistingCluster` is called
+- **Error Handling**: If a test tries to acquire a lock on an already-locked cluster, it receives a detailed error message with lock information
 
 #### Configuration Management
 
@@ -546,9 +571,32 @@ cd tests/
 cd pvc-operations/
 vi test_exports  # Edit with your credentials
 
-# Run the test
+# Run the test with new cluster creation
+export TEST_CLUSTER_CREATE_MODE=alwaysCreateNew
 source test_exports
 go test -v -timeout=60m
+
+# Or run using an existing cluster (faster, no VMs created)
+export TEST_CLUSTER_CREATE_MODE=alwaysUseExisting
+source test_exports
+go test -v -timeout=60m
+```
+
+### 6.1.1 Using Existing Cluster Mode
+
+When using `TEST_CLUSTER_CREATE_MODE=alwaysUseExisting`:
+
+1. The test connects to the cluster specified by `SSH_HOST` and `SSH_USER`
+2. A cluster lock (ConfigMap `e2e-cluster-lock` in `default` namespace) is acquired
+3. If the cluster is already locked by another test, the test fails with lock info
+4. After test completion, the lock is automatically released
+
+```bash
+# Check if a cluster is locked (from your machine)
+kubectl get configmap e2e-cluster-lock -n default -o yaml
+
+# Force release a stale lock (use with caution!)
+kubectl delete configmap e2e-cluster-lock -n default
 ```
 
 ### 6.2 Test Implementation Example
@@ -624,12 +672,12 @@ logger.Error("Failed to create resource: %v", err)
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `TEST_CLUSTER_CREATE_MODE` | Cluster creation mode | `alwaysCreateNew` |
+| `TEST_CLUSTER_CREATE_MODE` | Cluster creation mode: `alwaysCreateNew` (creates VMs) or `alwaysUseExisting` (uses existing cluster with lock) | `alwaysCreateNew` |
 | `DKP_LICENSE_KEY` | Deckhouse license key | `X7Yig...` |
 | `REGISTRY_DOCKER_CFG` | Docker registry credentials | `eyJhd...` |
-| `SSH_USER` | SSH username for base cluster | `tfadm` |
-| `SSH_HOST` | SSH host for base cluster | `172.17.1.67` |
-| `TEST_CLUSTER_STORAGE_CLASS` | Storage class for test VMs | `lsc-thick` |
+| `SSH_USER` | SSH username for base/target cluster | `tfadm` |
+| `SSH_HOST` | SSH host for base/target cluster | `172.17.1.67` |
+| `TEST_CLUSTER_STORAGE_CLASS` | Storage class for test VMs (required for `alwaysCreateNew` mode) | `lsc-thick` |
 
 ### Optional Variables (with defaults)
 
@@ -670,7 +718,15 @@ logger.Error("Failed to create resource: %v", err)
 - Bootstrap node always cleaned up
 - Test VMs cleaned up only if cleanup enabled
 
-### 8.4 Logging
+### 8.4 Using Existing Cluster Mode
+
+- Use `TEST_CLUSTER_CREATE_MODE=alwaysUseExisting` for faster test iterations
+- The cluster lock prevents concurrent test execution on the same cluster
+- If a test crashes, manually delete the lock ConfigMap: `kubectl delete configmap e2e-cluster-lock -n default`
+- Existing cluster mode is ideal for debugging and iterative development
+- New cluster mode (`alwaysCreateNew`) is recommended for CI/CD to ensure clean state
+
+### 8.5 Logging
 
 - Use `logger.Step()` for major operations
 - Use `logger.Debug()` for detailed information
@@ -683,7 +739,7 @@ logger.Error("Failed to create resource: %v", err)
 
 ### 9.1 Potential Enhancements
 
-- [ ] Support for existing cluster reuse (`alwaysUseExisting` mode)
+- [ ] Support for existing cluster reuse (`alwaysUseExisting` mode) - partialy implemented
 - [ ] Parallel test execution support
 - [ ] Test result reporting and metrics
 - [ ] Integration with CI/CD systems
