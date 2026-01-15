@@ -80,3 +80,23 @@ func (c *PodClient) AllContainersReady(ctx context.Context, pod *corev1.Pod) boo
 	}
 	return true
 }
+
+// Create creates a new pod
+func (c *PodClient) Create(ctx context.Context, namespace string, pod *corev1.Pod) (*corev1.Pod, error) {
+	created, err := c.client.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create pod %s/%s: %w", namespace, pod.Name, err)
+	}
+	return created, nil
+}
+
+// DeleteByLabelSelector deletes all pods matching the label selector
+func (c *PodClient) DeleteByLabelSelector(ctx context.Context, namespace, labelSelector string) error {
+	err := c.client.CoreV1().Pods(namespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete pods in namespace %s with selector %s: %w", namespace, labelSelector, err)
+	}
+	return nil
+}

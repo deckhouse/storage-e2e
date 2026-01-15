@@ -37,6 +37,7 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
 	"github.com/deckhouse/storage-e2e/internal/logger"
+	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
 
 // OSInfo represents detected operating system information
@@ -574,12 +575,12 @@ func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef 
 	}
 
 	// Step 1: Get bootstrap scripts from secrets
-	workerBootstrapScript, err := GetSecretDataValue(ctx, kubeconfig, "d8-cloud-instance-manager", "manual-bootstrap-for-worker", "bootstrap.sh")
+	workerBootstrapScript, err := kubernetes.GetSecretDataValue(ctx, kubeconfig, "d8-cloud-instance-manager", "manual-bootstrap-for-worker", "bootstrap.sh")
 	if err != nil {
 		return fmt.Errorf("failed to get worker bootstrap script: %w", err)
 	}
 
-	masterBootstrapScript, err := GetSecretDataValue(ctx, kubeconfig, "d8-cloud-instance-manager", "manual-bootstrap-for-master", "bootstrap.sh")
+	masterBootstrapScript, err := kubernetes.GetSecretDataValue(ctx, kubeconfig, "d8-cloud-instance-manager", "manual-bootstrap-for-master", "bootstrap.sh")
 	if err != nil {
 		return fmt.Errorf("failed to get master bootstrap script: %w", err)
 	}
@@ -714,39 +715,6 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 	}
 
 	return nil
-}
-
-// WaitForNodeReady waits for a node to become Ready
-func WaitForNodeReady(ctx context.Context, kubeconfig *rest.Config, nodeName string, timeout time.Duration) error {
-	nodeClient, err := core.NewNodeClient(kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to create node client: %w", err)
-	}
-
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			if time.Now().After(deadline) {
-				return fmt.Errorf("timeout waiting for node %s to be ready", nodeName)
-			}
-
-			node, err := nodeClient.Get(ctx, nodeName)
-			if err != nil {
-				// Node doesn't exist yet, continue waiting
-				continue
-			}
-
-			if nodeClient.IsReady(ctx, node) {
-				return nil
-			}
-		}
-	}
 }
 
 // WaitForAllNodesReady waits for all expected nodes to become Ready in parallel

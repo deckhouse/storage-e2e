@@ -26,12 +26,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/apps"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/core"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/storage"
+	"github.com/deckhouse/storage-e2e/internal/logger"
 )
 
 // TestMode represents the mode of stress test
@@ -113,20 +113,20 @@ func DefaultConfig() *Config {
 
 // StressTestRunner runs stress tests
 type StressTestRunner struct {
-	config         *Config
-	kubeClient     kubernetes.Interface
-	pvcClient      *storage.PVCClient
-	snapshotClient *storage.VolumeSnapshotClient
-	podClient      *core.PodClient
-	deployClient   *apps.DeploymentClient
-	restConfig     *rest.Config
+	config          *Config
+	namespaceClient *core.NamespaceClient
+	pvcClient       *storage.PVCClient
+	snapshotClient  *storage.VolumeSnapshotClient
+	podClient       *core.PodClient
+	deployClient    *apps.DeploymentClient
+	restConfig      *rest.Config
 }
 
 // NewStressTestRunner creates a new stress test runner
 func NewStressTestRunner(config *Config, restConfig *rest.Config) (*StressTestRunner, error) {
-	kubeClient, err := kubernetes.NewForConfig(restConfig)
+	namespaceClient, err := core.NewNamespaceClient(restConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+		return nil, fmt.Errorf("failed to create namespace client: %w", err)
 	}
 
 	pvcClient, err := storage.NewPVCClient(restConfig)
@@ -150,13 +150,13 @@ func NewStressTestRunner(config *Config, restConfig *rest.Config) (*StressTestRu
 	}
 
 	return &StressTestRunner{
-		config:         config,
-		kubeClient:     kubeClient,
-		pvcClient:      pvcClient,
-		snapshotClient: snapshotClient,
-		podClient:      podClient,
-		deployClient:   deployClient,
-		restConfig:     restConfig,
+		config:          config,
+		namespaceClient: namespaceClient,
+		pvcClient:       pvcClient,
+		snapshotClient:  snapshotClient,
+		podClient:       podClient,
+		deployClient:    deployClient,
+		restConfig:      restConfig,
 	}, nil
 }
 
@@ -241,22 +241,20 @@ func (r *StressTestRunner) Run(ctx context.Context) error {
 	}
 
 	// Ensure namespace exists
-	nsClient, err := core.NewNamespaceClient(r.restConfig)
+	_, err := r.namespaceClient.Get(ctx, r.config.Namespace)
 	if err != nil {
-		return fmt.Errorf("failed to create namespace client: %w", err)
-	}
-	_, err = nsClient.Get(ctx, r.config.Namespace)
-	if err != nil {
-		_, err = nsClient.Create(ctx, r.config.Namespace)
+		_, err = r.namespaceClient.Create(ctx, r.config.Namespace)
 		if err != nil {
 			return fmt.Errorf("failed to create namespace: %w", err)
 		}
+		logger.Debug("Created namespace %s", r.config.Namespace)
 	}
 
 	// Label namespace
-	_, err = r.kubeClient.CoreV1().Namespaces().Patch(ctx, r.config.Namespace, types.JSONPatchType, []byte(`[{"op": "add", "path": "/metadata/labels/load-test", "value": "true"}]`), metav1.PatchOptions{})
+	err = r.namespaceClient.Patch(ctx, r.config.Namespace, types.JSONPatchType, []byte(`[{"op": "add", "path": "/metadata/labels/load-test", "value": "true"}]`))
 	if err != nil {
 		// Ignore if label already exists
+		logger.Debug("Failed to patch namespace label (may already exist): %v", err)
 	}
 
 	switch r.config.Mode {
@@ -305,6 +303,7 @@ func (r *StressTestRunner) createOriginalPodAndPVC(ctx context.Context, index in
 	if err != nil {
 		return fmt.Errorf("failed to create PVC %s: %w", pvcName, err)
 	}
+	logger.Debug("Created PVC %s/%s", r.config.Namespace, pvcName)
 
 	// Create Pod with data preloader and writer
 	pod := &corev1.Pod{
@@ -429,11 +428,12 @@ done`,
 		},
 	}
 
-	_, err = r.kubeClient.CoreV1().Pods(r.config.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	_, err = r.podClient.Create(ctx, r.config.Namespace, pod)
 	if err != nil {
 		return fmt.Errorf("failed to create pod %s: %w", podName, err)
 	}
 
+	logger.Debug("Created pod %s/%s", r.config.Namespace, podName)
 	return nil
 }
 
@@ -466,6 +466,7 @@ func (r *StressTestRunner) createFlogPodAndPVC(ctx context.Context, index int, f
 	if err != nil {
 		return fmt.Errorf("failed to create PVC %s: %w", pvcName, err)
 	}
+	logger.Debug("Created PVC %s/%s", r.config.Namespace, pvcName)
 
 	firstStartStr := "false"
 	if firstStart {
@@ -570,45 +571,81 @@ done`,
 		},
 	}
 
-	_, err = r.kubeClient.CoreV1().Pods(r.config.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	_, err = r.podClient.Create(ctx, r.config.Namespace, pod)
 	if err != nil {
 		return fmt.Errorf("failed to create pod %s: %w", podName, err)
 	}
 
+	logger.Debug("Created pod %s/%s", r.config.Namespace, podName)
 	return nil
 }
 
 // waitForPodsStatus waits for pods to reach a specific status
 func (r *StressTestRunner) waitForPodsStatus(ctx context.Context, labelSelector, status string, expectedCount int) error {
 	attempt := 0
+	lastLogTime := time.Now()
+
 	for {
+		// Check context cancellation first
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for pods status %s: %w", status, ctx.Err())
+		default:
+		}
+
 		pods, err := r.podClient.ListByLabelSelector(ctx, r.config.Namespace, labelSelector)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to list pods: %w", err)
 		}
 
 		readyCount := 0
+		failedPods := []string{}
+		pendingPods := []string{}
+
 		for _, pod := range pods.Items {
-			if string(pod.Status.Phase) == status || (status == "Completed" && pod.Status.Phase == corev1.PodSucceeded) {
+			podPhase := string(pod.Status.Phase)
+			if podPhase == status || (status == "Completed" && pod.Status.Phase == corev1.PodSucceeded) {
 				readyCount++
+			} else if podPhase == "Failed" || podPhase == "Error" {
+				failedPods = append(failedPods, fmt.Sprintf("%s (reason: %s)", pod.Name, pod.Status.Reason))
+			} else if podPhase == "Pending" {
+				pendingPods = append(pendingPods, pod.Name)
 			}
+		}
+
+		// Log progress every 30 seconds
+		if time.Since(lastLogTime) >= 30*time.Second {
+			logger.Progress("Waiting for pods: %d/%d in status %s (attempt %d)", readyCount, expectedCount, status, attempt)
+			if len(failedPods) > 0 {
+				logger.Warn("Failed pods: %v", failedPods)
+			}
+			if len(pendingPods) > 0 && len(pendingPods) <= 10 {
+				logger.Debug("Pending pods: %v", pendingPods)
+			} else if len(pendingPods) > 10 {
+				logger.Debug("Pending pods: %d pods still pending", len(pendingPods))
+			}
+			lastLogTime = time.Now()
 		}
 
 		if readyCount >= expectedCount {
 			return nil
 		}
 
-		if readyCount > 0 {
-			attempt++
+		// Check for failures - if too many pods failed, return error early
+		if len(failedPods) > 0 && len(failedPods) > expectedCount/10 {
+			return fmt.Errorf("too many pods failed (%d failed): %v", len(failedPods), failedPods)
 		}
 
+		attempt++
+
 		if r.config.MaxAttempts > 0 && attempt >= r.config.MaxAttempts {
-			return fmt.Errorf("timeout waiting for pods status %s: %d/%d after %d attempts", status, readyCount, expectedCount, r.config.MaxAttempts)
+			return fmt.Errorf("timeout waiting for pods status %s: %d/%d ready after %d attempts (failed: %d, pending: %d)",
+				status, readyCount, expectedCount, r.config.MaxAttempts, len(failedPods), len(pendingPods))
 		}
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context cancelled while waiting for pods status %s: %w", status, ctx.Err())
 		case <-time.After(r.config.Interval):
 		}
 	}
@@ -947,6 +984,7 @@ func (r *StressTestRunner) createRestorePodAndPVC(ctx context.Context, snapshotN
 	if err != nil {
 		return fmt.Errorf("failed to create restore PVC %s: %w", pvcName, err)
 	}
+	logger.Debug("Created restore PVC %s/%s", r.config.Namespace, pvcName)
 
 	// Create Pod
 	pod := &corev1.Pod{
@@ -1011,11 +1049,12 @@ echo "Data check passed (checked: $checked, skipped: $skipped)"`,
 		},
 	}
 
-	_, err = r.kubeClient.CoreV1().Pods(r.config.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	_, err = r.podClient.Create(ctx, r.config.Namespace, pod)
 	if err != nil {
 		return fmt.Errorf("failed to create restore pod %s: %w", podName, err)
 	}
 
+	logger.Debug("Created restore pod %s/%s", r.config.Namespace, podName)
 	return nil
 }
 
@@ -1051,6 +1090,7 @@ func (r *StressTestRunner) createClonePodAndPVC(ctx context.Context, originalInd
 	if err != nil {
 		return fmt.Errorf("failed to create clone PVC %s: %w", pvcName, err)
 	}
+	logger.Debug("Created clone PVC %s/%s", r.config.Namespace, pvcName)
 
 	// Create Pod (same as restore pod)
 	pod := &corev1.Pod{
@@ -1115,11 +1155,12 @@ echo "Data check passed (checked: $checked, skipped: $skipped)"`,
 		},
 	}
 
-	_, err = r.kubeClient.CoreV1().Pods(r.config.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	_, err = r.podClient.Create(ctx, r.config.Namespace, pod)
 	if err != nil {
 		return fmt.Errorf("failed to create clone pod %s: %w", podName, err)
 	}
 
+	logger.Debug("Created clone pod %s/%s", r.config.Namespace, podName)
 	return nil
 }
 
@@ -1190,20 +1231,19 @@ done`,
 		},
 	}
 
-	_, err := r.kubeClient.CoreV1().Pods(r.config.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	_, err := r.podClient.Create(ctx, r.config.Namespace, pod)
 	if err != nil {
 		return fmt.Errorf("failed to create flog pod %s: %w", podName, err)
 	}
 
+	logger.Debug("Created flog pod %s/%s", r.config.Namespace, podName)
 	return nil
 }
 
 // cleanup cleans up all resources created during the test
 func (r *StressTestRunner) cleanup(ctx context.Context) error {
 	// Delete pods
-	if err := r.kubeClient.CoreV1().Pods(r.config.Namespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{
-		LabelSelector: "load-test=true",
-	}); err != nil {
+	if err := r.podClient.DeleteByLabelSelector(ctx, r.config.Namespace, "load-test=true"); err != nil {
 		return fmt.Errorf("failed to delete pods: %w", err)
 	}
 
@@ -1224,9 +1264,10 @@ func (r *StressTestRunner) cleanup(ctx context.Context) error {
 
 	// Delete namespace if requested
 	if r.config.DeleteNamespace && r.config.Namespace != "default" {
-		if err := r.kubeClient.CoreV1().Namespaces().Delete(ctx, r.config.Namespace, metav1.DeleteOptions{}); err != nil {
+		if err := r.namespaceClient.Delete(ctx, r.config.Namespace); err != nil {
 			return fmt.Errorf("failed to delete namespace: %w", err)
 		}
+		logger.Debug("Deleted namespace %s", r.config.Namespace)
 	}
 
 	return nil

@@ -171,7 +171,7 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to get virtualization module: %w", err)
 	}
-	if module.Status.Phase != "Ready" && module.Status.Phase != "Reconciling" { // TODO: Remove Reconciling from here - it's just for storage san stand test
+	if module.Status.Phase != "Ready" {
 		baseClusterResources.SSHClient.Close()
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("virtualization module is not Ready (phase: %s)", module.Status.Phase)
@@ -395,7 +395,7 @@ func CreateTestCluster(
 	logger.Step(14, "Creating NodeGroup for workers")
 	// Step 14: Create NodeGroup for workers
 	nodegroupCtx, cancel := context.WithTimeout(ctx, config.NodeGroupTimeout)
-	err = CreateStaticNodeGroup(nodegroupCtx, testClusterResources.Kubeconfig, "worker")
+	err = kubernetes.CreateStaticNodeGroup(nodegroupCtx, testClusterResources.Kubeconfig, "worker")
 	cancel()
 	if err != nil {
 		testClusterResources.SSHClient.Close()
@@ -493,7 +493,7 @@ func CreateTestCluster(
 	logger.Step(17, "Enabling and configuring modules")
 	// Step 17: Enable and configure modules
 	modulesCtx, cancel := context.WithTimeout(ctx, config.ModuleConfigTimeout)
-	err = EnableAndConfigureModules(modulesCtx, testClusterResources.Kubeconfig, clusterDefinition, testClusterResources.SSHClient)
+	err = kubernetes.EnableAndConfigureModules(modulesCtx, testClusterResources.Kubeconfig, clusterDefinition, testClusterResources.SSHClient)
 	cancel()
 	if err != nil {
 		testClusterResources.SSHClient.Close()
@@ -530,7 +530,7 @@ func WaitForTestClusterReady(ctx context.Context, resources *TestClusterResource
 	}
 
 	logger.Info("Waiting for all modules to become Ready (this may take up to %v)", config.ModuleDeployTimeout)
-	err := WaitForModulesReady(ctx, resources.Kubeconfig, resources.ClusterDefinition, config.ModuleDeployTimeout)
+	err := kubernetes.WaitForModulesReady(ctx, resources.Kubeconfig, resources.ClusterDefinition, config.ModuleDeployTimeout)
 	if err != nil {
 		logger.Error("Failed to wait for modules to be ready: %v", err)
 		return err

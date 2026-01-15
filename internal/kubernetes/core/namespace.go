@@ -22,6 +22,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -61,4 +62,22 @@ func (c *NamespaceClient) Create(ctx context.Context, name string) (*corev1.Name
 		return nil, fmt.Errorf("failed to create namespace %s: %w", name, err)
 	}
 	return created, nil
+}
+
+// Patch patches a namespace with JSON patch
+func (c *NamespaceClient) Patch(ctx context.Context, name string, patchType types.PatchType, patchData []byte) error {
+	_, err := c.client.CoreV1().Namespaces().Patch(ctx, name, patchType, patchData, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to patch namespace %s: %w", name, err)
+	}
+	return nil
+}
+
+// Delete deletes a namespace
+func (c *NamespaceClient) Delete(ctx context.Context, name string) error {
+	err := c.client.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to delete namespace %s: %w", name, err)
+	}
+	return nil
 }
