@@ -43,5 +43,4 @@ Stress tests for the CSI Huawei storage driver. This test suite:
 
 Designed to validate CSI Huawei driver stability under high load with concurrent PVC operations, snapshots, and clones.
 
-
-
+Run the test: `go test -timeout=120m -v ./tests/csi-huawei-stress-tests -count=1`
