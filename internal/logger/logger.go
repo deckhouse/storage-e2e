@@ -43,10 +43,15 @@ func Initialize() error {
 	handlers := make([]slog.Handler, 0, 2)
 
 	// Always add console handler for stdout
+	// Set timestamp format based on LOG_TIMESTAMPS_ENABLED environment variable
+	timeFormat := ""
+	if config.LogTimetampsEnabled == "true" {
+		timeFormat = "15:04:05" // HH:MM:SS format for console
+	}
 	consoleHandler := NewConsoleHandler(os.Stdout, &ConsoleHandlerOptions{
 		Level:      level,
 		UseColors:  true,
-		TimeFormat: "", // No timestamp for console (cleaner output)
+		TimeFormat: timeFormat,
 	})
 	handlers = append(handlers, consoleHandler)
 

@@ -69,6 +69,12 @@ func (h *ConsoleHandler) Handle(_ context.Context, r slog.Record) error {
 
 	var buf []byte
 
+	// Add timestamp if TimeFormat is specified
+	if h.opts.TimeFormat != "" {
+		timestamp := r.Time.Format(h.opts.TimeFormat)
+		buf = append(buf, fmt.Sprintf("[%s] ", timestamp)...)
+	}
+
 	// Add level indicator with optional color
 	if h.opts.UseColors {
 		buf = append(buf, h.colorizeLevel(r.Level)...)

@@ -95,6 +95,9 @@ var (
 	// LogFilePath specifies the path to the log file. If not set or empty, logs only to console.
 	// If set, logs to both console and the specified file.
 	LogFilePath = os.Getenv("LOG_FILE_PATH")
+
+	LogTimetampsEnabled             = os.Getenv("LOG_TIMESTAMPS_ENABLED")
+	LogTimetampsEnabledDefaultValue = "true"
 )
 
 func ValidateEnvironment() error {
@@ -177,6 +180,16 @@ func ValidateEnvironment() error {
 		return fmt.Errorf("LOG_LEVEL has invalid value '%s'. "+
 			"Must be either '%s' or '%s' or '%s' or '%s'",
 			LogLevel, LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError)
+	}
+
+	if LogTimetampsEnabled == "" {
+		LogTimetampsEnabled = LogTimetampsEnabledDefaultValue
+	}
+
+	if LogTimetampsEnabled != "true" && LogTimetampsEnabled != "false" {
+		return fmt.Errorf("LOG_TIMESTAMPS_ENABLED has invalid value '%s'. "+
+			"Must be either '%s' or '%s'",
+			LogTimetampsEnabled, "true", "false")
 	}
 
 	return nil
