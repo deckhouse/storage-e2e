@@ -3,53 +3,47 @@ clusterDefinition:
   masters: # Master nodes configuration
     - hostname: "master-1"
       hostType: "vm"
-      role: "master"
       osType: "Ubuntu 22.04 6.2.0-39-generic" # See internal/config/images.go
-      cpu: 4
+      cpu: 8
       coreFraction: 50
       ram: 8
-      diskSize: 30
-    - hostname: "master-2"
+      diskSize: 60
+  workers: # Worker nodes configuration // TODO implement logic allowing to deploy different number of workes and masters with the same config.
+    - hostname: "worker-1"
       hostType: "vm"
-      role: "master"
+      osType: "RedOS 8.0 6.6.26-1.red80.x86_64" # See internal/config/images.go
+      cpu: 4
+      coreFraction: 50
+      ram: 6
+      diskSize: 50
+    - hostname: "worker-2"
+      hostType: "vm"
+      osType: "RedOS 7.3.6 5.15.78-2.el7.3.x86_64" # See internal/config/images.go
+      cpu: 4
+      coreFraction: 50
+      ram: 6
+      diskSize: 50
+    - hostname: "worker-3"
+      hostType: "vm"
+      osType: "AltLinux Server 10.4" # See internal/config/images.go
+      cpu: 4
+      coreFraction: 50
+      ram: 6
+      diskSize: 50
+    - hostname: "worker-4"
+      hostType: "vm"
       osType: "AltLinux Server 11" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
       ram: 8
-      diskSize: 30
-    - hostname: "master-3"
+      diskSize: 50
+    - hostname: "worker-5"
       hostType: "vm"
-      role: "master"
-      osType: "Debian 12" # See internal/config/images.go
+      osType: "Ubuntu 24.04 6.8.0-53-generic" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
       ram: 8
-      diskSize: 30
-  workers: # Worker nodes configuration // TODO implement logic allowing to deploy different number of workes and masters with the same config.
-    - hostname: "worker-1"
-      hostType: "vm"
-      role: "worker"
-      osType: "RedOS 8.0 6.6.26-1.red80.x86_64" # See internal/config/images.go
-      cpu: 2
-      coreFraction: 50
-      ram: 6
-      diskSize: 30
-    - hostname: "worker-2"
-      hostType: "vm"
-      role: "worker"
-      osType: "RedOS 7.3.6 5.15.78-2.el7.3.x86_64" # See internal/config/images.go
-      cpu: 2
-      coreFraction: 50
-      ram: 6
-      diskSize: 30
-    - hostname: "worker-3"
-      hostType: "vm"
-      role: "worker"
-      osType: "AltLinux Server 10.4" # See internal/config/images.go
-      cpu: 2
-      coreFraction: 50
-      ram: 6
-      diskSize: 30
+      diskSize: 50
   # DKP parameters
   dkpParameters:
     kubernetesVersion: "Automatic"
@@ -62,22 +56,18 @@ clusterDefinition:
       - name: "snapshot-controller" # TODO add MPO
         version: 1
         enabled: true
-        modulePullOverride: "main" # imageTag for ModulePullOverride. Main is default value, used if not specified.
+        modulePullOverride: "main" # imageTag for ModulePullOverride. Main is default value, used if not specified. Created always when rehistryRepo starts with dev-
         dependencies: []
       - name: "sds-local-volume"
         version: 1
         enabled: true
         dependencies:
           - "snapshot-controller"
+          - "sds-node-configurator"
       - name: "sds-node-configurator"
         version: 1
         enabled: true
         settings:
           enableThinProvisioning: true
-        dependencies:
-          - "sds-local-volume"
-      # - name: "sds-replicated-volume"
-      #   version: 1
-      #   enabled: true
-      #   dependencies:
-      #     - "sds-node-configurator"
+        dependencies: []
+

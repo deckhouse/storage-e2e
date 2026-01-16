@@ -608,7 +608,7 @@ func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef 
 			wg.Add(1)
 			go func(node config.ClusterNode) {
 				defer wg.Done()
-				if err := addNodeToCluster(ctx, node, masterBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath, &mu); err != nil {
+				if err := addNodeToCluster(ctx, node, masterBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath, true, &mu); err != nil {
 					errChan <- fmt.Errorf("failed to add master node %s: %w", node.Hostname, err)
 				}
 			}(clusterDef.Masters[i])
@@ -621,7 +621,7 @@ func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef 
 			wg.Add(1)
 			go func(node config.ClusterNode) {
 				defer wg.Done()
-				if err := addNodeToCluster(ctx, node, workerBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath, &mu); err != nil {
+				if err := addNodeToCluster(ctx, node, workerBootstrapScript, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath, false, &mu); err != nil {
 					errChan <- fmt.Errorf("failed to add worker node %s: %w", node.Hostname, err)
 				}
 			}(workerNode)
@@ -641,7 +641,8 @@ func AddNodesToCluster(ctx context.Context, kubeconfig *rest.Config, clusterDef 
 
 // addNodeToCluster adds a single node to the cluster by running the bootstrap script
 // mu parameter is optional - pass nil for sequential execution, or a mutex for thread-safe printing in parallel execution
-func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScript string, clusterDef *config.ClusterDefinition, baseSSHUser, baseSSHHost, sshKeyPath string, mu *sync.Mutex) error {
+// isMaster indicates whether the node is a master node (true) or worker node (false)
+func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScript string, clusterDef *config.ClusterDefinition, baseSSHUser, baseSSHHost, sshKeyPath string, isMaster bool, mu *sync.Mutex) error {
 	// Get node IP address from cluster definition
 	nodeIP, err := GetNodeIPAddress(clusterDef, node.Hostname)
 	if err != nil {
@@ -650,7 +651,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 
 	// Log start of node addition
 	nodeType := "worker"
-	if node.Role == config.ClusterRoleMaster {
+	if isMaster {
 		nodeType = "master"
 	}
 
@@ -688,35 +689,80 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 		mu.Unlock()
 	}
 
-	// Run bootstrap script as root
+	// Run bootstrap script as root with exponential retry
 	// Note: The bootstrap script from secret is already decoded (Kubernetes API returns decoded data)
+	// Retry logic handles temporary failures like proxy pod restarts (HTTP 401, connection errors, etc.)
 	cmd := fmt.Sprintf("sudo bash << 'BOOTSTRAP_EOF'\n%s\nBOOTSTRAP_EOF", bootstrapScript)
 
-	output, err := sshClient.Exec(ctx, cmd)
-	if err != nil {
+	const maxRetries = 5
+	var output string
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		output, lastErr = sshClient.Exec(ctx, cmd)
+
+		if lastErr == nil {
+			// Success - log and return
+			if mu != nil {
+				mu.Lock()
+			}
+			if attempt > 1 {
+				logger.Success("Bootstrap script completed successfully on node %s (%s) after %d attempts", node.Hostname, nodeIP, attempt)
+			} else {
+				logger.Success("Bootstrap script completed successfully on node %s (%s)", node.Hostname, nodeIP)
+			}
+			if mu != nil {
+				mu.Unlock()
+			}
+			return nil
+		}
+
+		// Check if error is retryable (401 Unauthorized, connection errors, etc.)
+		isRetryable := strings.Contains(output, "HTTP Error 401") ||
+			strings.Contains(output, "Unauthorized") ||
+			strings.Contains(output, "Connection refused") ||
+			strings.Contains(output, "proxy endpoints failed")
+
+		if !isRetryable || attempt == maxRetries {
+			// Non-retryable error or max retries reached
+			if mu != nil {
+				mu.Lock()
+			}
+			if attempt > 1 {
+				logger.Error("Bootstrap script failed on node %s (%s) after %d attempts: %v", node.Hostname, nodeIP, attempt, lastErr)
+			} else {
+				logger.Error("Bootstrap script failed on node %s (%s): %v", node.Hostname, nodeIP, lastErr)
+			}
+			if output != "" {
+				logger.Debug("Bootstrap script output from node %s:\n%s", node.Hostname, output)
+			}
+			if mu != nil {
+				mu.Unlock()
+			}
+			return fmt.Errorf("failed to run bootstrap script on node %s after %d attempts: %w\nOutput: %s", node.Hostname, attempt, lastErr, output)
+		}
+
+		// Retryable error - wait with exponential backoff
+		backoffSeconds := time.Duration(1<<uint(attempt-1)) * 10 // 10s, 20s, 40s, 80s, 160s
 		if mu != nil {
 			mu.Lock()
 		}
-		logger.Error("Bootstrap script failed on node %s (%s): %v", node.Hostname, nodeIP, err)
-		if output != "" {
-			logger.Debug("Bootstrap script output from node %s:\n%s", node.Hostname, output)
-		}
+		logger.Warn("Bootstrap script failed on node %s (%s) (attempt %d/%d), retrying in %v: %v",
+			node.Hostname, nodeIP, attempt, maxRetries, backoffSeconds*time.Second, lastErr)
 		if mu != nil {
 			mu.Unlock()
 		}
-		return fmt.Errorf("failed to run bootstrap script on node %s: %w\nOutput: %s", node.Hostname, err, output)
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while retrying bootstrap script on node %s: %w", node.Hostname, ctx.Err())
+		case <-time.After(backoffSeconds * time.Second):
+			// Continue to next retry
+		}
 	}
 
-	// Log successful completion (output is only shown on failure)
-	if mu != nil {
-		mu.Lock()
-	}
-	logger.Success("Bootstrap script completed successfully on node %s (%s)", node.Hostname, nodeIP)
-	if mu != nil {
-		mu.Unlock()
-	}
-
-	return nil
+	// Should never reach here, but just in case
+	return fmt.Errorf("failed to run bootstrap script on node %s after %d attempts: %w", node.Hostname, maxRetries, lastErr)
 }
 
 // WaitForAllNodesReady waits for all expected nodes to become Ready in parallel

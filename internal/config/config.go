@@ -54,10 +54,9 @@ const (
 	NodeGroupTimeout     = 3 * time.Second  // Timeout for creating NodeGroup
 	SecretsWaitTimeout   = 2 * time.Minute  // Timeout for waiting for bootstrap secrets to appear
 	ClusterHealthTimeout = 15 * time.Minute // Timeout for cluster health check
-	ModuleConfigTimeout  = 5 * time.Minute  // Timeout for enabling and configuring modules
-	ModuleDeployTimeout  = 30 * time.Minute // Timeout for waiting for modules to be ready
+	ModuleDeployTimeout  = 15 * time.Minute // Timeout for waiting for ONE module to be ready
 
 	// Test operations
-	ClusterCreationTimeout = 40 * time.Minute // Total timeout for test cluster creation
+	ClusterCreationTimeout = 90 * time.Minute // Total timeout for test cluster creation (includes module deployment)
 	ClusterCleanupTimeout  = 10 * time.Minute // Timeout for cleaning up test cluster resources
 )

@@ -18,12 +18,19 @@ package deckhouse
 
 import (
 	"context"
+	"sync"
 
 	deckhousev1alpha1 "github.com/deckhouse/deckhouse/deckhouse-controller/pkg/apis/deckhouse.io/v1alpha1"
 	deckhousev1alpha2 "github.com/deckhouse/deckhouse/deckhouse-controller/pkg/apis/deckhouse.io/v1alpha2"
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrl "sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+var (
+	loggerSetOnce sync.Once
 )
 
 // Client provides access to deckhouse resources
@@ -34,6 +41,13 @@ type Client struct {
 // NewClient creates a new deckhouse client from a rest.Config
 // It uses controller-runtime client which provides type-safe access to CRDs
 func NewClient(ctx context.Context, config *rest.Config) (*Client, error) {
+	// Initialize controller-runtime logger once to suppress warnings
+	loggerSetOnce.Do(func() {
+		// Use a null logger to suppress controller-runtime warnings
+		// We use our own logger for application logging
+		ctrl.SetLogger(logr.Discard())
+	})
+
 	scheme := runtime.NewScheme()
 
 	// Register deckhouse API types with the scheme

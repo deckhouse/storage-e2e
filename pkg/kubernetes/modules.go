@@ -26,7 +26,7 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
-	"gopkg.in/yaml.v3"
+	"github.com/deckhouse/storage-e2e/internal/logger"
 	"k8s.io/client-go/rest"
 )
 
@@ -140,6 +140,7 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 				lastErr = err
 				// Check if it's a webhook connection error
 				if isWebhookConnectionError(err) {
+					logger.Debug("webhook-handler connection error. Retrying... %v/%v", attempt, maxRetries)
 					if attempt < maxRetries-1 {
 						// Wait before retrying
 						select {
@@ -185,119 +186,119 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 
 // configureModuleConfigViaSSH creates or updates a ModuleConfig resource via kubectl over SSH
 // This ensures the webhook is called from within the cluster network
-func configureModuleConfigViaSSH(ctx context.Context, sshClient ssh.SSHClient, moduleConfig *config.ModuleConfig) error {
-	// Build ModuleConfig YAML
-	moduleConfigYAML := struct {
-		APIVersion string `yaml:"apiVersion"`
-		Kind       string `yaml:"kind"`
-		Metadata   struct {
-			Name string `yaml:"name"`
-		} `yaml:"metadata"`
-		Spec struct {
-			Version  int                    `yaml:"version"`
-			Enabled  *bool                  `yaml:"enabled"`
-			Settings map[string]interface{} `yaml:"settings,omitempty"`
-		} `yaml:"spec"`
-	}{
-		APIVersion: "deckhouse.io/v1alpha1",
-		Kind:       "ModuleConfig",
-		Metadata: struct {
-			Name string `yaml:"name"`
-		}{
-			Name: moduleConfig.Name,
-		},
-		Spec: struct {
-			Version  int                    `yaml:"version"`
-			Enabled  *bool                  `yaml:"enabled"`
-			Settings map[string]interface{} `yaml:"settings,omitempty"`
-		}{
-			Version:  moduleConfig.Version,
-			Enabled:  &moduleConfig.Enabled,
-			Settings: moduleConfig.Settings, // nil or empty map will be omitted due to omitempty
-		},
-	}
+// func configureModuleConfigViaSSH(ctx context.Context, sshClient ssh.SSHClient, moduleConfig *config.ModuleConfig) error {
+// 	// Build ModuleConfig YAML
+// 	moduleConfigYAML := struct {
+// 		APIVersion string `yaml:"apiVersion"`
+// 		Kind       string `yaml:"kind"`
+// 		Metadata   struct {
+// 			Name string `yaml:"name"`
+// 		} `yaml:"metadata"`
+// 		Spec struct {
+// 			Version  int                    `yaml:"version"`
+// 			Enabled  *bool                  `yaml:"enabled"`
+// 			Settings map[string]interface{} `yaml:"settings,omitempty"`
+// 		} `yaml:"spec"`
+// 	}{
+// 		APIVersion: "deckhouse.io/v1alpha1",
+// 		Kind:       "ModuleConfig",
+// 		Metadata: struct {
+// 			Name string `yaml:"name"`
+// 		}{
+// 			Name: moduleConfig.Name,
+// 		},
+// 		Spec: struct {
+// 			Version  int                    `yaml:"version"`
+// 			Enabled  *bool                  `yaml:"enabled"`
+// 			Settings map[string]interface{} `yaml:"settings,omitempty"`
+// 		}{
+// 			Version:  moduleConfig.Version,
+// 			Enabled:  &moduleConfig.Enabled,
+// 			Settings: moduleConfig.Settings, // nil or empty map will be omitted due to omitempty
+// 		},
+// 	}
 
-	yamlBytes, err := yaml.Marshal(moduleConfigYAML)
-	if err != nil {
-		return fmt.Errorf("failed to marshal ModuleConfig YAML: %w", err)
-	}
+// 	yamlBytes, err := yaml.Marshal(moduleConfigYAML)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to marshal ModuleConfig YAML: %w", err)
+// 	}
 
-	// Apply via kubectl over SSH using the found path
-	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULECONFIG_EOF'\n%sMODULECONFIG_EOF", string(yamlBytes))
-	output, err := sshClient.Exec(ctx, cmd)
-	if err != nil {
-		return fmt.Errorf("failed to apply ModuleConfig %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
-	}
+// 	// Apply via kubectl over SSH using the found path
+// 	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULECONFIG_EOF'\n%sMODULECONFIG_EOF", string(yamlBytes))
+// 	output, err := sshClient.Exec(ctx, cmd)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to apply ModuleConfig %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
-// configureModulePullOverrideViaSSH creates or updates a ModulePullOverride resource via kubectl over SSH
-func configureModulePullOverrideViaSSH(ctx context.Context, sshClient ssh.SSHClient, moduleConfig *config.ModuleConfig, registryRepo string) error {
-	// Determine ModulePullOverride imageTag
-	var imageTag string
-	shouldCreateMPO := false
+// // configureModulePullOverrideViaSSH creates or updates a ModulePullOverride resource via kubectl over SSH
+// func configureModulePullOverrideViaSSH(ctx context.Context, sshClient ssh.SSHClient, moduleConfig *config.ModuleConfig, registryRepo string) error {
+// 	// Determine ModulePullOverride imageTag
+// 	var imageTag string
+// 	shouldCreateMPO := false
 
-	if strings.HasPrefix(registryRepo, "dev-") {
-		shouldCreateMPO = true
-		if moduleConfig.ModulePullOverride != "" {
-			imageTag = moduleConfig.ModulePullOverride
-		} else {
-			imageTag = "main"
-		}
-	} else {
-		shouldCreateMPO = false
-	}
+// 	if strings.HasPrefix(registryRepo, "dev-") {
+// 		shouldCreateMPO = true
+// 		if moduleConfig.ModulePullOverride != "" {
+// 			imageTag = moduleConfig.ModulePullOverride
+// 		} else {
+// 			imageTag = "main"
+// 		}
+// 	} else {
+// 		shouldCreateMPO = false
+// 	}
 
-	if !shouldCreateMPO {
-		return nil
-	}
+// 	if !shouldCreateMPO {
+// 		return nil
+// 	}
 
-	// Build ModulePullOverride YAML
-	modulePullOverrideYAML := struct {
-		APIVersion string `yaml:"apiVersion"`
-		Kind       string `yaml:"kind"`
-		Metadata   struct {
-			Name string `yaml:"name"`
-		} `yaml:"metadata"`
-		Spec struct {
-			ImageTag     string `yaml:"imageTag"`
-			ScanInterval string `yaml:"scanInterval"`
-			Rollback     bool   `yaml:"rollback"`
-		} `yaml:"spec"`
-	}{
-		APIVersion: "deckhouse.io/v1alpha2",
-		Kind:       "ModulePullOverride",
-		Metadata: struct {
-			Name string `yaml:"name"`
-		}{
-			Name: moduleConfig.Name,
-		},
-		Spec: struct {
-			ImageTag     string `yaml:"imageTag"`
-			ScanInterval string `yaml:"scanInterval"`
-			Rollback     bool   `yaml:"rollback"`
-		}{
-			ImageTag:     imageTag,
-			ScanInterval: "1m",
-			Rollback:     false,
-		},
-	}
+// 	// Build ModulePullOverride YAML
+// 	modulePullOverrideYAML := struct {
+// 		APIVersion string `yaml:"apiVersion"`
+// 		Kind       string `yaml:"kind"`
+// 		Metadata   struct {
+// 			Name string `yaml:"name"`
+// 		} `yaml:"metadata"`
+// 		Spec struct {
+// 			ImageTag     string `yaml:"imageTag"`
+// 			ScanInterval string `yaml:"scanInterval"`
+// 			Rollback     bool   `yaml:"rollback"`
+// 		} `yaml:"spec"`
+// 	}{
+// 		APIVersion: "deckhouse.io/v1alpha2",
+// 		Kind:       "ModulePullOverride",
+// 		Metadata: struct {
+// 			Name string `yaml:"name"`
+// 		}{
+// 			Name: moduleConfig.Name,
+// 		},
+// 		Spec: struct {
+// 			ImageTag     string `yaml:"imageTag"`
+// 			ScanInterval string `yaml:"scanInterval"`
+// 			Rollback     bool   `yaml:"rollback"`
+// 		}{
+// 			ImageTag:     imageTag,
+// 			ScanInterval: "1m",
+// 			Rollback:     false,
+// 		},
+// 	}
 
-	yamlBytes, err := yaml.Marshal(modulePullOverrideYAML)
-	if err != nil {
-		return fmt.Errorf("failed to marshal ModulePullOverride YAML: %w", err)
-	}
+// 	yamlBytes, err := yaml.Marshal(modulePullOverrideYAML)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to marshal ModulePullOverride YAML: %w", err)
+// 	}
 
-	// Apply via kubectl over SSH using the found path
-	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULEPULLOVERRIDE_EOF'\n%sMODULEPULLOVERRIDE_EOF", string(yamlBytes))
-	output, err := sshClient.Exec(ctx, cmd)
-	if err != nil {
-		return fmt.Errorf("failed to apply ModulePullOverride %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
-	}
+// 	// Apply via kubectl over SSH using the found path
+// 	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULEPULLOVERRIDE_EOF'\n%sMODULEPULLOVERRIDE_EOF", string(yamlBytes))
+// 	output, err := sshClient.Exec(ctx, cmd)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to apply ModulePullOverride %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 // isWebhookConnectionError checks if the error is a webhook connection error
 func isWebhookConnectionError(err error) bool {
@@ -355,8 +356,7 @@ func configureModulePullOverride(ctx context.Context, kubeconfig *rest.Config, m
 
 // EnableAndConfigureModules enables and configures modules based on cluster definition
 // It builds a dependency graph and processes modules level by level using topological sort
-// If sshClient is provided, it uses kubectl via SSH (recommended for webhook access from within cluster)
-// Otherwise, it falls back to using kubeconfig directly
+// After configuring each level, it waits for all modules in that level to become Ready before proceeding to the next level
 func EnableAndConfigureModules(ctx context.Context, kubeconfig *rest.Config, clusterDef *config.ClusterDefinition, sshClient ssh.SSHClient) error {
 	if len(clusterDef.DKPParameters.Modules) == 0 {
 		return nil
@@ -377,55 +377,80 @@ func EnableAndConfigureModules(ctx context.Context, kubeconfig *rest.Config, clu
 	// Process modules level by level
 	// Modules within each level are processed in parallel since they have no dependencies on each other
 	for levelIndex, level := range levels {
+		logger.Debug("Configuring module level %d with %d modules", levelIndex+1, len(level))
+
+		// Configure all modules in this level in parallel
 		var wg sync.WaitGroup
 		errChan := make(chan error, len(level))
 
-		// Process all modules in this level in parallel
 		for _, moduleConfig := range level {
 			wg.Add(1)
 			go func(mc *config.ModuleConfig) {
 				defer wg.Done()
 
+				logger.Debug("Enabling module %s", mc.Name)
+
 				// Configure ModuleConfig
-				if sshClient != nil {
-					if err := configureModuleConfigViaSSH(ctx, sshClient, mc); err != nil {
-						errChan <- err
-						return
-					}
-				} else {
-					if err := configureModuleConfig(ctx, kubeconfig, mc); err != nil {
-						errChan <- err
-						return
-					}
+				if err := configureModuleConfig(ctx, kubeconfig, mc); err != nil {
+					errChan <- fmt.Errorf("failed to create ModuleConfig for module %s: %w", mc.Name, err)
+					return
 				}
 
 				// Configure ModulePullOverride
-				if sshClient != nil {
-					if err := configureModulePullOverrideViaSSH(ctx, sshClient, mc, clusterDef.DKPParameters.RegistryRepo); err != nil {
-						errChan <- err
-						return
-					}
-				} else {
-					if err := configureModulePullOverride(ctx, kubeconfig, mc, clusterDef.DKPParameters.RegistryRepo); err != nil {
-						errChan <- err
-						return
-					}
+				if err := configureModulePullOverride(ctx, kubeconfig, mc, clusterDef.DKPParameters.RegistryRepo); err != nil {
+					errChan <- fmt.Errorf("failed to create ModulePullOverride for module %s: %w", mc.Name, err)
+					return
 				}
+
+				logger.Debug("Module %s configuration applied", mc.Name)
 			}(moduleConfig)
 		}
 
-		// Wait for all modules in this level to complete
+		// Wait for all configuration tasks to complete
 		wg.Wait()
 		close(errChan)
 
-		// Check if any errors occurred
-		if len(errChan) > 0 {
-			return <-errChan
+		// Check for configuration errors
+		for err := range errChan {
+			if err != nil {
+				return err
+			}
 		}
 
-		// All modules at this level are now configured
-		// Next level modules can be processed as their dependencies are satisfied
-		_ = levelIndex // Can be used for logging if needed
+		// Wait for all enabled modules in this level to become Ready before proceeding to next level
+		logger.Debug("Waiting for modules in level %d to become Ready", levelIndex+1)
+
+		// Reset channels for waiting phase
+		errChan = make(chan error, len(level))
+
+		for _, moduleConfig := range level {
+			if moduleConfig.Enabled {
+				wg.Add(1)
+				go func(mc *config.ModuleConfig) {
+					defer wg.Done()
+
+					// Use ModuleDeployTimeout for each module
+					if err := WaitForModuleReady(ctx, kubeconfig, mc.Name, config.ModuleDeployTimeout); err != nil {
+						errChan <- fmt.Errorf("module %s in level %d failed to become ready: %w", mc.Name, levelIndex+1, err)
+						return
+					}
+					logger.Debug("Module %s is Ready", mc.Name)
+				}(moduleConfig)
+			}
+		}
+
+		// Wait for all modules to become ready
+		wg.Wait()
+		close(errChan)
+
+		// Check for readiness errors
+		for err := range errChan {
+			if err != nil {
+				return err
+			}
+		}
+
+		logger.Debug("All modules in level %d are Ready", levelIndex+1)
 	}
 
 	return nil
@@ -499,8 +524,6 @@ func WaitForModuleReady(ctx context.Context, kubeconfig *rest.Config, moduleName
 				}
 				return fmt.Errorf("timeout waiting for module %s to be ready: module is in %s phase after %v", moduleName, module.Status.Phase, timeout)
 			}
-
-			// Continue waiting even if module is in Error phase - it may recover
 		}
 	}
 }

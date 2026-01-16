@@ -67,7 +67,7 @@ metadata:
 spec:
   weight: 98
   nodeGroups: ["*"]
-  bundles: ["ubuntu-lts", "debian", "astra"]
+  bundles: ["ubuntu-lts", "debian", "astra", "altlinux"]
   content: |
     # Copyright 2024 Flant JSC
     #

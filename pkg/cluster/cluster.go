@@ -22,10 +22,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8s "k8s.io/client-go/kubernetes"
@@ -406,8 +406,7 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(14, "NodeGroup for workers created")
 
-	logger.Debug("Waiting for bootstrap secrets to appear")
-	logger.Debug("Waiting for bootstrap secrets to appear")
+	logger.Debug("Waiting for master and worker bootstrap secrets to appear")
 	// Step 14.1: Wait for bootstrap secrets to appear after NodeGroup creation
 	// The secrets are created by Deckhouse after the NodeGroup is created, so we need to wait
 	secretsWaitCtx, cancel := context.WithTimeout(ctx, config.SecretsWaitTimeout)
@@ -439,14 +438,13 @@ func CreateTestCluster(
 			_, masterErr := clientset.CoreV1().Secrets(secretNamespace).Get(secretsWaitCtx, "manual-bootstrap-for-master", metav1.GetOptions{})
 			if workerErr == nil && masterErr == nil {
 				secretsReady = true
-				logger.Success("Bootstrap secrets are available")
+				logger.Debug("Both master and worker bootstrap secrets are available")
 			} else {
 				logger.Progress("Waiting for bootstrap secrets... (worker: %v, master: %v)",
 					workerErr == nil, masterErr == nil)
 			}
 		}
 	}
-	logger.Success("Bootstrap secrets appeared")
 
 	logger.Step(15, "Verifying cluster is ready (this may take up to %v)", config.ClusterHealthTimeout)
 	// Step 15: Verify cluster is ready
@@ -492,9 +490,9 @@ func CreateTestCluster(
 
 	logger.Step(17, "Enabling and configuring modules")
 	// Step 17: Enable and configure modules
-	modulesCtx, cancel := context.WithTimeout(ctx, config.ModuleConfigTimeout)
-	err = kubernetes.EnableAndConfigureModules(modulesCtx, testClusterResources.Kubeconfig, clusterDefinition, testClusterResources.SSHClient)
-	cancel()
+	// Note: EnableAndConfigureModules has internal timeouts per module (ModuleDeployTimeout)
+	// We use the parent context which has ClusterCreationTimeout
+	err = kubernetes.EnableAndConfigureModules(ctx, testClusterResources.Kubeconfig, clusterDefinition, testClusterResources.SSHClient)
 	if err != nil {
 		testClusterResources.SSHClient.Close()
 		testClusterResources.TunnelInfo.StopFunc()
@@ -502,7 +500,7 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("failed to enable and configure modules: %w", err)
 	}
-	logger.StepComplete(17, "Modules enabled and configured")
+	logger.StepComplete(17, "Modules are enabled, configured and Ready")
 
 	// Set cluster definition and VM resources
 	testClusterResources.ClusterDefinition = clusterDefinition
@@ -514,29 +512,6 @@ func CreateTestCluster(
 	testClusterResources.SetupSSHClient = setupSSHClient
 
 	return testClusterResources, nil
-}
-
-// WaitForTestClusterReady waits for all modules in the test cluster to become Ready.
-// It uses the ModuleDeployTimeout from config.
-func WaitForTestClusterReady(ctx context.Context, resources *TestClusterResources) error {
-	if resources == nil {
-		return fmt.Errorf("resources cannot be nil")
-	}
-	if resources.Kubeconfig == nil {
-		return fmt.Errorf("kubeconfig cannot be nil")
-	}
-	if resources.ClusterDefinition == nil {
-		return fmt.Errorf("cluster definition cannot be nil")
-	}
-
-	logger.Info("Waiting for all modules to become Ready (this may take up to %v)", config.ModuleDeployTimeout)
-	err := kubernetes.WaitForModulesReady(ctx, resources.Kubeconfig, resources.ClusterDefinition, config.ModuleDeployTimeout)
-	if err != nil {
-		logger.Error("Failed to wait for modules to be ready: %v", err)
-		return err
-	}
-	logger.StepComplete(18, "All modules are ready")
-	return nil
 }
 
 // CleanupTestCluster cleans up all resources created by CreateTestCluster.
@@ -693,6 +668,7 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 // CheckClusterHealth checks if the deckhouse deployment has 1 pod running with 2/2 containers ready
 // in the d8-system namespace, verifies that bootstrap secrets are available, and ensures webhook-handler pods are ready.
 // This function is widely used to check cluster health after certain steps.
+// It polls until the deployment is ready or the context times out.
 func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 	namespace := "d8-system"
 	deploymentName := "deckhouse"
@@ -703,15 +679,32 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
-	// Get the deployment
-	deployment, err := clientset.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
-	}
+	// Wait for deployment to have 1 ready replica
+	// Poll every 5 seconds until ready or context times out
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 
-	// Check if deployment has 1 ready replica (1 pod)
-	if deployment.Status.ReadyReplicas != 1 {
-		return fmt.Errorf("deployment %s/%s has %d ready replicas, expected 1", namespace, deploymentName, deployment.Status.ReadyReplicas)
+	var deployment *appsv1.Deployment
+	for {
+		// Get the deployment
+		var err error
+		deployment, err = clientset.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
+		}
+
+		// Check if deployment has 1 ready replica (1 pod)
+		if deployment.Status.ReadyReplicas >= 1 {
+			break // Deployment is ready, continue with pod checks
+		}
+
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for deployment %s/%s to have ready replicas (current: %d, expected: 1): %w", namespace, deploymentName, deployment.Status.ReadyReplicas, ctx.Err())
+		case <-ticker.C:
+			// Continue polling
+		}
 	}
 
 	// Check that bootstrap secrets are available
@@ -759,9 +752,9 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config) error {
 		return fmt.Errorf("pod %s/%s does not have all containers ready (expected 2/2 containers ready)", namespace, pod.Name)
 	}
 
-	// Check that webhook-handler pods are ready in d8-system namespace
-	if err := checkWebhookHandlerPods(ctx, clientset, namespace); err != nil {
-		return fmt.Errorf("webhook-handler pods not ready: %w", err)
+	// Check that webhook-handler deployment is ready in d8-system namespace
+	if err := checkWebhookHandler(ctx, clientset, namespace); err != nil {
+		return fmt.Errorf("webhook-handler not ready: %w", err)
 	}
 
 	return nil
@@ -807,48 +800,57 @@ func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespa
 	return nil
 }
 
-// checkWebhookHandlerPods verifies that webhook-handler pods are running and ready in the namespace
-func checkWebhookHandlerPods(ctx context.Context, clientset *k8s.Clientset, namespace string) error {
-	// List all pods in the namespace
-	allPods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+// checkWebhookHandler verifies that the webhook-handler deployment has the desired number of ready replicas
+// and that the deckhouse service has endpoints registered on port 4223
+func checkWebhookHandler(ctx context.Context, clientset *k8s.Clientset, namespace string) error {
+	// Get the webhook-handler deployment
+	deploymentName := "webhook-handler"
+	deployment, err := clientset.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
+		return fmt.Errorf("failed to get deployment %s/%s: %w", namespace, deploymentName, err)
 	}
 
-	// Find webhook-handler pods (matching names with "webhook-handler" prefix or substring)
-	var webhookHandlerPods []string
-	var readyWebhookHandlerCount int
+	// Check if deployment has desired replicas ready
+	if deployment.Spec.Replicas == nil {
+		return fmt.Errorf("deployment %s/%s has nil replicas spec", namespace, deploymentName)
+	}
 
-	for _, pod := range allPods.Items {
-		// Check if pod name contains "webhook-handler"
-		if strings.Contains(pod.Name, "webhook-handler") {
-			webhookHandlerPods = append(webhookHandlerPods, pod.Name)
+	desiredReplicas := *deployment.Spec.Replicas
+	readyReplicas := deployment.Status.ReadyReplicas
 
-			// Check if this webhook-handler pod is running and all containers are ready
-			isRunning := pod.Status.Phase == corev1.PodRunning
-			allReady := len(pod.Status.ContainerStatuses) == len(pod.Spec.Containers) && len(pod.Spec.Containers) > 0
-			if allReady {
-				for _, status := range pod.Status.ContainerStatuses {
-					if !status.Ready {
-						allReady = false
-						break
-					}
+	if readyReplicas != desiredReplicas {
+		return fmt.Errorf("deployment %s/%s has %d ready replicas, expected %d", namespace, deploymentName, readyReplicas, desiredReplicas)
+	}
+
+	if readyReplicas == 0 {
+		return fmt.Errorf("deployment %s/%s has 0 ready replicas", namespace, deploymentName)
+	}
+
+	// Check that the deckhouse service has endpoints registered on port 4223
+	// This ensures the webhook is actually accessible
+	endpoints, err := clientset.CoreV1().Endpoints(namespace).Get(ctx, "deckhouse", metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get deckhouse service endpoints: %w", err)
+	}
+
+	// Check if there are any endpoints on port 4223 (webhook port)
+	hasWebhookEndpoint := false
+	for _, subset := range endpoints.Subsets {
+		for _, port := range subset.Ports {
+			if port.Port == 4223 {
+				if len(subset.Addresses) > 0 {
+					hasWebhookEndpoint = true
+					break
 				}
 			}
-			if isRunning && allReady {
-				readyWebhookHandlerCount++
-			}
+		}
+		if hasWebhookEndpoint {
+			break
 		}
 	}
 
-	// Ensure at least one webhook-handler pod is found
-	if len(webhookHandlerPods) == 0 {
-		return fmt.Errorf("no webhook-handler pods found in namespace %s", namespace)
-	}
-
-	// Ensure at least one webhook-handler pod is ready
-	if readyWebhookHandlerCount == 0 {
-		return fmt.Errorf("webhook-handler pods found in namespace %s but none are ready: %v", namespace, webhookHandlerPods)
+	if !hasWebhookEndpoint {
+		return fmt.Errorf("deckhouse service has no endpoints registered on port 4223 (webhook port)")
 	}
 
 	return nil

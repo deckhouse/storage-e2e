@@ -181,7 +181,6 @@ type TestClusterResources struct {
 
 // Main functions
 func CreateTestCluster(ctx context.Context, configPath string) (*TestClusterResources, error)
-func WaitForTestClusterReady(ctx context.Context, resources *TestClusterResources) error
 func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) error
 ```
 
@@ -340,7 +339,6 @@ internal/cluster/
 **Key Functions**:
 ```go
 CreateTestCluster(ctx, configPath) (*TestClusterResources, error)
-WaitForTestClusterReady(ctx, resources) error
 CleanupTestCluster(ctx, resources) error
 ```
 
@@ -587,11 +585,6 @@ var _ = Describe("PVC Operations", Ordered, func() {
         By("Creating test cluster", func() {
             var err error
             testClusterResources, err = cluster.CreateTestCluster(ctx, "cluster_config.yml")
-            Expect(err).NotTo(HaveOccurred())
-        })
-
-        By("Waiting for test cluster to become ready", func() {
-            err := cluster.WaitForTestClusterReady(ctx, testClusterResources)
             Expect(err).NotTo(HaveOccurred())
         })
     })

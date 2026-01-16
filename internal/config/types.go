@@ -31,12 +31,11 @@ const (
 )
 
 // ClusterRole represents the role of a node in the cluster
+// Only used for the setup/bootstrap node
 type ClusterRole string
 
 const (
-	ClusterRoleMaster ClusterRole = "master"
-	ClusterRoleWorker ClusterRole = "worker"
-	ClusterRoleSetup  ClusterRole = "setup" // Bootstrap node for DKP installation
+	ClusterRoleSetup ClusterRole = "setup" // Bootstrap node for DKP installation
 )
 
 // OSType represents the operating system type
@@ -52,7 +51,7 @@ type ClusterNode struct {
 	IPAddress string      `yaml:"ipAddress,omitempty"` // Required for bare-metal, filled in for VM when gathering VM info
 	OSType    OSType      `yaml:"osType"`              // Required for VM, optional for bare-metal (custom unmarshaler handles string -> OSType conversion)
 	HostType  HostType    `yaml:"hostType"`
-	Role      ClusterRole `yaml:"role"`
+	Role      ClusterRole `yaml:"role,omitempty"` // Only used for setup/bootstrap node
 	// VM-specific fields (only used when HostType == HostTypeVM)
 	CPU          int  `yaml:"cpu"`                    // Required for VM
 	CoreFraction *int `yaml:"coreFraction,omitempty"` // Optional for VM, CPU core fraction as percentage (e.g., 50 for 50%). Defaults to 100% if not specified.
@@ -118,10 +117,13 @@ func (n *ClusterNode) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("invalid hostType: %s", tmp.HostType)
 	}
 
-	// Convert Role
-	role := ClusterRole(tmp.Role)
-	if role != ClusterRoleMaster && role != ClusterRoleWorker && role != ClusterRoleSetup {
-		return fmt.Errorf("invalid role: %s", tmp.Role)
+	// Convert Role (only validate if provided, typically only for setup node)
+	var role ClusterRole
+	if tmp.Role != "" {
+		role = ClusterRole(tmp.Role)
+		if role != ClusterRoleSetup {
+			return fmt.Errorf("invalid role: %s (only 'setup' is valid, masters/workers are determined by section)", tmp.Role)
+		}
 	}
 
 	// Convert OSType string key to OSType struct

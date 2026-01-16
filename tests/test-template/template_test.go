@@ -128,9 +128,9 @@ var _ = Describe("Template Test", Ordered, func() {
 		}
 	})
 
-	// ---=== TEST CLUSTER IS CREATED AND GOT READY HERE ===--- //
+	// ---=== TEST CLUSTER IS CREATED AND READY HERE ===--- //
 
-	It("should create test cluster and wait for it to become ready", func() {
+	It("should create test cluster", func() {
 		By("Creating test cluster", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), config.ClusterCreationTimeout)
 			defer cancel()
@@ -142,21 +142,7 @@ var _ = Describe("Template Test", Ordered, func() {
 				GinkgoWriter.Printf("    ❌ Failed to create test cluster: %v\n", err)
 				Expect(err).NotTo(HaveOccurred(), "Test cluster should be created successfully")
 			}
-			GinkgoWriter.Printf("    ✅ Test cluster created successfully\n")
-		})
-
-		By("Waiting for test cluster to become ready", func() {
-			// Create a new context with ModuleDeployTimeout for module readiness
-			ctx, cancel := context.WithTimeout(context.Background(), config.ModuleDeployTimeout)
-			defer cancel()
-
-			GinkgoWriter.Printf("    ▶️ Waiting for all modules to be ready in test cluster (timeout: %v)...\n", config.ModuleDeployTimeout)
-			err := cluster.WaitForTestClusterReady(ctx, testClusterResources)
-			if err != nil {
-				GinkgoWriter.Printf("    ❌ Failed to wait for test cluster to be ready: %v\n", err)
-				Expect(err).NotTo(HaveOccurred(), "Test cluster should become ready")
-			}
-			GinkgoWriter.Printf("    ✅ Test cluster is ready (all modules are Ready)\n")
+			GinkgoWriter.Printf("    ✅ Test cluster created successfully (all modules are Ready)\n")
 		})
 	}) // should create test cluster
 
@@ -206,25 +192,15 @@ var _ = Describe("Template Test", Ordered, func() {
 
 			// Enable and configure modules
 			// This will handle dependencies automatically through topological sort
+			// and wait for each level to become Ready before proceeding to the next
 			err := kubernetes.EnableAndConfigureModules(
 				ctx,
 				testClusterResources.Kubeconfig,
 				clusterDef,
 				testClusterResources.SSHClient,
 			)
-			Expect(err).NotTo(HaveOccurred(), "Failed to enable modules")
+			Expect(err).NotTo(HaveOccurred(), "Failed to enable and configure modules")
 
-			// Wait for modules to become ready
-			timeout := 10 * time.Minute
-			err = kubernetes.WaitForModulesReady(
-				ctx,
-				testClusterResources.Kubeconfig,
-				clusterDef,
-				timeout,
-			)
-			Expect(err).NotTo(HaveOccurred(), "Failed waiting for modules to be ready")
-
-			GinkgoWriter.Printf("    ✅ Modules enabled successfully\n")
 		})
 	})
 
