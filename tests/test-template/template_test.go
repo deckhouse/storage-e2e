@@ -150,6 +150,28 @@ var _ = Describe("Template Test", Ordered, func() {
 	// ---=== TESTS START HERE ===--- //
 	////////////////////////////////////
 
+	It("should create NGCs", func() {
+		ctx := context.Background()
+
+		// Resolve file path relative to test directory (same approach as CreateTestCluster)
+		// runtime.Caller(0) gets this test file's location
+		_, callerFile, _, ok := runtime.Caller(0)
+		Expect(ok).To(BeTrue(), "Failed to determine test file path")
+		testDir := filepath.Dir(callerFile)
+
+		yamlFilePathNGCs := filepath.Join(testDir, "files", "ngc.yml")
+
+		By("Applying NGCs", func() {
+			GinkgoWriter.Printf("    ▶️ Creating NGCs...\n")
+
+			// Apply the YAML manifest
+			err := kubernetes.CreateYAMLFile(ctx, testClusterResources.Kubeconfig, yamlFilePathNGCs, "")
+			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
+
+			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
+		})
+	})
+
 	It("should enable csi-huawei module with dependencies", func() {
 		ctx := context.Background()
 
@@ -204,7 +226,7 @@ var _ = Describe("Template Test", Ordered, func() {
 		})
 	})
 
-	It("should create Huawei storage resources and NGCs", func() {
+	It("should create Huawei storage resources", func() {
 		ctx := context.Background()
 
 		// Resolve file path relative to test directory (same approach as CreateTestCluster)
@@ -219,18 +241,6 @@ var _ = Describe("Template Test", Ordered, func() {
 
 			// Apply the YAML manifest
 			err := kubernetes.CreateYAMLFile(ctx, testClusterResources.Kubeconfig, yamlFilePath, "")
-			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
-
-			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
-		})
-
-		yamlFilePathNGCs := filepath.Join(testDir, "files", "ngc.yml")
-
-		By("Applying NGCs", func() {
-			GinkgoWriter.Printf("    ▶️ Creating NGCs...\n")
-
-			// Apply the YAML manifest
-			err := kubernetes.CreateYAMLFile(ctx, testClusterResources.Kubeconfig, yamlFilePathNGCs, "")
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
 
 			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
