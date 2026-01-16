@@ -169,7 +169,7 @@ func Error(format string, args ...interface{}) {
 // Debug logs detailed debugging information
 func Debug(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	fullMsg := addEmoji("🐛", msg)
+	fullMsg := addEmoji("🔧", msg)
 	GetLogger().Debug(fullMsg, "type", "debug")
 }
 

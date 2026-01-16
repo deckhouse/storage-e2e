@@ -19,7 +19,7 @@ Timeout `60m` is a global timeout for entire testkit. Adjust it on your needs.
 go test -timeout=30m -v ./tests/test-folder-name -count=1 -ginkgo.focus="should create virtual machines"
 ```
 
-## Tests description
+## Testkits description
 
 ### test-template
 

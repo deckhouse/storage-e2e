@@ -27,28 +27,9 @@ storage-e2e/
 │   │   └── images.go             # OS image definitions
 │   │
 │   ├── cluster/                   # Cluster lifecycle management
-│   │   ├── cluster.go            # Core cluster operations
-│   │   └── interface.go          # Cluster interface definition
+│   │   └── cluster.go            # Core cluster operations
 │   │
 │   ├── kubernetes/                # Kubernetes API operations
-│   │   ├── client.go             # Base Kubernetes client setup
-│   │   ├── namespace.go          # Namespace operations (in pkg/kubernetes/)
-│   │   ├── core/                 # Core K8s resources
-│   │   │   ├── namespace.go
-│   │   │   ├── pod.go
-│   │   │   ├── node.go
-│   │   │   ├── secret.go
-│   │   │   └── service.go
-│   │   ├── apps/                 # Apps API resources
-│   │   │   ├── deployment.go
-│   │   │   └── daemonset.go
-│   │   ├── storage/              # Storage resources
-│   │   │   ├── client.go
-│   │   │   ├── pvc.go
-│   │   │   ├── storageclass.go
-│   │   │   ├── blockdevice.go
-│   │   │   ├── lvmvolumegroup.go
-│   │   │   └── volumesnapshot.go
 │   │   ├── virtualization/       # Virtualization resources
 │   │   │   ├── client.go
 │   │   │   ├── virtual_machine.go
@@ -87,7 +68,14 @@ storage-e2e/
 │   │   └── vms.go                # VM lifecycle management
 │   │
 │   ├── kubernetes/               # Public Kubernetes utilities
-│   │   └── namespace.go          # Namespace utilities
+│   │   ├── apply.go              # YAML manifest application
+│   │   ├── modules.go            # Module configuration and readiness
+│   │   ├── namespace.go          # Namespace utilities
+│   │   ├── nodegroup.go          # NodeGroup operations
+│   │   ├── pod.go                # Pod operations
+│   │   ├── pvc.go                # PVC operations
+│   │   ├── resources.go          # Resource utilities
+│   │   └── secrets.go            # Secret operations
 │   │
 │   └── testkit/                  # Test framework utilities
 │       └── stress-tests.go       # Stress test helpers
@@ -165,22 +153,23 @@ The framework provides automated test cluster lifecycle management through `pkg/
 ```go
 // pkg/cluster/cluster.go
 type TestClusterResources struct {
-    // Base cluster information
-    BaseClusterClient  *kubernetes.Clientset
-    SSHClient          ssh.Client
+    SSHClient          ssh.SSHClient
+    Kubeconfig         *rest.Config
+    KubeconfigPath     string
+    TunnelInfo         *ssh.TunnelInfo
+    ClusterDefinition  *config.ClusterDefinition
+    VMResources        *VMResources
     
-    // Test cluster information  
-    TestNamespace      string
-    VirtualMachines    []VM
-    TestClusterClient  *kubernetes.Clientset
-    KubeConfigPath     string
-    
-    // Configuration
-    ClusterConfig      *ClusterConfig
+    // Base cluster resources (for cleanup)
+    BaseClusterClient  ssh.SSHClient
+    BaseKubeconfig     *rest.Config
+    BaseKubeconfigPath string
+    BaseTunnelInfo     *ssh.TunnelInfo
+    SetupSSHClient     ssh.SSHClient
 }
 
 // Main functions
-func CreateTestCluster(ctx context.Context, configPath string) (*TestClusterResources, error)
+func CreateTestCluster(ctx context.Context, yamlConfigFilename string) (*TestClusterResources, error)
 func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) error
 ```
 
@@ -230,7 +219,7 @@ logger.Success(format string, args ...interface{})              // ✅ Success (
 logger.Info(format string, args ...interface{})                 // Info messages
 logger.Warn(format string, args ...interface{})                 // ⚠️ Warnings
 logger.Error(format string, args ...interface{})                // ❌ Errors
-logger.Debug(format string, args ...interface{})                // 🐛 Debug info
+logger.Debug(format string, args ...interface{})                // 🔧 Debug info
 logger.Progress(format string, args ...interface{})             // ⏳ Progress (DEBUG)
 ```
 
@@ -275,15 +264,14 @@ Tests use Ginkgo's lifecycle hooks:
 
 **BeforeAll** (runs once before ordered container):
 - Outputs environment configuration
-- Creates test cluster
-- Waits for cluster to become ready
+- Creates test cluster (automatically waits for modules to be ready during creation)
 
 **AfterAll** (runs after all tests in container):
 - Cleans up test cluster resources
 - Removes VMs based on `TEST_CLUSTER_CLEANUP` setting
 
 **Test Execution**:
-- First `It` block: Creates and initializes test cluster
+- First `It` block: Creates test cluster (modules are automatically configured and waited for)
 - Subsequent `It` blocks: Run actual tests against the cluster
 
 ---
@@ -324,8 +312,7 @@ pkg/cluster/
 └── vms.go              # VM lifecycle management
 
 internal/cluster/
-├── cluster.go          # Internal cluster operations
-└── interface.go        # Cluster interface definitions
+└── cluster.go          # Internal cluster operations (config loading, kubeconfig management)
 ```
 
 **Responsibilities**:
@@ -342,53 +329,48 @@ CreateTestCluster(ctx, configPath) (*TestClusterResources, error)
 CleanupTestCluster(ctx, resources) error
 ```
 
-### 3.3 Kubernetes Module (`internal/kubernetes/`)
+### 3.3 Kubernetes Module (`pkg/kubernetes/` and `internal/kubernetes/`)
 
 ```
-internal/kubernetes/
-├── client.go           # Base Kubernetes client setup
-├── core/
-│   ├── namespace.go    # Namespace CRUD operations
-│   ├── node.go         # Node operations and queries
-│   ├── pod.go          # Pod management
-│   ├── secret.go       # Secret operations
-│   └── service.go      # Service management
-├── apps/
-│   ├── deployment.go   # Deployment operations
-│   └── daemonset.go    # DaemonSet operations
-├── storage/
-│   ├── client.go       # Storage client initialization
-│   ├── blockdevice.go  # BlockDevice operations
-│   ├── lvmvolumegroup.go  # LVMVolumeGroup operations
-│   ├── pvc.go          # PVC operations
-│   ├── storageclass.go # StorageClass operations
-│   └── volumesnapshot.go  # VolumeSnapshot operations
-├── virtualization/
-│   ├── client.go       # Virtualization client
-│   ├── virtual_machine.go  # VirtualMachine CRUD
-│   ├── virtual_disk.go     # VirtualDisk operations
-│   ├── virtual_image.go    # VirtualImage management
-│   ├── cluster_virtual_image.go  # ClusterVirtualImage ops
-│   └── vm_block_device.go  # VMBlockDevice operations
-└── deckhouse/
-    ├── client.go       # Deckhouse client setup
-    ├── modules.go      # Module operations
-    ├── nodegroups.go   # NodeGroup management
-    └── types.go        # Deckhouse type definitions
+pkg/kubernetes/                    # Public Kubernetes utilities
+├── apply.go                       # YAML manifest application (ApplyYAML, CreateYAML)
+├── modules.go                     # Module configuration and readiness checking
+├── namespace.go                   # Namespace utilities
+├── nodegroup.go                   # NodeGroup operations
+├── pod.go                         # Pod operations (WaitForPodsStatus)
+├── pvc.go                         # PVC operations (WaitForPVCsBound, WaitForPVCsResized, ResizeList)
+├── resources.go                   # Resource utilities (StorageClass, YAML file operations)
+└── secrets.go                     # Secret operations
+
+internal/kubernetes/               # Internal Kubernetes clients
+├── virtualization/                # Virtualization resources
+│   ├── client.go                  # Virtualization client
+│   ├── virtual_machine.go         # VirtualMachine CRUD
+│   ├── virtual_disk.go            # VirtualDisk operations
+│   ├── virtual_image.go           # VirtualImage management
+│   ├── cluster_virtual_image.go   # ClusterVirtualImage ops
+│   └── vm_block_device.go         # VMBlockDevice operations
+└── deckhouse/                     # Deckhouse-specific resources
+    ├── client.go                  # Deckhouse client (controller-runtime based)
+    ├── modules.go                 # Module operations (GetModule, CreateModuleConfig, etc.)
+    ├── nodegroups.go              # NodeGroup management
+    └── types.go                   # Deckhouse type definitions
 ```
 
 **Responsibilities**:
-- All Kubernetes API operations
-- Resource-specific CRUD operations
-- Status checking and waiting
-- Query and filter operations
-- Type-safe resource management
+- Kubernetes API operations using standard `kubernetes.Clientset` and `dynamic.Interface`
+- Resource-specific helper functions for common operations
+- Status checking and waiting utilities
+- YAML manifest application
+- Module configuration with dependency handling
+- Custom resource management (Deckhouse, virtualization)
 
 **Key Features**:
-- Organized by Kubernetes API groups
-- Consistent error handling
-- Wait/poll operations for resource readiness
-- Support for custom resources (Deckhouse, storage, virtualization)
+- Uses standard Kubernetes client-go libraries (no custom wrappers)
+- Helper functions in `pkg/kubernetes/` for common operations
+- Module configuration with topological sort for dependencies
+- Parallel module configuration and readiness checking
+- Support for Custom Resources via dynamic client
 
 ### 3.4 Infrastructure Module (`internal/infrastructure/`)
 
@@ -434,7 +416,7 @@ logger/
 
 **Key Features**:
 - DEBUG, INFO, WARN, ERROR levels
-- Emoji prefixes for visual clarity (▶️ ✅ ⚠️ ❌ 🐛 ⏳)
+- Emoji prefixes for visual clarity (▶️ ✅ ⚠️ ❌ 🔧 ⏳)
 - Dual output (console + file)
 - Context-aware logging
 
@@ -443,21 +425,28 @@ logger/
 ```
 pkg/
 ├── cluster/
-│   ├── cluster.go      # Main cluster management functions
-│   ├── setup.go        # Cluster setup operations
-│   ├── modules.go      # Module management
-│   ├── nodegroup.go    # NodeGroup operations
-│   ├── secrets.go      # Secret management
-│   └── vms.go          # VM management
+│   ├── cluster.go      # Main cluster lifecycle (CreateTestCluster, CleanupTestCluster)
+│   ├── setup.go        # Cluster setup and bootstrap operations
+│   ├── vms.go          # VM lifecycle management
+│   └── TODO.md         # Development notes
 ├── kubernetes/
-│   └── namespace.go    # Namespace utilities
+│   ├── apply.go        # YAML manifest application
+│   ├── modules.go      # Module configuration with dependency handling
+│   ├── namespace.go    # Namespace utilities
+│   ├── nodegroup.go    # NodeGroup operations
+│   ├── pod.go          # Pod operations
+│   ├── pvc.go          # PVC operations
+│   ├── resources.go    # Resource utilities
+│   └── secrets.go      # Secret operations
 └── testkit/
     └── stress-tests.go # Stress test helpers
 ```
 
 **Responsibilities**:
 - Public API for test implementations
-- Cluster lifecycle management
+- Cluster lifecycle management (create, wait, cleanup)
+- Kubernetes resource utilities using standard clients
+- Module configuration with automatic dependency resolution
 - Test utilities and helpers
 - Well-documented interfaces
 
@@ -579,13 +568,14 @@ var _ = Describe("PVC Operations", Ordered, func() {
         // ... (automatically generated)
     })
 
-    It("should create test cluster and wait for it to become ready", func() {
+    It("should create test cluster", func() {
         ctx := context.Background()
         
         By("Creating test cluster", func() {
             var err error
             testClusterResources, err = cluster.CreateTestCluster(ctx, "cluster_config.yml")
             Expect(err).NotTo(HaveOccurred())
+            // Note: CreateTestCluster automatically waits for modules to be ready
         })
     })
 
@@ -699,6 +689,7 @@ logger.Error("Failed to create resource: %v", err)
 - [ ] Integration with CI/CD systems
 - [ ] Performance benchmarking framework
 - [ ] More granular cleanup options
+- [ ] Support for deploying different numbers of workers and masters with the same config
 
 ### 9.2 Technical Debt
 

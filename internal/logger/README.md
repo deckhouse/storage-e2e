@@ -124,7 +124,7 @@ log.Error("error occurred", "error", err)
 [INFO]  ✅ VM master-1 is Running
 [WARN]  ⚠️ Resource already exists, skipping creation
 [ERROR] ❌ Failed to create VM: connection timeout
-[DEBUG] 🐛 SSH command output: total 42K...
+[DEBUG] 🔧 SSH command output: total 42K...
 ```
 
 ### Console Output (without emojis, USE_EMOJIS=false)
