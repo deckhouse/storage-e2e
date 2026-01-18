@@ -30,13 +30,6 @@ clusterDefinition:
       coreFraction: 50
       ram: 6
       diskSize: 50
-    - hostname: "worker-4"
-      hostType: "vm"
-      osType: "AltLinux Server 11" # See internal/config/images.go
-      cpu: 4
-      coreFraction: 50
-      ram: 8
-      diskSize: 50
     - hostname: "worker-5"
       hostType: "vm"
       osType: "Ubuntu 24.04 6.8.0-53-generic" # See internal/config/images.go
