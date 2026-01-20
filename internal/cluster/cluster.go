@@ -35,10 +35,13 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/rest"
@@ -271,7 +274,35 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 		return nil, "", fmt.Errorf("failed to build config from kubeconfig: %w", err)
 	}
 
+	// Configure extended timeouts for tunnel-based connections
+	configureExtendedTimeouts(config)
+
 	return config, kubeconfigPath, nil
+}
+
+// configureExtendedTimeouts configures rest.Config with extended timeouts for tunnel-based connections
+// This helps prevent timeouts when API server is under load or network latency is high
+func configureExtendedTimeouts(config *rest.Config) {
+	// Increase overall request timeout from default 30s to 2 minutes
+	config.Timeout = 2 * time.Minute
+
+	// Configure HTTP transport with extended timeouts
+	// These settings help when using SSH tunnels which can have higher latency
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second, // Connection timeout
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   30 * time.Second, // Extended from default 10s
+		ResponseHeaderTimeout: 60 * time.Second, // Wait up to 60s for response headers
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+	}
+
+	config.Transport = transport
 }
 
 // UpdateKubeconfigPort updates the kubeconfig file to use the specified local port

@@ -31,6 +31,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/flowcontrol"
 
 	"github.com/deckhouse/storage-e2e/internal/logger"
 	pkgkubernetes "github.com/deckhouse/storage-e2e/pkg/kubernetes"
@@ -118,14 +119,18 @@ type StressTestRunner struct {
 
 // NewStressTestRunner creates a new stress test runner
 func NewStressTestRunner(config *Config, restConfig *rest.Config) (*StressTestRunner, error) {
+	// Copy config and disable client-side rate limiter for parallel stress (snapshots, etc.)
+	cfg := *restConfig
+	cfg.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
+
 	// Create native Kubernetes clientset
-	clientset, err := kubernetes.NewForConfig(restConfig)
+	clientset, err := kubernetes.NewForConfig(&cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
 	}
 
 	// Create dynamic client for custom resources like VolumeSnapshots
-	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	dynamicClient, err := dynamic.NewForConfig(&cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}

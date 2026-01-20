@@ -125,12 +125,17 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 		settings = moduleConfig.Settings
 	}
 
-	// Retry logic for webhook connection errors
+	// Retry logic for webhook connection errors and network timeouts
 	maxRetries := 10
 	retryDelay := 2 * time.Second
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			logger.Debug("Retrying ModuleConfig operation for %s (attempt %d/%d)",
+				moduleConfig.Name, attempt+1, maxRetries)
+		}
+
 		// Check if ModuleConfig exists
 		_, err := deckhouse.GetModuleConfig(ctx, kubeconfig, moduleConfig.Name)
 		if err != nil {
@@ -138,19 +143,21 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 			err = deckhouse.CreateModuleConfig(ctx, kubeconfig, moduleConfig.Name, moduleConfig.Version, moduleConfig.Enabled, settings)
 			if err != nil {
 				lastErr = err
-				// Check if it's a webhook connection error
-				if isWebhookConnectionError(err) {
-					logger.Debug("webhook-handler connection error. Retrying... %v/%v", attempt, maxRetries)
-					if attempt < maxRetries-1 {
-						// Wait before retrying
-						select {
-						case <-ctx.Done():
-							return ctx.Err()
-						case <-time.After(retryDelay):
-							// Exponential backoff
-							retryDelay = time.Duration(float64(retryDelay) * 1.5)
-							continue
-						}
+				// Check if it's a retryable error (webhook or network timeout)
+				if (isWebhookConnectionError(err) || isRetryableNetworkError(err)) && attempt < maxRetries-1 {
+					if isWebhookConnectionError(err) {
+						logger.Debug("webhook-handler connection error for %s", moduleConfig.Name)
+					} else {
+						logger.Warn("Network timeout error creating ModuleConfig for %s: %v", moduleConfig.Name, err)
+					}
+					// Wait before retrying
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(retryDelay):
+						// Exponential backoff
+						retryDelay = time.Duration(float64(retryDelay) * 1.5)
+						continue
 					}
 				}
 				return fmt.Errorf("failed to create moduleconfig %s: %w", moduleConfig.Name, err)
@@ -161,18 +168,21 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 			err = deckhouse.UpdateModuleConfig(ctx, kubeconfig, moduleConfig.Name, moduleConfig.Version, moduleConfig.Enabled, settings)
 			if err != nil {
 				lastErr = err
-				// Check if it's a webhook connection error
-				if isWebhookConnectionError(err) {
-					if attempt < maxRetries-1 {
-						// Wait before retrying
-						select {
-						case <-ctx.Done():
-							return ctx.Err()
-						case <-time.After(retryDelay):
-							// Exponential backoff
-							retryDelay = time.Duration(float64(retryDelay) * 1.5)
-							continue
-						}
+				// Check if it's a retryable error (webhook or network timeout)
+				if (isWebhookConnectionError(err) || isRetryableNetworkError(err)) && attempt < maxRetries-1 {
+					if isWebhookConnectionError(err) {
+						logger.Debug("webhook-handler connection error for %s", moduleConfig.Name)
+					} else {
+						logger.Warn("Network timeout error updating ModuleConfig for %s: %v", moduleConfig.Name, err)
+					}
+					// Wait before retrying
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(retryDelay):
+						// Exponential backoff
+						retryDelay = time.Duration(float64(retryDelay) * 1.5)
+						continue
 					}
 				}
 				return fmt.Errorf("failed to update moduleconfig %s: %w", moduleConfig.Name, err)
@@ -183,122 +193,6 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 
 	return fmt.Errorf("failed to configure moduleconfig %s after %d attempts: %w", moduleConfig.Name, maxRetries, lastErr)
 }
-
-// configureModuleConfigViaSSH creates or updates a ModuleConfig resource via kubectl over SSH
-// This ensures the webhook is called from within the cluster network
-// func configureModuleConfigViaSSH(ctx context.Context, sshClient ssh.SSHClient, moduleConfig *config.ModuleConfig) error {
-// 	// Build ModuleConfig YAML
-// 	moduleConfigYAML := struct {
-// 		APIVersion string `yaml:"apiVersion"`
-// 		Kind       string `yaml:"kind"`
-// 		Metadata   struct {
-// 			Name string `yaml:"name"`
-// 		} `yaml:"metadata"`
-// 		Spec struct {
-// 			Version  int                    `yaml:"version"`
-// 			Enabled  *bool                  `yaml:"enabled"`
-// 			Settings map[string]interface{} `yaml:"settings,omitempty"`
-// 		} `yaml:"spec"`
-// 	}{
-// 		APIVersion: "deckhouse.io/v1alpha1",
-// 		Kind:       "ModuleConfig",
-// 		Metadata: struct {
-// 			Name string `yaml:"name"`
-// 		}{
-// 			Name: moduleConfig.Name,
-// 		},
-// 		Spec: struct {
-// 			Version  int                    `yaml:"version"`
-// 			Enabled  *bool                  `yaml:"enabled"`
-// 			Settings map[string]interface{} `yaml:"settings,omitempty"`
-// 		}{
-// 			Version:  moduleConfig.Version,
-// 			Enabled:  &moduleConfig.Enabled,
-// 			Settings: moduleConfig.Settings, // nil or empty map will be omitted due to omitempty
-// 		},
-// 	}
-
-// 	yamlBytes, err := yaml.Marshal(moduleConfigYAML)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to marshal ModuleConfig YAML: %w", err)
-// 	}
-
-// 	// Apply via kubectl over SSH using the found path
-// 	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULECONFIG_EOF'\n%sMODULECONFIG_EOF", string(yamlBytes))
-// 	output, err := sshClient.Exec(ctx, cmd)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to apply ModuleConfig %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
-// 	}
-
-// 	return nil
-// }
-
-// // configureModulePullOverrideViaSSH creates or updates a ModulePullOverride resource via kubectl over SSH
-// func configureModulePullOverrideViaSSH(ctx context.Context, sshClient ssh.SSHClient, moduleConfig *config.ModuleConfig, registryRepo string) error {
-// 	// Determine ModulePullOverride imageTag
-// 	var imageTag string
-// 	shouldCreateMPO := false
-
-// 	if strings.HasPrefix(registryRepo, "dev-") {
-// 		shouldCreateMPO = true
-// 		if moduleConfig.ModulePullOverride != "" {
-// 			imageTag = moduleConfig.ModulePullOverride
-// 		} else {
-// 			imageTag = "main"
-// 		}
-// 	} else {
-// 		shouldCreateMPO = false
-// 	}
-
-// 	if !shouldCreateMPO {
-// 		return nil
-// 	}
-
-// 	// Build ModulePullOverride YAML
-// 	modulePullOverrideYAML := struct {
-// 		APIVersion string `yaml:"apiVersion"`
-// 		Kind       string `yaml:"kind"`
-// 		Metadata   struct {
-// 			Name string `yaml:"name"`
-// 		} `yaml:"metadata"`
-// 		Spec struct {
-// 			ImageTag     string `yaml:"imageTag"`
-// 			ScanInterval string `yaml:"scanInterval"`
-// 			Rollback     bool   `yaml:"rollback"`
-// 		} `yaml:"spec"`
-// 	}{
-// 		APIVersion: "deckhouse.io/v1alpha2",
-// 		Kind:       "ModulePullOverride",
-// 		Metadata: struct {
-// 			Name string `yaml:"name"`
-// 		}{
-// 			Name: moduleConfig.Name,
-// 		},
-// 		Spec: struct {
-// 			ImageTag     string `yaml:"imageTag"`
-// 			ScanInterval string `yaml:"scanInterval"`
-// 			Rollback     bool   `yaml:"rollback"`
-// 		}{
-// 			ImageTag:     imageTag,
-// 			ScanInterval: "1m",
-// 			Rollback:     false,
-// 		},
-// 	}
-
-// 	yamlBytes, err := yaml.Marshal(modulePullOverrideYAML)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to marshal ModulePullOverride YAML: %w", err)
-// 	}
-
-// 	// Apply via kubectl over SSH using the found path
-// 	cmd := fmt.Sprintf("sudo /opt/deckhouse/bin/kubectl apply -f - << 'MODULEPULLOVERRIDE_EOF'\n%sMODULEPULLOVERRIDE_EOF", string(yamlBytes))
-// 	output, err := sshClient.Exec(ctx, cmd)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to apply ModulePullOverride %s via SSH: %w\nOutput: %s", moduleConfig.Name, err, output)
-// 	}
-
-// 	return nil
-// }
 
 // isWebhookConnectionError checks if the error is a webhook connection error
 func isWebhookConnectionError(err error) bool {
@@ -313,6 +207,7 @@ func isWebhookConnectionError(err error) bool {
 }
 
 // configureModulePullOverride creates or updates a ModulePullOverride resource if needed
+// Retries with exponential backoff on network/timeout errors
 func configureModulePullOverride(ctx context.Context, kubeconfig *rest.Config, moduleConfig *config.ModuleConfig, registryRepo string) error {
 	// Determine ModulePullOverride imageTag
 	// If registryRepo starts with "dev-", always create MPO:
@@ -335,23 +230,78 @@ func configureModulePullOverride(ctx context.Context, kubeconfig *rest.Config, m
 		shouldCreateMPO = false
 	}
 
-	// Create or update ModulePullOverride if needed
+	// Create or update ModulePullOverride if needed with retry logic
 	if shouldCreateMPO {
-		_, err := deckhouse.GetModulePullOverride(ctx, kubeconfig, moduleConfig.Name)
-		if err != nil {
-			// Resource doesn't exist, create it
-			if err := deckhouse.CreateModulePullOverride(ctx, kubeconfig, moduleConfig.Name, imageTag); err != nil {
-				return fmt.Errorf("failed to create module pull override for %s: %w", moduleConfig.Name, err)
+		maxRetries := 5
+		retryDelay := 2 * time.Second
+		var lastErr error
+
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			if attempt > 0 {
+				logger.Debug("Retrying ModulePullOverride operation for %s (attempt %d/%d) after %v",
+					moduleConfig.Name, attempt+1, maxRetries, retryDelay)
+				// Wait before retry with exponential backoff
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("context cancelled while retrying ModulePullOverride for %s: %w", moduleConfig.Name, ctx.Err())
+				case <-time.After(retryDelay):
+					// Exponential backoff: 2s, 4s, 8s, 16s
+					retryDelay *= 2
+				}
 			}
-		} else {
-			// Resource exists, update it
-			if err := deckhouse.UpdateModulePullOverride(ctx, kubeconfig, moduleConfig.Name, imageTag); err != nil {
-				return fmt.Errorf("failed to update module pull override for %s: %w", moduleConfig.Name, err)
+
+			_, err := deckhouse.GetModulePullOverride(ctx, kubeconfig, moduleConfig.Name)
+			if err != nil {
+				// Resource doesn't exist, create it
+				if err := deckhouse.CreateModulePullOverride(ctx, kubeconfig, moduleConfig.Name, imageTag); err != nil {
+					lastErr = err
+					// Check if it's a retryable error (timeout, TLS handshake, connection refused, etc.)
+					if isRetryableNetworkError(err) && attempt < maxRetries-1 {
+						logger.Warn("Retryable error creating ModulePullOverride for %s: %v", moduleConfig.Name, err)
+						continue
+					}
+					return fmt.Errorf("failed to create ModulePullOverride for %s: %w", moduleConfig.Name, err)
+				}
+				return nil // Success
+			} else {
+				// Resource exists, update it
+				if err := deckhouse.UpdateModulePullOverride(ctx, kubeconfig, moduleConfig.Name, imageTag); err != nil {
+					lastErr = err
+					// Check if it's a retryable error
+					if isRetryableNetworkError(err) && attempt < maxRetries-1 {
+						logger.Warn("Retryable error updating ModulePullOverride for %s: %v", moduleConfig.Name, err)
+						continue
+					}
+					return fmt.Errorf("failed to update ModulePullOverride for %s: %w", moduleConfig.Name, err)
+				}
+				return nil // Success
 			}
+		}
+
+		// If we exhausted all retries
+		if lastErr != nil {
+			return fmt.Errorf("failed to configure ModulePullOverride for %s after %d attempts: %w",
+				moduleConfig.Name, maxRetries, lastErr)
 		}
 	}
 
 	return nil
+}
+
+// isRetryableNetworkError checks if an error is a network error that should be retried
+func isRetryableNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Check for common retryable network errors
+	return strings.Contains(errStr, "TLS handshake timeout") ||
+		strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "i/o timeout") ||
+		strings.Contains(errStr, "context deadline exceeded") ||
+		strings.Contains(errStr, "EOF") ||
+		strings.Contains(errStr, "broken pipe")
 }
 
 // EnableAndConfigureModules enables and configures modules based on cluster definition
