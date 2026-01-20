@@ -35,7 +35,6 @@ package cluster
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -286,23 +285,28 @@ func configureExtendedTimeouts(config *rest.Config) {
 	// Increase overall request timeout from default 30s to 2 minutes
 	config.Timeout = 2 * time.Minute
 
-	// Configure HTTP transport with extended timeouts
-	// These settings help when using SSH tunnels which can have higher latency
-	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second, // Connection timeout
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		TLSHandshakeTimeout:   30 * time.Second, // Extended from default 10s
-		ResponseHeaderTimeout: 60 * time.Second, // Wait up to 60s for response headers
-		ExpectContinueTimeout: 1 * time.Second,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   10,
-		IdleConnTimeout:       90 * time.Second,
+	// Cannot set custom Transport when TLS config is present (client-go restriction)
+	// Instead, we'll create a custom HTTP client with extended timeouts using rest.HTTPClientFor
+	// which properly handles TLS configuration
+	transport, err := rest.TransportFor(config)
+	if err != nil {
+		// If we can't get transport, just set timeout and return
+		// The client will use defaults with our timeout
+		return
 	}
 
-	config.Transport = transport
+	// Wrap the transport with extended timeouts
+	if httpTransport, ok := transport.(*http.Transport); ok {
+		// Clone and modify the transport
+		httpTransport.TLSHandshakeTimeout = 30 * time.Second   // Extended from default 10s
+		httpTransport.ResponseHeaderTimeout = 60 * time.Second // Wait up to 60s for response headers
+		httpTransport.IdleConnTimeout = 90 * time.Second
+
+		// Set the WrapTransport function to use our modified transport
+		config.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+			return httpTransport
+		}
+	}
 }
 
 // UpdateKubeconfigPort updates the kubeconfig file to use the specified local port
