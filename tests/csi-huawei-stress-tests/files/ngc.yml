@@ -41,7 +41,7 @@ spec:
 
 
     install_packages() {
-      yum install -y iscsi-initiator-utils device-mapper-multipath
+      yum install -y iscsi-initiator-utils device-mapper-multipath || dnf install -y iscsi-initiator-utils device-mapper-multipath
     }
 
     enable_services() {

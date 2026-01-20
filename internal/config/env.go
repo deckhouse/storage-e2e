@@ -10,6 +10,11 @@ import (
 const (
 	// ClusterCreateModeAlwaysUseExisting indicates to always use an existing cluster if available
 	ClusterCreateModeAlwaysUseExisting = "alwaysUseExisting"
+
+	// TODO
+	// useExisting - Vasya's option
+	// useExistingWithChecks - my option - with check of vm, os, kernel etc.
+
 	// ClusterCreateModeAlwaysCreateNew indicates to always create a new cluster
 	ClusterCreateModeAlwaysCreateNew = "alwaysCreateNew"
 

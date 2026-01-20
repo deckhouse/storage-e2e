@@ -7,7 +7,7 @@ clusterDefinition:
       cpu: 8
       coreFraction: 50
       ram: 8
-      diskSize: 60
+      diskSize: 40
   workers: # Worker nodes configuration // TODO implement logic allowing to deploy different number of workes and masters with the same config.
     - hostname: "worker-1"
       hostType: "vm"
@@ -15,28 +15,28 @@ clusterDefinition:
       cpu: 4
       coreFraction: 50
       ram: 6
-      diskSize: 50
+      diskSize: 30
     - hostname: "worker-2"
       hostType: "vm"
       osType: "RedOS 7.3.6 5.15.78-2.el7.3.x86_64" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
       ram: 6
-      diskSize: 50
+      diskSize: 30
     - hostname: "worker-3"
       hostType: "vm"
       osType: "AltLinux Server 10.4" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
       ram: 6
-      diskSize: 50
+      diskSize: 30
     - hostname: "worker-5"
       hostType: "vm"
       osType: "Ubuntu 24.04 6.8.0-53-generic" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
       ram: 8
-      diskSize: 50
+      diskSize: 30
   # DKP parameters
   dkpParameters:
     kubernetesVersion: "Automatic"
