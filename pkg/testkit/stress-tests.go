@@ -19,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -33,18 +34,17 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/flowcontrol"
 
+	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/logger"
 	pkgkubernetes "github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
 
-var (
-	// VolumeSnapshotGVR is the GroupVersionResource for VolumeSnapshot
-	VolumeSnapshotGVR = schema.GroupVersionResource{
-		Group:    "snapshot.storage.k8s.io",
-		Version:  "v1",
-		Resource: "volumesnapshots",
-	}
-)
+// VolumeSnapshotGVR is the GroupVersionResource for VolumeSnapshot
+var VolumeSnapshotGVR = schema.GroupVersionResource{
+	Group:    "snapshot.storage.k8s.io",
+	Version:  "v1",
+	Resource: "volumesnapshots",
+}
 
 // TestMode represents the mode of stress test
 type TestMode string
@@ -55,6 +55,7 @@ const (
 	ModeCheckCloning               TestMode = "check_cloning"
 	ModeCheckRestoringFromSnapshot TestMode = "check_restoring_from_snapshot"
 	ModeSnapshotResizeCloning      TestMode = "snapshot_resize_cloning"
+	ModeSnapshotOnly               TestMode = "snapshot_only"
 )
 
 // TestStep represents a step in snapshot_resize_cloning mode
@@ -95,17 +96,63 @@ type Config struct {
 	Cleanup bool
 }
 
-// DefaultConfig returns a config with sensible defaults
+// DefaultConfig returns a config with sensible defaults from environment variables
 func DefaultConfig() *Config {
+	// Parse environment variables with defaults
+	pvcSize := config.StressTestPVCSize
+	if pvcSize == "" {
+		pvcSize = config.StressTestPVCSizeDefaultValue
+	}
+
+	podsCount, err := strconv.Atoi(config.StressTestPodsCount)
+	if err != nil || config.StressTestPodsCount == "" {
+		podsCount, _ = strconv.Atoi(config.StressTestPodsCountDefaultValue)
+	}
+
+	pvcSizeAfterResize := config.StressTestPVCSizeAfterResize
+	if pvcSizeAfterResize == "" {
+		pvcSizeAfterResize = config.StressTestPVCSizeAfterResizeDefaultValue
+	}
+
+	pvcSizeAfterResizeStage2 := config.StressTestPVCSizeAfterResizeStage2
+	if pvcSizeAfterResizeStage2 == "" {
+		pvcSizeAfterResizeStage2 = config.StressTestPVCSizeAfterResizeStage2DefaultValue
+	}
+
+	snapshotsPerPVC, err := strconv.Atoi(config.StressTestSnapshotsPerPVC)
+	if err != nil || config.StressTestSnapshotsPerPVC == "" {
+		snapshotsPerPVC, _ = strconv.Atoi(config.StressTestSnapshotsPerPVCDefaultValue)
+	}
+
+	maxAttempts, err := strconv.Atoi(config.StressTestMaxAttempts)
+	if err != nil || config.StressTestMaxAttempts == "" {
+		maxAttempts, _ = strconv.Atoi(config.StressTestMaxAttemptsDefaultValue)
+	}
+
+	intervalSeconds, err := strconv.Atoi(config.StressTestInterval)
+	if err != nil || config.StressTestInterval == "" {
+		intervalSeconds, _ = strconv.Atoi(config.StressTestIntervalDefaultValue)
+	}
+	interval := time.Duration(intervalSeconds) * time.Second
+
+	cleanup := true
+	if config.StressTestCleanup != "" {
+		cleanup = config.StressTestCleanup == "true" || config.StressTestCleanup == "True"
+	}
+
 	return &Config{
-		SchedulerName:   "default-scheduler",
-		Mode:            ModeFlog,
-		SnapshotsPerPVC: 1,
-		Iterations:      1, // Run test once by default
-		MaxAttempts:     0, // 0 means infinite
-		Interval:        5 * time.Second,
-		Cleanup:         false,
-		TestOrder:       []TestStep{StepRestoreFromSnapshot, StepResize, StepClone},
+		SchedulerName:            "default-scheduler",
+		Mode:                     ModeFlog,
+		PVCSize:                  pvcSize,
+		PodsCount:                podsCount,
+		PVCSizeAfterResize:       pvcSizeAfterResize,
+		PVCSizeAfterResizeStage2: pvcSizeAfterResizeStage2,
+		SnapshotsPerPVC:          snapshotsPerPVC,
+		MaxAttempts:              maxAttempts,
+		Interval:                 interval,
+		Cleanup:                  cleanup,
+		Iterations:               1,
+		TestOrder:                []TestStep{StepRestoreFromSnapshot, StepResize, StepClone},
 	}
 }
 
@@ -166,6 +213,11 @@ func (c *Config) Validate() error {
 		// PVC for cloning will be auto-generated (pvc-test-1)
 	case ModeCheckRestoringFromSnapshot:
 		// Snapshot name will be auto-generated (snapshot-test-1-1)
+	case ModeSnapshotOnly:
+		// Creates PVC, pod, snapshot, verifies snapshot is ready, cleanup
+		if c.SnapshotsPerPVC <= 0 {
+			c.SnapshotsPerPVC = 1 // Default to 1 snapshot per PVC
+		}
 	case ModeSnapshotResizeCloning:
 		if c.SnapshotsPerPVC <= 0 {
 			return fmt.Errorf("snapshots per PVC must be > 0")
@@ -238,6 +290,8 @@ func (r *StressTestRunner) Run(ctx context.Context) error {
 		return r.runCheckCloningMode(ctx)
 	case ModeCheckRestoringFromSnapshot:
 		return r.runCheckRestoringFromSnapshotMode(ctx)
+	case ModeSnapshotOnly:
+		return r.runSnapshotOnlyMode(ctx)
 	case ModeSnapshotResizeCloning:
 		return r.runSnapshotResizeCloningMode(ctx)
 	default:
@@ -590,7 +644,8 @@ func (r *StressTestRunner) createVolumeSnapshot(ctx context.Context, pvcIndex in
 }
 
 // createRestorePodAndPVC creates a pod and PVC restored from a snapshot
-func (r *StressTestRunner) createRestorePodAndPVC(ctx context.Context, snapshotName, pvcName, podName string) error {
+// restoreSize specifies the size for the restored PVC (must be >= snapshot size)
+func (r *StressTestRunner) createRestorePodAndPVC(ctx context.Context, snapshotName, pvcName, podName, restoreSize string) error {
 	// Create PVC
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
@@ -604,7 +659,7 @@ func (r *StressTestRunner) createRestorePodAndPVC(ctx context.Context, snapshotN
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse(r.config.PVCSize),
+					corev1.ResourceStorage: resource.MustParse(restoreSize),
 				},
 			},
 			StorageClassName: &r.config.StorageClassName,
@@ -801,7 +856,7 @@ func (r *StressTestRunner) createCheckFSPodAndPVC(ctx context.Context, index int
 		},
 	}
 
-	// Create Pod - just checks if filesystem is mounted correctly
+	// Create Pod - just checks if filesystem is mounted correctly and writable
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podName,
@@ -878,7 +933,7 @@ func (r *StressTestRunner) createCloneCheckPodAndPVC(ctx context.Context, index 
 		},
 	}
 
-	// Create Pod - checks filesystem
+	// Create Pod - checks filesystem is mounted and writable
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podName,
@@ -928,7 +983,8 @@ func (r *StressTestRunner) createCloneCheckPodAndPVC(ctx context.Context, index 
 }
 
 // createRestoreCheckPodAndPVC creates a pod and PVC restored from a snapshot
-func (r *StressTestRunner) createRestoreCheckPodAndPVC(ctx context.Context, index int, snapshotName string) error {
+// restoreSize specifies the size for the restored PVC (must be >= snapshot size)
+func (r *StressTestRunner) createRestoreCheckPodAndPVC(ctx context.Context, index int, snapshotName, restoreSize string) error {
 	pvcName := fmt.Sprintf("pvc-test-%d", index)
 	podName := fmt.Sprintf("pod-test-%d", index)
 
@@ -944,7 +1000,7 @@ func (r *StressTestRunner) createRestoreCheckPodAndPVC(ctx context.Context, inde
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse(r.config.PVCSize),
+					corev1.ResourceStorage: resource.MustParse(restoreSize),
 				},
 			},
 			StorageClassName: &r.config.StorageClassName,
@@ -956,7 +1012,7 @@ func (r *StressTestRunner) createRestoreCheckPodAndPVC(ctx context.Context, inde
 		},
 	}
 
-	// Create Pod - checks filesystem and verifies data integrity
+	// Create Pod - checks filesystem is mounted, verifies data integrity and writability
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: podName,
@@ -1011,11 +1067,12 @@ func (r *StressTestRunner) runFlogMode(ctx context.Context) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, r.config.PodsCount)
 
-	logger.Debug("Creating %d pods and PVCs in parallel", r.config.PodsCount)
+	logger.Debug("Creating %d pods and PVCs", r.config.PodsCount)
 	for i := 1; i <= r.config.PodsCount; i++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
+
 			pvcName := fmt.Sprintf("pvc-test-%d", index)
 			podName := fmt.Sprintf("pod-test-%d", index)
 			firstStart := ""
@@ -1079,11 +1136,12 @@ func (r *StressTestRunner) runCheckFSOnlyMode(ctx context.Context) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, r.config.PodsCount)
 
-	logger.Debug("Creating %d pods and PVCs for filesystem check in parallel", r.config.PodsCount)
+	logger.Debug("Creating %d pods and PVCs for filesystem check", r.config.PodsCount)
 	for i := 1; i <= r.config.PodsCount; i++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
+
 			if err := r.createCheckFSPodAndPVC(ctx, index); err != nil {
 				errChan <- fmt.Errorf("failed to create filesystem check pod/PVC %d: %w", index, err)
 			}
@@ -1128,11 +1186,12 @@ func (r *StressTestRunner) runCheckCloningMode(ctx context.Context) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, r.config.PodsCount)
 
-	logger.Debug("Creating %d cloned PVCs from %s in parallel", r.config.PodsCount, sourcePVCName)
+	logger.Debug("Creating %d cloned PVCs from %s", r.config.PodsCount, sourcePVCName)
 	for i := 1; i <= r.config.PodsCount; i++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
+
 			if err := r.createCloneCheckPodAndPVC(ctx, index, sourcePVCName); err != nil {
 				errChan <- fmt.Errorf("failed to create clone check pod/PVC %d: %w", index, err)
 			}
@@ -1173,16 +1232,34 @@ func (r *StressTestRunner) runCheckCloningMode(ctx context.Context) error {
 func (r *StressTestRunner) runCheckRestoringFromSnapshotMode(ctx context.Context) error {
 	snapshotName := "snapshot-test-1-1" // Auto-generated snapshot name
 
+	// Get the snapshot to determine its size
+	snapshot, err := r.dynamicClient.Resource(VolumeSnapshotGVR).Namespace(r.config.Namespace).Get(ctx, snapshotName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get snapshot %s: %w", snapshotName, err)
+	}
+
+	// Get restore size from snapshot status.restoreSize or use default PVCSize
+	restoreSize := r.config.PVCSize
+	if status, found, _ := unstructured.NestedMap(snapshot.Object, "status"); found {
+		if restoreSizeVal, ok := status["restoreSize"]; ok {
+			if sizeStr, ok := restoreSizeVal.(string); ok && sizeStr != "" {
+				restoreSize = sizeStr
+			}
+		}
+	}
+	logger.Debug("Using restore size %s for snapshot %s", restoreSize, snapshotName)
+
 	// Create all restored PVCs and pods in parallel
 	var wg sync.WaitGroup
 	errChan := make(chan error, r.config.PodsCount)
 
-	logger.Debug("Creating %d restored PVCs from snapshot %s in parallel", r.config.PodsCount, snapshotName)
+	logger.Debug("Creating %d restored PVCs from snapshot %s", r.config.PodsCount, snapshotName)
 	for i := 1; i <= r.config.PodsCount; i++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			if err := r.createRestoreCheckPodAndPVC(ctx, index, snapshotName); err != nil {
+
+			if err := r.createRestoreCheckPodAndPVC(ctx, index, snapshotName, restoreSize); err != nil {
 				errChan <- fmt.Errorf("failed to create restore check pod/PVC %d: %w", index, err)
 			}
 		}(i)
@@ -1217,17 +1294,135 @@ func (r *StressTestRunner) runCheckRestoringFromSnapshotMode(ctx context.Context
 	return nil
 }
 
+// runSnapshotOnlyMode runs the snapshot_only mode test
+// Creates PVCs, pods, snapshots, verifies snapshots are ready, and optionally cleans up
+func (r *StressTestRunner) runSnapshotOnlyMode(ctx context.Context) error {
+	// Create all original pods and PVCs in parallel
+	var wg sync.WaitGroup
+	errChan := make(chan error, r.config.PodsCount)
+
+	logger.Debug("Creating %d original pods and PVCs", r.config.PodsCount)
+	for i := 1; i <= r.config.PodsCount; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+
+			if err := r.createOriginalPodAndPVC(ctx, index); err != nil {
+				errChan <- fmt.Errorf("failed to create original pod/PVC %d: %w", index, err)
+			}
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(errChan)
+
+	// Check for errors
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
+	}
+
+	// Wait for PVCs to be bound
+	if err := pkgkubernetes.WaitForPVCsBound(ctx, r.clientset, r.config.Namespace, "load-test=true,load-test-role=original", r.config.PodsCount, r.config.MaxAttempts, r.config.Interval); err != nil {
+		return err
+	}
+
+	// Wait for pods to be running
+	if err := pkgkubernetes.WaitForPodsStatus(ctx, r.clientset, r.config.Namespace, "load-test=true,load-test-role=original", "Running", r.config.PodsCount, r.config.MaxAttempts, r.config.Interval); err != nil {
+		return err
+	}
+
+	// Give pods some time to write data
+	time.Sleep(5 * time.Second)
+
+	// Create all snapshots in parallel
+	totalSnapshots := r.config.PodsCount * r.config.SnapshotsPerPVC
+	var wg2 sync.WaitGroup
+	errChan2 := make(chan error, totalSnapshots)
+
+	logger.Debug("Creating %d snapshots in parallel", totalSnapshots)
+	for k := 1; k <= r.config.PodsCount; k++ {
+		for s := 1; s <= r.config.SnapshotsPerPVC; s++ {
+			wg2.Add(1)
+			go func(pvcIndex, snapshotNum int) {
+				defer wg2.Done()
+				snapshotName := fmt.Sprintf("snapshot-test-%d-%d", pvcIndex, snapshotNum)
+				if err := r.createVolumeSnapshot(ctx, pvcIndex, snapshotName); err != nil {
+					errChan2 <- fmt.Errorf("failed to create snapshot %s: %w", snapshotName, err)
+				}
+			}(k, s)
+		}
+	}
+
+	wg2.Wait()
+	close(errChan2)
+
+	// Check for errors
+	for err := range errChan2 {
+		if err != nil {
+			return err
+		}
+	}
+
+	// Wait for all snapshots to be ready
+	logger.Debug("Waiting for %d snapshots to be ready", totalSnapshots)
+	attempt := 0
+	for {
+		snapshots, err := r.dynamicClient.Resource(VolumeSnapshotGVR).Namespace(r.config.Namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "load-test-role=snapshot",
+		})
+		if err != nil {
+			return err
+		}
+
+		readyCount := 0
+		for _, snapshot := range snapshots.Items {
+			status, found, err := unstructured.NestedMap(snapshot.Object, "status")
+			if err != nil || !found {
+				continue
+			}
+			readyToUse, ok := status["readyToUse"].(bool)
+			if ok && readyToUse {
+				readyCount++
+			}
+		}
+
+		if readyCount >= totalSnapshots {
+			logger.Debug("All %d snapshots are ready", totalSnapshots)
+			break
+		}
+
+		attempt++
+		if attempt >= r.config.MaxAttempts {
+			return fmt.Errorf("timeout waiting for snapshots to be ready (got %d/%d)", readyCount, totalSnapshots)
+		}
+		time.Sleep(r.config.Interval)
+	}
+
+	logger.Info("Snapshot-only test completed successfully: %d PVCs, %d snapshots", r.config.PodsCount, totalSnapshots)
+
+	// Cleanup if requested
+	if r.config.Cleanup {
+		return r.cleanup(ctx)
+	}
+
+	return nil
+}
+
 // runSnapshotResizeCloningMode runs the snapshot_resize_cloning mode test
 func (r *StressTestRunner) runSnapshotResizeCloningMode(ctx context.Context) error {
 	// Create all original pods and PVCs in parallel
 	var wg sync.WaitGroup
 	errChan := make(chan error, r.config.PodsCount)
 
-	logger.Debug("Creating %d original pods and PVCs in parallel", r.config.PodsCount)
+	logger.Debug("Creating %d original pods and PVCs", r.config.PodsCount)
 	for i := 1; i <= r.config.PodsCount; i++ {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
+
 			if err := r.createOriginalPodAndPVC(ctx, index); err != nil {
 				errChan <- fmt.Errorf("failed to create original pod/PVC %d: %w", index, err)
 			}
@@ -1381,10 +1576,24 @@ func (r *StressTestRunner) executeRestoreFromSnapshotStep(ctx context.Context, r
 			wg2.Add(1)
 			go func(pvcIndex, snapshotNum int) {
 				defer wg2.Done()
+
+				// Get current size of the source PVC (snapshot was taken from this PVC)
+				sourcePVC, err := r.clientset.CoreV1().PersistentVolumeClaims(r.config.Namespace).Get(ctx, fmt.Sprintf("pvc-test-%d", pvcIndex), metav1.GetOptions{})
+				if err != nil {
+					errChan2 <- fmt.Errorf("failed to get source PVC pvc-test-%d: %w", pvcIndex, err)
+					return
+				}
+				restoreSize := r.config.PVCSize
+				if sourcePVC.Status.Capacity != nil {
+					if size, ok := sourcePVC.Status.Capacity[corev1.ResourceStorage]; ok {
+						restoreSize = size.String()
+					}
+				}
+
 				snapshotName := fmt.Sprintf("snapshot-test-%d-%d", pvcIndex, snapshotNum)
 				pvcName := fmt.Sprintf("pvc-test-%d-restore-%d", pvcIndex, snapshotNum)
 				podName := fmt.Sprintf("pod-test-%d-restore-%d", pvcIndex, snapshotNum)
-				if err := r.createRestorePodAndPVC(ctx, snapshotName, pvcName, podName); err != nil {
+				if err := r.createRestorePodAndPVC(ctx, snapshotName, pvcName, podName, restoreSize); err != nil {
 					errChan2 <- fmt.Errorf("failed to create restore pod/PVC %s: %w", podName, err)
 					return
 				}
@@ -1484,6 +1693,7 @@ func (r *StressTestRunner) executeStage2(ctx context.Context, pvcNames []string)
 		wg.Add(1)
 		go func(pvcName string) {
 			defer wg.Done()
+
 			podName := fmt.Sprintf("%s-flog", pvcName)
 			role := "clone-flog"
 			if len(pvcName) > 8 && pvcName[len(pvcName)-8:] == "-restore" {
@@ -1534,6 +1744,40 @@ func (r *StressTestRunner) executeStage2(ctx context.Context, pvcNames []string)
 	}
 	if err := pkgkubernetes.WaitForPVCsResized(ctx, r.clientset, r.config.Namespace, pvcNames, r.config.PVCSizeAfterResizeStage2, r.config.MaxAttempts, r.config.Interval); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// CleanupStressNamespaces deletes all namespaces with the load-test=true label.
+func CleanupStressNamespaces(ctx context.Context, kubeconfig *rest.Config) error {
+	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	// Find namespaces with load-test label
+	logger.Debug("Looking for stress test namespaces (label: load-test=true)...")
+	nsList, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{
+		LabelSelector: "load-test=true",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list namespaces: %w", err)
+	}
+
+	if len(nsList.Items) == 0 {
+		logger.Debug("No stress test namespaces found")
+		return nil
+	}
+
+	logger.Info("Found %d stress test namespaces to delete", len(nsList.Items))
+
+	// Delete the namespaces
+	for _, ns := range nsList.Items {
+		logger.Debug("Deleting namespace: %s", ns.Name)
+		if err := clientset.CoreV1().Namespaces().Delete(ctx, ns.Name, metav1.DeleteOptions{}); err != nil {
+			logger.Warn("Failed to delete namespace %s: %v", ns.Name, err)
+		}
 	}
 
 	return nil

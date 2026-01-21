@@ -32,20 +32,24 @@ func main() {
 The logger is configured via environment variables:
 
 **`LOG_LEVEL`** - Controls log verbosity:
+
 - `debug` - Show all messages (debug, success, info, progress, skip, delete, steps, warnings, errors)
 - `info` - Show major steps, info, warnings, and errors only (default) - cleaner output for production
 - `warn` - Show warnings and errors only
 - `error` - Show errors only
 
 **`LOG_FILE_PATH`** - Controls file logging:
+
 - Not set or empty: Logs to console only
 - Set to a file path: Logs to both console and the specified file
 
 **`USE_EMOJIS`** - Controls emoji display in log messages:
+
 - `true` - Show emojis in log messages (default)
 - `false` - Disable emojis for cleaner output
 
 Examples:
+
 ```bash
 # Console only
 export LOG_LEVEL=info
@@ -173,6 +177,7 @@ func TestMyFunction(t *testing.T) {
 The package is designed to make migration easy:
 
 **Before:**
+
 ```go
 fmt.Printf("    ▶️  Step 1: Loading configuration from %s\n", filename)
 fmt.Printf("    ✅ Step 1: Configuration loaded\n")
@@ -180,6 +185,7 @@ fmt.Printf("    ❌ Failed to load: %v\n", err)
 ```
 
 **After:**
+
 ```go
 logger.Step(1, "Loading configuration from %s", filename)
 logger.StepComplete(1, "Configuration loaded")
@@ -189,6 +195,7 @@ logger.Error("Failed to load: %v", err)
 ## Log Levels Usage Guidelines
 
 ### DEBUG Level
+
 - Detailed debug information
 - Success messages
 - General info messages
@@ -201,16 +208,19 @@ logger.Error("Failed to load: %v", err)
 - Bootstrap log content
 
 ### INFO Level (Default)
+
 - Major step start/completion (Step, StepComplete)
 - Important workflow milestones
 
 ### WARN Level
+
 - Resources already exist (skipping)
 - Fallback behaviors
 - Non-critical cleanup issues
 - Deprecated usage warnings
 
 ### ERROR Level
+
 - Operation failures
 - Resource creation/deletion failures
 - Connection/SSH failures
@@ -219,6 +229,7 @@ logger.Error("Failed to load: %v", err)
 ## Implementation Details
 
 The logger uses:
+
 - **Console Handler**: Custom `slog.Handler` with emoji and color support
 - **File Handler**: Standard `slog.JSONHandler` for structured output
 - **Multi Handler**: Combines multiple handlers for dual output

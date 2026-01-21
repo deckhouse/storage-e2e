@@ -19,10 +19,11 @@ package virtualization
 import (
 	"context"
 
-	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 )
 
 // Client provides access to virtualization resources

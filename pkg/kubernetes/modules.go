@@ -23,12 +23,164 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/rest"
+
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 	"github.com/deckhouse/storage-e2e/internal/logger"
-	"k8s.io/client-go/rest"
 )
+
+// ModuleSpec defines a module to be enabled in the cluster.
+// This is a simplified version of config.ModuleConfig that provides
+// a clean API for test writers.
+type ModuleSpec struct {
+	// Name is the name of the module (e.g., "snapshot-controller", "csi-hpe")
+	Name string
+
+	// Version is the module config version (typically 1)
+	Version int
+
+	// Enabled indicates whether the module should be enabled
+	Enabled bool
+
+	// Settings contains module-specific settings
+	Settings map[string]interface{}
+
+	// Dependencies lists module names that must be enabled before this one
+	Dependencies []string
+
+	// ModulePullOverride overrides the module pull branch/tag (e.g., "main", "pr123")
+	// Only used for dev registries (registries starting with "dev-")
+	ModulePullOverride string
+}
+
+// TestClusterResourcesInterface defines the interface for accessing test cluster resources
+// This avoids circular imports with the cluster package
+type TestClusterResourcesInterface interface {
+	GetKubeconfig() *rest.Config
+	GetSSHClient() ssh.SSHClient
+	GetClusterDefinition() *config.ClusterDefinition
+}
+
+// convertModuleSpecsToConfigs converts ModuleSpec slice to config.ModuleConfig slice
+func convertModuleSpecsToConfigs(modules []ModuleSpec) []*config.ModuleConfig {
+	moduleConfigs := make([]*config.ModuleConfig, len(modules))
+	for i, spec := range modules {
+		settings := spec.Settings
+		if settings == nil {
+			settings = make(map[string]interface{})
+		}
+		moduleConfigs[i] = &config.ModuleConfig{
+			Name:               spec.Name,
+			Version:            spec.Version,
+			Enabled:            spec.Enabled,
+			Settings:           settings,
+			Dependencies:       spec.Dependencies,
+			ModulePullOverride: spec.ModulePullOverride,
+		}
+	}
+	return moduleConfigs
+}
+
+// EnableModulesWithSpecs enables and configures the specified modules in the test cluster.
+// It handles dependencies automatically through topological sort and waits for
+// each level of modules to become Ready before proceeding to the next level.
+//
+// Parameters:
+//   - ctx: context for cancellation
+//   - kubeconfig: kubernetes client config
+//   - sshClient: SSH client for cluster access
+//   - clusterDef: cluster definition (can be nil for existing clusters)
+//   - modules: list of module specifications to enable
+//
+// Example usage:
+//
+//	modules := []kubernetes.ModuleSpec{
+//	    {
+//	        Name:               "snapshot-controller",
+//	        Version:            1,
+//	        Enabled:            true,
+//	        ModulePullOverride: "main",
+//	    },
+//	    {
+//	        Name:               "csi-hpe",
+//	        Version:            1,
+//	        Enabled:            true,
+//	        Dependencies:       []string{"snapshot-controller"},
+//	        ModulePullOverride: "main",
+//	    },
+//	}
+//	err := kubernetes.EnableModulesWithSpecs(ctx, kubeconfig, sshClient, clusterDef, modules)
+func EnableModulesWithSpecs(ctx context.Context, kubeconfig *rest.Config, sshClient ssh.SSHClient, clusterDef *config.ClusterDefinition, modules []ModuleSpec) error {
+	// Convert ModuleSpec to config.ModuleConfig
+	moduleConfigs := convertModuleSpecsToConfigs(modules)
+
+	// Get registry repo - from ClusterDefinition if available (new cluster mode),
+	// otherwise use default value (existing cluster mode where ClusterDefinition is nil)
+	registryRepo := "dev-registry.deckhouse.io/sys/deckhouse-oss"
+	if clusterDef != nil {
+		registryRepo = clusterDef.DKPParameters.RegistryRepo
+	}
+
+	// Create cluster definition with modules to enable
+	effectiveClusterDef := &config.ClusterDefinition{
+		DKPParameters: config.DKPParameters{
+			Modules:      moduleConfigs,
+			RegistryRepo: registryRepo,
+		},
+	}
+
+	// Enable and configure modules
+	return EnableAndConfigureModules(ctx, kubeconfig, effectiveClusterDef, sshClient)
+}
+
+// WaitForModulesReadyWithSpecs waits for the specified modules to become ready.
+// This is typically called after EnableModulesWithSpecs to ensure all modules are operational.
+//
+// Parameters:
+//   - ctx: context for cancellation
+//   - kubeconfig: kubernetes client config
+//   - clusterDef: cluster definition (can be nil for existing clusters)
+//   - modules: list of module specifications to wait for
+//   - timeout: maximum time to wait for all modules
+func WaitForModulesReadyWithSpecs(ctx context.Context, kubeconfig *rest.Config, clusterDef *config.ClusterDefinition, modules []ModuleSpec, timeout time.Duration) error {
+	// Convert ModuleSpec to config.ModuleConfig
+	moduleConfigs := convertModuleSpecsToConfigs(modules)
+
+	// Get registry repo
+	registryRepo := "dev-registry.deckhouse.io/sys/deckhouse-oss"
+	if clusterDef != nil {
+		registryRepo = clusterDef.DKPParameters.RegistryRepo
+	}
+
+	// Create cluster definition with modules
+	effectiveClusterDef := &config.ClusterDefinition{
+		DKPParameters: config.DKPParameters{
+			Modules:      moduleConfigs,
+			RegistryRepo: registryRepo,
+		},
+	}
+
+	return WaitForModulesReady(ctx, kubeconfig, effectiveClusterDef, timeout)
+}
+
+// EnableModulesAndWait is a convenience function that enables modules and waits
+// for them to become ready in one call.
+//
+// Parameters:
+//   - ctx: context for cancellation
+//   - kubeconfig: kubernetes client config
+//   - sshClient: SSH client for cluster access
+//   - clusterDef: cluster definition (can be nil for existing clusters)
+//   - modules: list of module specifications to enable
+//   - timeout: maximum time to wait for all modules to become ready
+func EnableModulesAndWait(ctx context.Context, kubeconfig *rest.Config, sshClient ssh.SSHClient, clusterDef *config.ClusterDefinition, modules []ModuleSpec, timeout time.Duration) error {
+	if err := EnableModulesWithSpecs(ctx, kubeconfig, sshClient, clusterDef, modules); err != nil {
+		return err
+	}
+	return WaitForModulesReadyWithSpecs(ctx, kubeconfig, clusterDef, modules, timeout)
+}
 
 // moduleGraph represents the dependency graph structure
 type moduleGraph struct {

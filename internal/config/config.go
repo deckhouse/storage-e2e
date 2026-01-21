@@ -59,4 +59,7 @@ const (
 	// Test operations
 	ClusterCreationTimeout = 90 * time.Minute // Total timeout for test cluster creation (includes module deployment)
 	ClusterCleanupTimeout  = 10 * time.Minute // Timeout for cleaning up test cluster resources
+
+	// Commander operations
+	CommanderClusterReadyTimeout = 30 * time.Minute // Default timeout for waiting for Commander cluster to become ready
 )

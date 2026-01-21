@@ -24,9 +24,69 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/logger"
 )
+
+// WaitForAllPodsReadyInNamespace waits for all pods in a namespace to be in Ready condition
+func WaitForAllPodsReadyInNamespace(ctx context.Context, kubeconfig *rest.Config, namespace string, timeout time.Duration) error {
+	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout waiting for all pods to be ready in namespace %s", namespace)
+		}
+
+		pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		// If no pods found yet, wait
+		if len(pods.Items) == 0 {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		allReady := true
+		for _, pod := range pods.Items {
+			// Skip completed pods (e.g., Jobs)
+			if pod.Status.Phase == corev1.PodSucceeded {
+				continue
+			}
+			// Check if pod is running and all containers are ready
+			if pod.Status.Phase != corev1.PodRunning {
+				allReady = false
+				break
+			}
+			for _, cond := range pod.Status.Conditions {
+				if cond.Type == corev1.PodReady && cond.Status != corev1.ConditionTrue {
+					allReady = false
+					break
+				}
+			}
+			if !allReady {
+				break
+			}
+		}
+
+		if allReady {
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+}
 
 // WaitForPodsStatus waits for pods to reach a specific status
 func WaitForPodsStatus(ctx context.Context, clientset *kubernetes.Clientset, namespace, labelSelector, status string, expectedCount int, maxAttempts int, interval time.Duration) error {

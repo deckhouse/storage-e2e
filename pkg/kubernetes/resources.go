@@ -20,10 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/logger"
@@ -84,38 +81,4 @@ func CreateYAMLFile(ctx context.Context, kubeconfig *rest.Config, filePath strin
 
 	logger.Debug("Creating resources from file: %s", filePath)
 	return CreateYAMLManifest(ctx, kubeconfig, string(content), namespace)
-}
-
-// WaitForStorageClass waits for a storage class to become available
-func WaitForStorageClass(ctx context.Context, kubeconfig *rest.Config, storageClassName string, timeout time.Duration) error {
-	logger.Debug("Waiting for StorageClass %s to become available (timeout: %v)", storageClassName, timeout)
-
-	// Create clientset from kubeconfig
-	clientset, err := k8sclient.NewForConfig(kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
-	}
-
-	deadline := time.Now().Add(timeout)
-	for {
-		// Check if context is done
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		// Check if timeout reached
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for StorageClass %s", storageClassName)
-		}
-
-		// Try to get the storage class
-		_, err := clientset.StorageV1().StorageClasses().Get(ctx, storageClassName, metav1.GetOptions{})
-		if err == nil {
-			logger.Success("StorageClass %s is available", storageClassName)
-			return nil
-		}
-
-		// Wait a bit before retrying
-		time.Sleep(2 * time.Second)
-	}
 }
