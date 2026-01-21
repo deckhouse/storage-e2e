@@ -1529,7 +1529,15 @@ func (r *StressTestRunner) executeRestoreFromSnapshotStep(ctx context.Context, r
 
 	// Wait for all snapshots to be ready
 	attempt := 0
+	lastLogTime := time.Now()
 	for {
+		// Check context first
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for snapshots: %w", ctx.Err())
+		default:
+		}
+
 		snapshots, err := r.dynamicClient.Resource(VolumeSnapshotGVR).Namespace(r.config.Namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: "load-test-role=snapshot",
 		})
@@ -1548,20 +1556,25 @@ func (r *StressTestRunner) executeRestoreFromSnapshotStep(ctx context.Context, r
 		}
 
 		if readyCount >= totalSnapshots {
+			logger.Success("All %d snapshots are ready", totalSnapshots)
 			break
 		}
 
-		if readyCount > 0 {
-			attempt++
+		attempt++
+
+		// Log progress every 30 seconds
+		if time.Since(lastLogTime) >= 30*time.Second {
+			logger.Progress("Waiting for snapshots to be ready: %d/%d (attempt %d)", readyCount, totalSnapshots, attempt)
+			lastLogTime = time.Now()
 		}
 
 		if r.config.MaxAttempts > 0 && attempt >= r.config.MaxAttempts {
-			return fmt.Errorf("timeout waiting for VolumeSnapshots to be ready: %d/%d ready after %d attempts", readyCount, totalSnapshots, r.config.MaxAttempts)
+			return fmt.Errorf("timeout waiting for VolumeSnapshots to be ready: %d/%d ready after %d attempts (max: %d)", readyCount, totalSnapshots, attempt, r.config.MaxAttempts)
 		}
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("context cancelled while waiting for snapshots: %w", ctx.Err())
 		case <-time.After(r.config.Interval):
 		}
 	}
