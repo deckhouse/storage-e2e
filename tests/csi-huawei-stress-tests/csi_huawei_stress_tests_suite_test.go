@@ -48,7 +48,7 @@ func TestCsiHuaweiStressTests(t *testing.T) {
 	RegisterFailHandler(Fail)
 	// Configure Ginkgo to show verbose output
 	suiteConfig, reporterConfig := GinkgoConfiguration()
-	suiteConfig.SuiteTimeout = 2 * time.Hour // Allow 2 hours for stress tests
+	suiteConfig.Timeout = 2 * time.Hour // Allow 2 hours for stress tests
 	reporterConfig.Verbose = true
 	reporterConfig.ShowNodeEvents = false
 	RunSpecs(t, "Csi Huawei Stress Tests Suite", suiteConfig, reporterConfig)
