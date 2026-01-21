@@ -25,12 +25,9 @@ spec:
     # data nodes checksum to force bashible execution on nodes list change
     # {{ $.Values.csiYadroTatlinUnified.internal.dataNodesChecksum }}
 
-    # export TATLIN_RULES_PATH="/etc/udev/rules.d/70-tatlin.rules"
-    # export MULTIPATH_CONF_PATH="/etc/multipath/conf.d/tatlin.conf"
-    # export MULTIPATH_MAIN_CONF="/etc/multipath.conf"
-    # export CSI_NODE_LABEL="storage.deckhouse.io/csi-yadro-tatlin-unified-node"
-    # export CSI_NODE_READY_LABEL="storage.deckhouse.io/csi-yadro-tatlin-unified-node-ready"
     export kubeconfig="/etc/kubernetes/kubelet.conf"
+
+    export MULTIPATH_MAIN_CONF="/etc/multipath.conf"
 
     _on_multipath_config_changed() {
       if systemctl is-enabled --quiet multipathd 2>/dev/null; then
@@ -38,6 +35,16 @@ spec:
       fi
     }
     bb-event-on 'bb-sync-file-changed' '_on_multipath_config_changed'
+
+    ensure_main_multipath_conf() {
+      if [[ ! -f "${MULTIPATH_MAIN_CONF}" ]]; then
+        bb-sync-file "${MULTIPATH_MAIN_CONF}" - <<'EOF'
+    defaults {
+        user_friendly_names yes
+    }
+    EOF
+      fi
+    }
 
 
     install_packages() {
@@ -50,13 +57,10 @@ spec:
       /sbin/mpathconf --enable --user_friendly_names y
     }
 
-    install_packages
-    enable_services
+    install_packages || echo "Failed to install packages, skipping configuration."
+    ensure_main_multipath_conf || echo "Failed to ensure main multipath conf, skipping configuration."
+    enable_services || echo "Failed to enable services, skipping configuration."
 
-    # is_ready_node=$(bb-kubectl --kubeconfig $kubeconfig get node "$(hostname)" -o json | jq -c --arg label "${CSI_NODE_READY_LABEL}" '.metadata.labels | contains({($label):"true"})')
-    # if [ $is_ready_node == "false" ]; then
-    #   bb-kubectl --kubeconfig $kubeconfig label nodes "$(hostname)" ${CSI_NODE_READY_LABEL}="true" --overwrite
-    # fi
 
 
 ---
@@ -119,8 +123,3 @@ spec:
     ensure_main_multipath_conf || echo "Failed to ensure main multipath conf, skipping configuration."
     enable_services || echo "Failed to enable services, skipping configuration."
 
-
-    # is_ready_node=$(bb-kubectl --kubeconfig $kubeconfig get node "$(hostname)" -o json | jq -c --arg label "${CSI_NODE_READY_LABEL}" '.metadata.labels | contains({($label):"true"})')
-    # if [ $is_ready_node == "false" ]; then
-    #   bb-kubectl --kubeconfig $kubeconfig label nodes "$(hostname)" ${CSI_NODE_READY_LABEL}="true" --overwrite
-    # fi

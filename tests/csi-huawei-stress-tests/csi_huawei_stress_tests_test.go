@@ -199,7 +199,7 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 						// Module-specific settings go here
 					},
 					Dependencies:       []string{"snapshot-controller"}, // Explicit dependencies
-					ModulePullOverride: "main",                          // imageTag: "mr30", "main", "pr123", etc.
+					ModulePullOverride: "mr47",                          // imageTag: "mr30", "main", "pr123", etc.
 				},
 			}
 
@@ -255,6 +255,17 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 			GinkgoWriter.Printf("    ✅ StorageClass is available\n")
 		})
 
+		// By("Patching StorageClass with volume snapshot annotation", func() {
+		// 	GinkgoWriter.Printf("    ▶️ Adding volume snapshot class annotation to StorageClass...\n")
+
+		// 	// Patch StorageClass with volume snapshot class annotation
+		// 	// The snapshot class name typically matches the storage class name
+		// 	err := kubernetes.PatchStorageClassWithSnapshotAnnotation(ctx, testClusterResources.Kubeconfig, "hsclass-200", "hsclass-200")
+		// 	Expect(err).NotTo(HaveOccurred(), "Failed to patch StorageClass with snapshot annotation")
+
+		// 	GinkgoWriter.Printf("    ✅ StorageClass patched successfully\n")
+		// })
+
 	})
 
 	It("should run flog stress test", func() {
@@ -294,6 +305,17 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 		// Use a timeout context for the stress test (60 minutes for complex test)
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 		defer cancel()
+
+		By("Patching StorageClass with volume snapshot annotation", func() {
+			GinkgoWriter.Printf("    ▶️ Adding volume snapshot class annotation to StorageClass...\n")
+
+			// Patch StorageClass with volume snapshot class annotation
+			// The snapshot class name typically matches the storage class name
+			err := kubernetes.PatchStorageClassWithSnapshotAnnotation(ctx, testClusterResources.Kubeconfig, "hsclass-200", "hsclass-200")
+			Expect(err).NotTo(HaveOccurred(), "Failed to patch StorageClass with snapshot annotation")
+
+			GinkgoWriter.Printf("    ✅ StorageClass patched successfully\n")
+		})
 
 		By("Running snapshot, resize, and clone stress test (60 minutes timeout)", func() {
 			GinkgoWriter.Printf("    ▶️ Running complex stress test...\n")

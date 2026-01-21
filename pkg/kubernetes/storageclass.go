@@ -96,3 +96,35 @@ func WaitForStorageClassDeletion(ctx context.Context, kubeconfig *rest.Config, s
 		time.Sleep(2 * time.Second)
 	}
 }
+
+// PatchStorageClassWithSnapshotAnnotation patches a StorageClass with volume snapshot class annotation
+func PatchStorageClassWithSnapshotAnnotation(ctx context.Context, kubeconfig *rest.Config, storageClassName, snapshotClassName string) error {
+	clientset, err := k8sclient.NewForConfig(kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	sc, err := clientset.StorageV1().StorageClasses().Get(ctx, storageClassName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get StorageClass %s: %w", storageClassName, err)
+	}
+
+	if sc.Annotations == nil {
+		sc.Annotations = make(map[string]string)
+	}
+
+	annotationKey := "storage.deckhouse.io/volumesnapshotclass"
+	if sc.Annotations[annotationKey] == snapshotClassName {
+		logger.Debug("StorageClass %s already has annotation %s=%s", storageClassName, annotationKey, snapshotClassName)
+		return nil
+	}
+
+	sc.Annotations[annotationKey] = snapshotClassName
+	_, err = clientset.StorageV1().StorageClasses().Update(ctx, sc, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to patch StorageClass %s: %w", storageClassName, err)
+	}
+
+	logger.Success("Patched StorageClass %s with annotation %s=%s", storageClassName, annotationKey, snapshotClassName)
+	return nil
+}
