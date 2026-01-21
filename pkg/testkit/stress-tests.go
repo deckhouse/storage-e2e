@@ -359,11 +359,6 @@ func (r *StressTestRunner) createOriginalPodAndPVC(ctx context.Context, index in
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
 			SchedulerName: r.config.SchedulerName,
-			Tolerations: []corev1.Toleration{
-				{
-					Key: "node-role.kubernetes.io/control-plane",
-				},
-			},
 			Affinity: &corev1.Affinity{
 				PodAntiAffinity: &corev1.PodAntiAffinity{
 					PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{
@@ -383,6 +378,11 @@ func (r *StressTestRunner) createOriginalPodAndPVC(ctx context.Context, index in
 							},
 						},
 					},
+				},
+			},
+			Tolerations: []corev1.Toleration{
+				{
+					Key: "node-role.kubernetes.io/control-plane",
 				},
 			},
 			InitContainers: []corev1.Container{
