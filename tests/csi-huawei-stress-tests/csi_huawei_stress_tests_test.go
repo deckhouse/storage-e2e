@@ -295,17 +295,6 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 		defer cancel()
 
-		By("Patching StorageClass with volume snapshot annotation", func() {
-			GinkgoWriter.Printf("    ▶️ Adding volume snapshot class annotation to StorageClass...\n")
-
-			// Patch StorageClass with volume snapshot class annotation
-			// The snapshot class name typically matches the storage class name
-			err := kubernetes.PatchStorageClassWithSnapshotAnnotation(ctx, testClusterResources.Kubeconfig, "hsclass-200", "hsclass-200")
-			Expect(err).NotTo(HaveOccurred(), "Failed to patch StorageClass with snapshot annotation")
-
-			GinkgoWriter.Printf("    ✅ StorageClass patched successfully\n")
-		})
-
 		By("Running snapshot, resize, and clone stress test (60 minutes timeout)", func() {
 			GinkgoWriter.Printf("    ▶️ Running complex stress test...\n")
 

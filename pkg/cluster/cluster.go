@@ -208,7 +208,7 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to get virtualization module: %w", err)
 	}
-	if module.Status.Phase != "Ready" && module.Status.Phase != "Reconciling" {
+	if module.Status.Phase != "Ready" {
 		baseClusterResources.SSHClient.Close()
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("virtualization module is not Ready (phase: %s)", module.Status.Phase)
