@@ -70,13 +70,14 @@ const (
 // Config holds the configuration for stress tests
 type Config struct {
 	// Basic configuration
-	Namespace        string
-	StorageClassName string
-	PVCSize          string
-	PodsCount        int
-	Iterations       int // Number of test iterations to run (default: 1)
-	SchedulerName    string
-	Mode             TestMode
+	Namespace               string
+	StorageClassName        string
+	VolumeSnapshotClassName string
+	PVCSize                 string
+	PodsCount               int
+	Iterations              int // Number of test iterations to run (default: 1)
+	SchedulerName           string
+	Mode                    TestMode
 
 	// Resize configuration
 	PVCSizeAfterResize       string
@@ -632,6 +633,7 @@ func (r *StressTestRunner) createVolumeSnapshot(ctx context.Context, pvcIndex in
 				},
 			},
 			"spec": map[string]interface{}{
+				"volumeSnapshotClassName": r.config.VolumeSnapshotClassName,
 				"source": map[string]interface{}{
 					"persistentVolumeClaimName": pvcName,
 				},

@@ -255,15 +255,6 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 			GinkgoWriter.Printf("    ✅ StorageClass is available\n")
 		})
 
-		By("Patching StorageClass with volume snapshot annotation", func() {
-			GinkgoWriter.Printf("    ▶️ Adding volume snapshot class annotation to StorageClass...\n")
-
-			err := kubernetes.PatchStorageClassWithSnapshotAnnotation(ctx, testClusterResources.Kubeconfig, "hsclass-200", "csi-huawei")
-			Expect(err).NotTo(HaveOccurred(), "Failed to patch StorageClass with snapshot annotation")
-
-			GinkgoWriter.Printf("    ✅ StorageClass patched successfully\n")
-		})
-
 	})
 
 	It("should run flog stress test", func() {
@@ -322,6 +313,7 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 			stressConfig := testkit.DefaultConfig()
 			stressConfig.Namespace = "stress-test-complex"
 			stressConfig.StorageClassName = "hsclass-200"
+			stressConfig.VolumeSnapshotClassName = "csi-huawei"
 			stressConfig.PVCSize = "100Mi"
 			stressConfig.PodsCount = 100
 			stressConfig.Iterations = 1
