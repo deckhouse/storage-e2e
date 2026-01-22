@@ -91,7 +91,7 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 		return nil, nil, fmt.Errorf("the following VM-related resources already exist (CLUSTER_CREATE_MODE=%s): %s", config.TestClusterCreateMode, strings.Join(conflictMessages, ", "))
 	}
 
-	// Create all VMs in parallel
+	// Create all CVMIs first (with waiting for Ready)
 	storageClass := config.TestClusterStorageClass
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -101,26 +101,43 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 		wg.Add(1)
 		go func(n config.ClusterNode) {
 			defer wg.Done()
-			cvmiName, err := createVM(ctx, virtClient, namespace, n, storageClass)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to create VM %s: %w", n.Hostname, err)
+			cvmiName := getCVMINameFromImageURL(n.OSType.ImageURL)
+			if err := createCVI(ctx, virtClient, cvmiName, n.OSType.ImageURL); err != nil {
+				errChan <- fmt.Errorf("failed to create/wait for CVI %s: %w", cvmiName, err)
 				return
 			}
-			if cvmiName != "" {
-				mu.Lock()
-				cvmiNamesMap[cvmiName] = true
-				mu.Unlock()
+			mu.Lock()
+			cvmiNamesMap[cvmiName] = true
+			mu.Unlock()
+		}(node)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	if len(errChan) > 0 {
+		return nil, nil, <-errChan
+	}
+
+	// Create all VMs in parallel
+	var wg2 sync.WaitGroup
+	errChan2 := make(chan error, len(vmNodes))
+
+	for _, node := range vmNodes {
+		wg2.Add(1)
+		go func(n config.ClusterNode) {
+			defer wg2.Done()
+			if err := createVM(ctx, virtClient, namespace, n, storageClass); err != nil {
+				errChan2 <- fmt.Errorf("failed to create VM %s: %w", n.Hostname, err)
 			}
 		}(node)
 	}
 
-	// Wait for all VM creations to complete
-	wg.Wait()
-	close(errChan)
+	wg2.Wait()
+	close(errChan2)
 
-	// Check if any errors occurred
-	if len(errChan) > 0 {
-		return nil, nil, <-errChan
+	if len(errChan2) > 0 {
+		return nil, nil, <-errChan2
 	}
 
 	// Convert CVMI names map to slice
@@ -249,22 +266,18 @@ func getVMNodes(clusterDef *config.ClusterDefinition) []config.ClusterNode {
 	return vmNodes
 }
 
-// createVM creates a virtual machine with all required dependencies
-// Returns the CVMI name that was used/created
-func createVM(ctx context.Context, virtClient *virtualization.Client, namespace string, node config.ClusterNode, storageClass string) (string, error) {
-	vmName := node.Hostname
+// createCVI creates or gets a ClusterVirtualImage and waits for it to be Ready (15 min timeout)
+func createCVI(ctx context.Context, virtClient *virtualization.Client, cvmiName, imageURL string) error {
+	cviCtx, cancel := context.WithTimeout(ctx, config.ClusterVirtualImageReadinessTimeout)
+	defer cancel()
 
-	// 1. Get or create ClusterVirtualImage
-	cvmiName := getCVMINameFromImageURL(node.OSType.ImageURL)
-	cvmi, getErr := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
+	cvmi, getErr := virtClient.ClusterVirtualImages().Get(cviCtx, cvmiName)
 
 	if getErr == nil && config.ImagePullPolicy == config.ImagePullPolicyAlways {
-		return "", fmt.Errorf("ClusterVirtualImage %s already exists, cannot create a new one (IMAGE_PULL_POLICY=%s)", cvmiName, config.ImagePullPolicyAlways)
+		return fmt.Errorf("ClusterVirtualImage %s already exists, cannot create a new one (IMAGE_PULL_POLICY=%s)", cvmiName, config.ImagePullPolicyAlways)
 	}
 
-	// IfNotExists: use existing
 	if errors.IsNotFound(getErr) {
-		// CVMI not found, create it
 		cvmi = &v1alpha2.ClusterVirtualImage{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: cvmiName,
@@ -273,40 +286,40 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				DataSource: v1alpha2.ClusterVirtualImageDataSource{
 					Type: "HTTP",
 					HTTP: &v1alpha2.DataSourceHTTP{
-						URL: node.OSType.ImageURL,
+						URL: imageURL,
 					},
 				},
 			},
 		}
-		err := virtClient.ClusterVirtualImages().Create(ctx, cvmi)
-		if err != nil {
-			if !errors.IsAlreadyExists(err) {
-				return "", fmt.Errorf("failed to create ClusterVirtualImage %s: %w", cvmiName, err)
-			}
-			// AlreadyExists (race with parallel creation of another VM using the same CVMI), get it
-			cvmi, err = virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
+		err := virtClient.ClusterVirtualImages().Create(cviCtx, cvmi)
+		if err != nil && !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create ClusterVirtualImage %s: %w", cvmiName, err)
+		}
+		if errors.IsAlreadyExists(err) {
+			cvmi, err = virtClient.ClusterVirtualImages().Get(cviCtx, cvmiName)
 			if err != nil {
-				return "", fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, err)
+				return fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, err)
 			}
 		}
-	} else {
-		return "", fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, getErr)
+	} else if getErr != nil {
+		return fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, getErr)
 	}
 
-	// Wait for CVMI to be Ready
-	if err := waitForClusterVirtualImageReady(ctx, virtClient, cvmiName); err != nil {
-		return "", fmt.Errorf("failed waiting for ClusterVirtualImage %s: %w", cvmiName, err)
-	}
+	return waitForClusterVirtualImageReady(cviCtx, virtClient, cvmiName)
+}
 
-	// 2. Create system VirtualDisk (check if it exists first)
+// createVM creates a VirtualDisk and VirtualMachine for a node (20 sec timeout from parent context)
+func createVM(ctx context.Context, virtClient *virtualization.Client, namespace string, node config.ClusterNode, storageClass string) error {
+	vmName := node.Hostname
+	cvmiName := getCVMINameFromImageURL(node.OSType.ImageURL)
+
+	// Create system VirtualDisk
 	systemDiskName := fmt.Sprintf("%s-system", vmName)
-	var err error
-	_, err = virtClient.VirtualDisks().Get(ctx, namespace, systemDiskName)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to check VirtualDisk %s: %w", systemDiskName, err)
+	_, vdErr := virtClient.VirtualDisks().Get(ctx, namespace, systemDiskName)
+	if vdErr != nil {
+		if !errors.IsNotFound(vdErr) {
+			return fmt.Errorf("failed to check VirtualDisk %s: %w", systemDiskName, vdErr)
 		}
-		// VirtualDisk doesn't exist, create it
 		systemDisk := &v1alpha2.VirtualDisk{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      systemDiskName,
@@ -321,29 +334,26 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 					Type: "ObjectRef",
 					ObjectRef: &v1alpha2.VirtualDiskObjectRef{
 						Kind: "ClusterVirtualImage",
-						Name: cvmi.Name,
+						Name: cvmiName,
 					},
 				},
 			},
 		}
-		err = virtClient.VirtualDisks().Create(ctx, systemDisk)
+		err := virtClient.VirtualDisks().Create(ctx, systemDisk)
 		if err != nil {
-			return "", fmt.Errorf("failed to create system VirtualDisk %s: %w", systemDiskName, err)
+			return fmt.Errorf("failed to create VirtualDisk %s: %w", systemDiskName, err)
 		}
 	}
-	// If VirtualDisk already exists, we'll use it
 
-	// 3. Create VirtualMachine (check if it exists first)
-	_, err = virtClient.VirtualMachines().Get(ctx, namespace, vmName)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return "", fmt.Errorf("failed to check VirtualMachine %s: %w", vmName, err)
+	// Create VirtualMachine
+	_, vmErr := virtClient.VirtualMachines().Get(ctx, namespace, vmName)
+	if vmErr != nil {
+		if !errors.IsNotFound(vmErr) {
+			return fmt.Errorf("failed to check VirtualMachine %s: %w", vmName, vmErr)
 		}
-		// VirtualMachine doesn't exist, create it
-		// Get SSH public key content
 		sshPublicKey, err := GetSSHPublicKeyContent()
 		if err != nil {
-			return "", fmt.Errorf("failed to get SSH public key content: %w", err)
+			return fmt.Errorf("failed to get SSH public key content: %w", err)
 		}
 
 		memoryQuantity := resource.MustParse(fmt.Sprintf("%dGi", node.RAM))
@@ -361,7 +371,7 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				Bootloader:               v1alpha2.BootloaderType("BIOS"),
 				LiveMigrationPolicy:      v1alpha2.LiveMigrationPolicy("PreferSafe"),
 				CPU: func() v1alpha2.CPUSpec {
-					coreFraction := "100%" // Default to 100%
+					coreFraction := "100%"
 					if node.CoreFraction != nil {
 						coreFraction = fmt.Sprintf("%d%%", *node.CoreFraction)
 					}
@@ -387,28 +397,25 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 		}
 		err = virtClient.VirtualMachines().Create(ctx, vm)
 		if err != nil {
-			return "", fmt.Errorf("failed to create VirtualMachine %s: %w", vmName, err)
+			return fmt.Errorf("failed to create VirtualMachine %s: %w", vmName, err)
 		}
 	}
-	// If VirtualMachine already exists, we'll skip creation
 
-	return cvmiName, nil
+	return nil
 }
 
 // waitForClusterVirtualImageReady waits for a ClusterVirtualImage to become Ready
 func waitForClusterVirtualImageReady(ctx context.Context, virtClient *virtualization.Client, cvmiName string) error {
-	waitCtx, cancel := context.WithTimeout(ctx, config.ClusterVirtualImageReadinessTimeout)
-	defer cancel()
-
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	lastLogTime := time.Now()
 
 	for {
 		select {
-		case <-waitCtx.Done():
-			return fmt.Errorf("timeout waiting for ClusterVirtualImage %s to become Ready (timeout: %v)", cvmiName, config.ClusterVirtualImageReadinessTimeout)
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for ClusterVirtualImage %s to become Ready", cvmiName)
 		case <-ticker.C:
-			cvmi, err := virtClient.ClusterVirtualImages().Get(waitCtx, cvmiName)
+			cvmi, err := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
 			if err != nil {
 				return fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, err)
 			}
@@ -422,7 +429,10 @@ func waitForClusterVirtualImageReady(ctx context.Context, virtClient *virtualiza
 				return fmt.Errorf("ClusterVirtualImage %s failed to provision", cvmiName)
 			}
 
-			logger.Debug("ClusterVirtualImage %s phase: %s (progress: %s)", cvmiName, cvmi.Status.Phase, cvmi.Status.Progress)
+			if time.Since(lastLogTime) >= 30*time.Second {
+				logger.Debug("ClusterVirtualImage %s phase: %s (progress: %s)", cvmiName, cvmi.Status.Phase, cvmi.Status.Progress)
+				lastLogTime = time.Now()
+			}
 		}
 	}
 }

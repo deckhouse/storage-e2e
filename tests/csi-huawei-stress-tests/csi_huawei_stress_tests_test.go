@@ -199,7 +199,7 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 						// Module-specific settings go here
 					},
 					Dependencies:       []string{"snapshot-controller"}, // Explicit dependencies
-					ModulePullOverride: "mr47",                          // imageTag: "mr30", "main", "pr123", etc.
+					ModulePullOverride: "main",                          // imageTag: "mr30", "main", "pr123", etc.
 				},
 			}
 
@@ -255,16 +255,14 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 			GinkgoWriter.Printf("    ✅ StorageClass is available\n")
 		})
 
-		// By("Patching StorageClass with volume snapshot annotation", func() {
-		// 	GinkgoWriter.Printf("    ▶️ Adding volume snapshot class annotation to StorageClass...\n")
+		By("Patching StorageClass with volume snapshot annotation", func() {
+			GinkgoWriter.Printf("    ▶️ Adding volume snapshot class annotation to StorageClass...\n")
 
-		// 	// Patch StorageClass with volume snapshot class annotation
-		// 	// The snapshot class name typically matches the storage class name
-		// 	err := kubernetes.PatchStorageClassWithSnapshotAnnotation(ctx, testClusterResources.Kubeconfig, "hsclass-200", "hsclass-200")
-		// 	Expect(err).NotTo(HaveOccurred(), "Failed to patch StorageClass with snapshot annotation")
+			err := kubernetes.PatchStorageClassWithSnapshotAnnotation(ctx, testClusterResources.Kubeconfig, "hsclass-200", "csi-huawei")
+			Expect(err).NotTo(HaveOccurred(), "Failed to patch StorageClass with snapshot annotation")
 
-		// 	GinkgoWriter.Printf("    ✅ StorageClass patched successfully\n")
-		// })
+			GinkgoWriter.Printf("    ✅ StorageClass patched successfully\n")
+		})
 
 	})
 
