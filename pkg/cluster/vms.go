@@ -254,13 +254,17 @@ func getVMNodes(clusterDef *config.ClusterDefinition) []config.ClusterNode {
 func createVM(ctx context.Context, virtClient *virtualization.Client, namespace string, node config.ClusterNode, storageClass string) (string, error) {
 	vmName := node.Hostname
 
-	// 1. Create or get ClusterVirtualImage based on IMAGE_PULL_POLICY
+	// 1. Get or create ClusterVirtualImage
 	cvmiName := getCVMINameFromImageURL(node.OSType.ImageURL)
-	var cvmi *v1alpha2.ClusterVirtualImage
-	var err error
+	cvmi, getErr := virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
 
-	if config.ImagePullPolicy == config.ImagePullPolicyAlways {
-		// Always mode: Always attempt to create CVI and fail if it exists
+	if getErr == nil && config.ImagePullPolicy == config.ImagePullPolicyAlways {
+		return "", fmt.Errorf("ClusterVirtualImage %s already exists, cannot create a new one (IMAGE_PULL_POLICY=%s)", cvmiName, config.ImagePullPolicyAlways)
+	}
+
+	// IfNotExists: use existing
+	if errors.IsNotFound(getErr) {
+		// CVMI not found, create it
 		cvmi = &v1alpha2.ClusterVirtualImage{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: cvmiName,
@@ -274,41 +278,29 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				},
 			},
 		}
-		err = virtClient.ClusterVirtualImages().Create(ctx, cvmi)
+		err := virtClient.ClusterVirtualImages().Create(ctx, cvmi)
 		if err != nil {
-			return "", fmt.Errorf("failed to create ClusterVirtualImage %s (IMAGE_PULL_POLICY=%s): %w", cvmiName, config.ImagePullPolicyAlways, err)
-		}
-	} else {
-		// IfNotExists mode: Use existing CVI without warnings, or create if not found
-		cvmi, err = virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
-		if err != nil {
-			if !errors.IsNotFound(err) {
-				return "", fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, err)
-			}
-			// CVMI doesn't exist, create it
-			cvmi = &v1alpha2.ClusterVirtualImage{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: cvmiName,
-				},
-				Spec: v1alpha2.ClusterVirtualImageSpec{
-					DataSource: v1alpha2.ClusterVirtualImageDataSource{
-						Type: "HTTP",
-						HTTP: &v1alpha2.DataSourceHTTP{
-							URL: node.OSType.ImageURL,
-						},
-					},
-				},
-			}
-			err = virtClient.ClusterVirtualImages().Create(ctx, cvmi)
-			if err != nil {
+			if !errors.IsAlreadyExists(err) {
 				return "", fmt.Errorf("failed to create ClusterVirtualImage %s: %w", cvmiName, err)
 			}
+			// AlreadyExists (race with parallel creation of another VM using the same CVMI), get it
+			cvmi, err = virtClient.ClusterVirtualImages().Get(ctx, cvmiName)
+			if err != nil {
+				return "", fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, err)
+			}
 		}
-		// If CVI already exists (no error from Get), we use it without warnings
+	} else {
+		return "", fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, getErr)
+	}
+
+	// Wait for CVMI to be Ready
+	if err := waitForClusterVirtualImageReady(ctx, virtClient, cvmiName); err != nil {
+		return "", fmt.Errorf("failed waiting for ClusterVirtualImage %s: %w", cvmiName, err)
 	}
 
 	// 2. Create system VirtualDisk (check if it exists first)
 	systemDiskName := fmt.Sprintf("%s-system", vmName)
+	var err error
 	_, err = virtClient.VirtualDisks().Get(ctx, namespace, systemDiskName)
 	if err != nil {
 		if !errors.IsNotFound(err) {
@@ -401,6 +393,38 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 	// If VirtualMachine already exists, we'll skip creation
 
 	return cvmiName, nil
+}
+
+// waitForClusterVirtualImageReady waits for a ClusterVirtualImage to become Ready
+func waitForClusterVirtualImageReady(ctx context.Context, virtClient *virtualization.Client, cvmiName string) error {
+	waitCtx, cancel := context.WithTimeout(ctx, config.ClusterVirtualImageReadinessTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("timeout waiting for ClusterVirtualImage %s to become Ready (timeout: %v)", cvmiName, config.ClusterVirtualImageReadinessTimeout)
+		case <-ticker.C:
+			cvmi, err := virtClient.ClusterVirtualImages().Get(waitCtx, cvmiName)
+			if err != nil {
+				return fmt.Errorf("failed to get ClusterVirtualImage %s: %w", cvmiName, err)
+			}
+
+			if cvmi.Status.Phase == "Ready" {
+				logger.Debug("ClusterVirtualImage %s is Ready", cvmiName)
+				return nil
+			}
+
+			if cvmi.Status.Phase == "Failed" {
+				return fmt.Errorf("ClusterVirtualImage %s failed to provision", cvmiName)
+			}
+
+			logger.Debug("ClusterVirtualImage %s phase: %s (progress: %s)", cvmiName, cvmi.Status.Phase, cvmi.Status.Progress)
+		}
+	}
 }
 
 // getCVMINameFromImageURL extracts a CVMI name from an image URL
