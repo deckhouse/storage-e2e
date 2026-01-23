@@ -496,22 +496,39 @@ func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHo
 		targetAddr = targetAddr + ":22"
 	}
 
-	// Connect to target host through jump host
-	targetConn, err := jumpClient.Dial("tcp", targetAddr)
-	if err != nil {
-		jumpClient.Close()
-		return nil, fmt.Errorf("failed to dial target host %s@%s through jump host: %w", targetUser, targetAddr, err)
+	// Connect to target host through jump host with retry
+	maxRetries := 10
+	retryDelay := 5 * time.Second
+	var targetClient *ssh.Client
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // Exponential backoff: 5s, 10s, 20s, 40s...
+		}
+
+		targetConn, err := jumpClient.Dial("tcp", targetAddr)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to dial target host %s@%s through jump host: %w", targetUser, targetAddr, err)
+			continue
+		}
+
+		targetClientConn, targetChans, targetReqs, err := ssh.NewClientConn(targetConn, targetAddr, targetConfig)
+		if err != nil {
+			targetConn.Close()
+			lastErr = fmt.Errorf("failed to establish SSH connection to target host: %w", err)
+			continue
+		}
+
+		targetClient = ssh.NewClient(targetClientConn, targetChans, targetReqs)
+		break
 	}
 
-	// Establish SSH connection over the forwarded connection
-	targetClientConn, targetChans, targetReqs, err := ssh.NewClientConn(targetConn, targetAddr, targetConfig)
-	if err != nil {
+	if targetClient == nil {
 		jumpClient.Close()
-		return nil, fmt.Errorf("failed to establish SSH connection to target host: %w", err)
+		return nil, fmt.Errorf("failed to connect to target host after %d attempts: %w", maxRetries, lastErr)
 	}
-
-	// Create SSH client for target host
-	targetClient := ssh.NewClient(targetClientConn, targetChans, targetReqs)
 
 	// Return a client that wraps both connections
 	// When closing, we need to close both connections

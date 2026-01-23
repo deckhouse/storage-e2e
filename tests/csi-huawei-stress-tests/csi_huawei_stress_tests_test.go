@@ -302,6 +302,7 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 			stressConfig := testkit.DefaultConfig()
 			stressConfig.Namespace = "stress-test-complex"
 			stressConfig.StorageClassName = "hsclass-200"
+			stressConfig.VolumeSnapshotClassName = "csi-huawei"
 			stressConfig.PVCSize = "100Mi"
 			stressConfig.PodsCount = 100
 			stressConfig.Iterations = 1

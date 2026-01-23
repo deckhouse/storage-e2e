@@ -1275,27 +1275,26 @@ func configureExtendedTimeouts(config *rest.Config) {
 	// Increase overall request timeout from default 30s to 2 minutes
 	config.Timeout = 2 * time.Minute
 
-	// Cannot set custom Transport when TLS config is present (client-go restriction)
-	// Instead, we'll create a custom HTTP client with extended timeouts using rest.HTTPClientFor
-	// which properly handles TLS configuration
-	transport, err := rest.TransportFor(config)
-	if err != nil {
-		// If we can't get transport, just set timeout and return
-		// The client will use defaults with our timeout
-		return
-	}
-
-	// Wrap the transport with extended timeouts
-	if httpTransport, ok := transport.(*http.Transport); ok {
-		// Clone and modify the transport
-		httpTransport.TLSHandshakeTimeout = 30 * time.Second   // Extended from default 10s
-		httpTransport.ResponseHeaderTimeout = 60 * time.Second // Wait up to 60s for response headers
-		httpTransport.IdleConnTimeout = 90 * time.Second
-
-		// Set the WrapTransport function to use our modified transport
-		config.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
-			return httpTransport
+	// Wrap the transport to extend timeouts without breaking authentication
+	// We preserve the existing WrapTransport if any, and wrap on top of it
+	originalWrapTransport := config.WrapTransport
+	config.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+		// First apply original wrapper if it exists
+		if originalWrapTransport != nil {
+			rt = originalWrapTransport(rt)
 		}
+
+		// Then modify transport timeouts if it's an http.Transport
+		if httpTransport, ok := rt.(*http.Transport); ok {
+			// Clone transport to avoid modifying shared instances
+			clonedTransport := httpTransport.Clone()
+			clonedTransport.TLSHandshakeTimeout = 30 * time.Second   // Extended from default 10s
+			clonedTransport.ResponseHeaderTimeout = 60 * time.Second // Wait up to 60s for response headers
+			clonedTransport.IdleConnTimeout = 90 * time.Second
+			return clonedTransport
+		}
+
+		return rt
 	}
 }
 
