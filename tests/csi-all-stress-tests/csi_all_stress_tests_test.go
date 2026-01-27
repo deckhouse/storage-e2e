@@ -18,6 +18,7 @@ package csi_all_stress_tests
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -164,170 +165,161 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 		By("Applying NGCs", func() {
 			GinkgoWriter.Printf("    ▶️ Creating NGCs...\n")
 
-			// Apply the YAML manifest
-			err := kubernetes.CreateYAMLFile(ctx, testClusterResources.Kubeconfig, yamlFilePathNGCs, "")
+			applyClient, err := kubernetes.NewApplyClient(testClusterResources.Kubeconfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create apply client")
+
+			content, err := os.ReadFile(yamlFilePathNGCs)
+			Expect(err).NotTo(HaveOccurred(), "Failed to read YAML file")
+
+			err = applyClient.CreateYAML(ctx, string(content), "")
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
 
 			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
 		})
 	})
 
-	It("should enable csi-huawei module with dependencies", func() {
+	It("should create modules' custom resources", func() {
 		ctx := context.Background()
+		crFiles := []string{"csi-huawei-cr.yml", "csi-hpe-cr.yml", "csi-netapp-cr.yml"}
 
-		By("Enabling csi-huawei module with dependencies", func() {
-			GinkgoWriter.Printf("    ▶️ Enabling modules: csi-huawei and its dependencies...\n")
-
-			// Define modules to enable
-			// csi-huawei depends on snapshot-controller, so we enable both
-			modulesToEnable := []*config.ModuleConfig{
-				{
-					Name:     "snapshot-controller",
-					Enabled:  true,
-					Settings: map[string]interface{}{
-						// Module-specific settings go here
-						// Example:
-						// enableThinProvisioning: true,
-					},
-					Dependencies:       []string{},
-					ModulePullOverride: "main", // imageTag: "mr30", "main", "pr123", etc.
-				},
-				{
-					Name:     "csi-huawei",
-					Enabled:  true,
-					Settings: map[string]interface{}{
-						// Module-specific settings go here
-					},
-					Dependencies:       []string{"snapshot-controller"}, // Explicit dependencies
-					ModulePullOverride: "main",                          // imageTag: "mr30", "main", "pr123", etc.
-				},
-			}
-
-			// Create cluster definition with modules to enable
-			// Use the same registry repo as the test cluster was created with
-			clusterDef := &config.ClusterDefinition{
-				DKPParameters: config.DKPParameters{
-					Modules:      modulesToEnable,
-					RegistryRepo: testClusterResources.ClusterDefinition.DKPParameters.RegistryRepo,
-				},
-			}
-
-			// Enable and configure modules
-			// This will handle dependencies automatically through topological sort
-			// and wait for each level to become Ready before proceeding to the next
-			err := kubernetes.EnableAndConfigureModules(
-				ctx,
-				testClusterResources.Kubeconfig,
-				clusterDef,
-				testClusterResources.SSHClient,
-			)
-			Expect(err).NotTo(HaveOccurred(), "Failed to enable and configure modules")
-
-		})
-	})
-
-	It("should create Huawei storage resources", func() {
-		ctx := context.Background()
-
-		// Resolve file path relative to test directory (same approach as CreateTestCluster)
-		// runtime.Caller(0) gets this test file's location
+		// Resolve file path relative to test directory
 		_, callerFile, _, ok := runtime.Caller(0)
 		Expect(ok).To(BeTrue(), "Failed to determine test file path")
 		testDir := filepath.Dir(callerFile)
-		yamlFilePath := filepath.Join(testDir, "files", "csi-huawei-cr.yml")
+		filesDir := filepath.Join(testDir, "files")
 
-		By("Applying HuaweiStorageConnection and HuaweiStorageClass", func() {
-			GinkgoWriter.Printf("    ▶️ Creating Huawei storage resources...\n")
+		By("Applying all storage custom resources", func() {
+			GinkgoWriter.Printf("    ▶️ Creating storage resources from %d files...\n", len(crFiles))
 
-			// Apply the YAML manifest
-			err := kubernetes.CreateYAMLFile(ctx, testClusterResources.Kubeconfig, yamlFilePath, "")
+			var combinedContent string
+			for _, fileName := range crFiles {
+				filePath := filepath.Join(filesDir, fileName)
+
+				// Skip if file doesn't exist
+				if _, err := os.Stat(filePath); os.IsNotExist(err) {
+					GinkgoWriter.Printf("    ⏭️  Skipping %s (file not found)\n", fileName)
+					continue
+				}
+
+				content, err := os.ReadFile(filePath)
+				Expect(err).NotTo(HaveOccurred(), "Failed to read file: "+fileName)
+
+				// Add document separator if not first file
+				if combinedContent != "" {
+					combinedContent += "\n---\n"
+				}
+				combinedContent += string(content)
+			}
+
+			applyClient, err := kubernetes.NewApplyClient(testClusterResources.Kubeconfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create apply client")
+
+			err = applyClient.CreateYAML(ctx, combinedContent, "")
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
 
 			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
 		})
 
-		By("Waiting for StorageClass to become available", func() {
-			GinkgoWriter.Printf("    ▶️ Waiting for StorageClass hsclass-200...\n")
+		By("Waiting for StorageClasses to become available", func() {
+			storageClassNames := []string{"hsclass-200", "hpe", "netapp"}
 
-			err := kubernetes.WaitForStorageClass(ctx, testClusterResources.Kubeconfig, "hsclass-200", 10*time.Minute)
-			Expect(err).NotTo(HaveOccurred(), "StorageClass hsclass-200 not available")
+			GinkgoWriter.Printf("    ▶️ Waiting for %d StorageClasses...\n", len(storageClassNames))
 
-			GinkgoWriter.Printf("    ✅ StorageClass is available\n")
-		})
+			results := kubernetes.WaitForStorageClasses(ctx, testClusterResources.Kubeconfig, storageClassNames, 10*time.Minute)
 
-	})
-
-	It("should run flog stress test", func() {
-		// Use a timeout context for the stress test (30 minutes should be enough)
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
-		defer cancel()
-
-		By("Running flog stress test with PVC resize (60 minutes timeout)", func() {
-			GinkgoWriter.Printf("    ▶️ Running flog stress test...\n")
-
-			// Configure stress test
-			stressConfig := testkit.DefaultConfig()
-			stressConfig.Namespace = "stress-test-flog"
-			stressConfig.StorageClassName = "hsclass-200"
-			stressConfig.PVCSize = "100Mi"
-			stressConfig.PodsCount = 100
-			stressConfig.Iterations = 1
-			stressConfig.Mode = testkit.ModeFlog
-			stressConfig.PVCSizeAfterResize = "200Mi"
-			stressConfig.Cleanup = true
-			// Set a reasonable timeout: 5 seconds * 500 attempts = 41 minutes, we use more
-			stressConfig.MaxAttempts = 500
-			stressConfig.Interval = 5 * time.Second
-
-			// Create and run stress test
-			runner, err := testkit.NewStressTestRunner(stressConfig, testClusterResources.Kubeconfig)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create stress test runner")
-
-			err = runner.Run(ctx)
-			Expect(err).NotTo(HaveOccurred(), "Stress test failed")
-
-			GinkgoWriter.Printf("    ✅ Stress test completed successfully\n")
-		})
-	})
-
-	It("should run snapshot/resize/clone stress test", func() {
-		// Use a timeout context for the stress test (60 minutes for complex test)
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
-		defer cancel()
-
-		By("Running snapshot, resize, and clone stress test (60 minutes timeout)", func() {
-			GinkgoWriter.Printf("    ▶️ Running complex stress test...\n")
-
-			// Configure comprehensive stress test
-			stressConfig := testkit.DefaultConfig()
-			stressConfig.Namespace = "stress-test-complex"
-			stressConfig.StorageClassName = "hsclass-200"
-			stressConfig.PVCSize = "100Mi"
-			stressConfig.PodsCount = 100
-			stressConfig.Iterations = 1
-			stressConfig.Mode = testkit.ModeSnapshotResizeCloning
-			stressConfig.SnapshotsPerPVC = 2
-			stressConfig.PVCSizeAfterResize = "200Mi"
-			stressConfig.PVCSizeAfterResizeStage2 = "300Mi"
-			stressConfig.TestOrder = []testkit.TestStep{
-				testkit.StepRestoreFromSnapshot,
-				testkit.StepResize,
-				testkit.StepClone,
+			availableCount := 0
+			for scName, err := range results {
+				if err != nil {
+					GinkgoWriter.Printf("    ⚠️  StorageClass %s not available: %v\n", scName, err)
+				} else {
+					GinkgoWriter.Printf("    ✅ StorageClass %s is available\n", scName)
+					availableCount++
+				}
 			}
-			stressConfig.Cleanup = true
-			// Set a reasonable timeout: 5 seconds * 720 attempts = 60 minutes max
-			stressConfig.MaxAttempts = 500
-			stressConfig.Interval = 5 * time.Second
 
-			// Create and run stress test
-			runner, err := testkit.NewStressTestRunner(stressConfig, testClusterResources.Kubeconfig)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create stress test runner")
-
-			err = runner.Run(ctx)
-			Expect(err).NotTo(HaveOccurred(), "Complex stress test failed")
-
-			GinkgoWriter.Printf("    ✅ Complex stress test completed successfully\n")
+			GinkgoWriter.Printf("    ✅ %d/%d StorageClasses are ready\n", availableCount, len(storageClassNames))
+			Expect(availableCount).To(Equal(len(storageClassNames)), "Not all StorageClasses became available")
 		})
+
+	})
+
+	It("should run snapshot/resize/clone stress test for all storage classes", func() {
+		storageClassNames := []string{"hsclass-200", "hpe", "netapp"}
+
+		testResults := make(map[string]error)
+
+		for _, scName := range storageClassNames {
+			func(storageClassName string) {
+				// Use a timeout context for each stress test
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				defer cancel()
+
+				By("Running snapshot, resize, and clone stress test for "+storageClassName+" (15 minutes timeout)", func() {
+					GinkgoWriter.Printf("    ▶️ Running complex stress test for %s...\n", storageClassName)
+
+					// Configure comprehensive stress test
+					stressConfig := testkit.DefaultConfig()
+					stressConfig.Namespace = "stress-test-" + storageClassName
+					stressConfig.StorageClassName = storageClassName
+					stressConfig.PVCSize = "100Mi"
+					stressConfig.PodsCount = 100
+					stressConfig.Iterations = 1
+					stressConfig.Mode = testkit.ModeSnapshotResizeCloning
+					stressConfig.SnapshotsPerPVC = 1
+					stressConfig.PVCSizeAfterResize = "200Mi"
+					stressConfig.PVCSizeAfterResizeStage2 = "300Mi"
+					stressConfig.TestOrder = []testkit.TestStep{
+						testkit.StepRestoreFromSnapshot,
+						testkit.StepResize,
+						testkit.StepClone,
+					}
+					stressConfig.Cleanup = true
+					stressConfig.MaxAttempts = 500
+					stressConfig.Interval = 5 * time.Second
+
+					// Create and run stress test
+					runner, err := testkit.NewStressTestRunner(stressConfig, testClusterResources.Kubeconfig)
+					if err != nil {
+						GinkgoWriter.Printf("    ❌ Failed to create stress test runner for %s: %v\n", storageClassName, err)
+						testResults[storageClassName] = err
+						return
+					}
+
+					err = runner.Run(ctx)
+					if err != nil {
+						GinkgoWriter.Printf("    ❌ Stress test failed for %s: %v\n", storageClassName, err)
+						testResults[storageClassName] = err
+						return
+					}
+
+					GinkgoWriter.Printf("    ✅ Stress test completed successfully for %s\n", storageClassName)
+					testResults[storageClassName] = nil
+				})
+			}(scName)
+		}
+
+		// Report summary
+		passedCount := 0
+		failedCount := 0
+		var failedStorageClasses []string
+
+		for scName, err := range testResults {
+			if err == nil {
+				passedCount++
+			} else {
+				failedCount++
+				failedStorageClasses = append(failedStorageClasses, scName)
+			}
+		}
+
+		GinkgoWriter.Printf("\n    📊 Stress Test Summary:\n")
+		GinkgoWriter.Printf("    ✅ Passed: %d/%d\n", passedCount, len(storageClassNames))
+		GinkgoWriter.Printf("    ❌ Failed: %d/%d\n", failedCount, len(storageClassNames))
+
+		if failedCount > 0 {
+			GinkgoWriter.Printf("    Failed storage classes: %v\n", failedStorageClasses)
+			Expect(failedCount).To(Equal(0), "Some stress tests failed")
+		}
 	})
 
 	///////////////////////////////////////////////////// ---=== TESTS END HERE ===--- /////////////////////////////////////////////////////

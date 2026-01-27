@@ -18,6 +18,7 @@ package csi_huawei_stress_tests
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -164,8 +165,13 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 		By("Applying NGCs", func() {
 			GinkgoWriter.Printf("    ▶️ Creating NGCs...\n")
 
-			// Apply the YAML manifest
-			err := kubernetes.CreateYAMLFile(ctx, testClusterResources.Kubeconfig, yamlFilePathNGCs, "")
+			applyClient, err := kubernetes.NewApplyClient(testClusterResources.Kubeconfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create apply client")
+
+			content, err := os.ReadFile(yamlFilePathNGCs)
+			Expect(err).NotTo(HaveOccurred(), "Failed to read YAML file")
+
+			err = applyClient.CreateYAML(ctx, string(content), "")
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
 
 			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
@@ -239,8 +245,13 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 		By("Applying HuaweiStorageConnection and HuaweiStorageClass", func() {
 			GinkgoWriter.Printf("    ▶️ Creating Huawei storage resources...\n")
 
-			// Apply the YAML manifest
-			err := kubernetes.CreateYAMLFile(ctx, testClusterResources.Kubeconfig, yamlFilePath, "")
+			applyClient, err := kubernetes.NewApplyClient(testClusterResources.Kubeconfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create apply client")
+
+			content, err := os.ReadFile(yamlFilePath)
+			Expect(err).NotTo(HaveOccurred(), "Failed to read YAML file")
+
+			err = applyClient.CreateYAML(ctx, string(content), "")
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
 
 			GinkgoWriter.Printf("    ✅ Resources created successfully\n")

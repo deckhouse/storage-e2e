@@ -10,7 +10,7 @@ spec:
   urls:
     - https://10.200.0.101:8088
   login: "admin_200"
-  password: '<PASSWORD>'
+  password: '${HUAWEI_PASSWORD}'
   protocol: ISCSI
   portals:
     - 10.200.0.101
@@ -43,7 +43,7 @@ metadata:
 spec:
   login: admin_200
   maxClientThreads: 30
-  password: '<PASSWORD>'
+  password: '${HUAWEI_PASSWORD}'
   pools:
   - prod
   protocol: FC
