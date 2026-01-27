@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package csi_huawei_stress_tests
+package csi_all_stress_tests
 
 import (
 	"context"
@@ -31,7 +31,7 @@ import (
 	"github.com/deckhouse/storage-e2e/pkg/testkit"
 )
 
-var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
+var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 	var (
 		testClusterResources *cluster.TestClusterResources
 	)
@@ -332,4 +332,4 @@ var _ = Describe("Csi Huawei Stress Tests", Ordered, func() {
 
 	///////////////////////////////////////////////////// ---=== TESTS END HERE ===--- /////////////////////////////////////////////////////
 
-}) // Describe: Csi Huawei Stress Tests
+}) // Describe: Csi All Stress Tests

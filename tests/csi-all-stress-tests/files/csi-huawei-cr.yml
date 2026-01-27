@@ -1,0 +1,27 @@
+---
+apiVersion: storage.deckhouse.io/v1alpha1
+kind: HuaweiStorageConnection
+metadata:
+  name: hsconn-200
+spec:
+  storageType: OceanStorSAN
+  pools:
+    - prod
+  urls:
+    - https://10.200.0.101:8088
+  login: "admin_200"
+  password: 'Rta200#qpEr'
+  protocol: ISCSI
+  portals:
+    - 10.200.0.101
+  maxClientThreads: 30
+---
+apiVersion: storage.deckhouse.io/v1alpha1
+kind: HuaweiStorageClass
+metadata:
+  name: hsclass-200
+spec:
+  fsType: ext4
+  pool: prod
+  reclaimPolicy: Delete
+  storageConnectionName: hsconn-200
