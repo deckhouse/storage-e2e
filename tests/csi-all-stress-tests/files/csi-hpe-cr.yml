@@ -1,0 +1,24 @@
+---
+apiVersion: storage.deckhouse.io/v1alpha1
+kind: HPEStorageConnection
+metadata:
+  name: hpe
+spec:
+  controlPlane:
+    backendAddress: 172.17.1.55
+    password: '${HPE_PASSWORD}'
+    serviceName: primera3par-csp-svc
+    servicePort: "8080"
+    username: 3paradm
+---
+apiVersion: storage.deckhouse.io/v1alpha1
+kind: HPEStorageClass
+metadata:
+  name: hpe-iscsi
+spec:
+  accessProtocol: iscsi
+  cpg: test-cpg
+  fsType: xfs
+  pool: test-cpg
+  reclaimPolicy: Delete
+  storageConnectionName: hpe

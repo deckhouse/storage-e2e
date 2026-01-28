@@ -39,7 +39,7 @@ clusterDefinition:
       diskSize: 30
   # DKP parameters
   dkpParameters:
-    kubernetesVersion: "Automatic"
+    kubernetesVersion: "1.35"
     podSubnetCIDR: "10.112.0.0/16"
     serviceSubnetCIDR: "10.225.0.0/16"
     clusterDomain: "cluster.local"
@@ -63,4 +63,21 @@ clusterDefinition:
         settings:
           enableThinProvisioning: true
         dependencies: []
+      - name: "csi-huawei"
+        version: 1
+        enabled: true
+        modulePullOverride: "mr48"
+        dependencies:
+          - "snapshot-controller"
+      - name: "csi-hpe"
+        version: 1
+        enabled: true
+        dependencies:
+          - "snapshot-controller"
+      - name: "csi-netapp"
+        version: 1
+        enabled: true
+        dependencies:
+          - "snapshot-controller"
+
 

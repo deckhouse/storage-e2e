@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -35,9 +36,48 @@ import (
 var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 	var (
 		testClusterResources *cluster.TestClusterResources
+		testDir              string
+		crFiles              []string
+		crFilesDir           string
+		storageClassNames    []string
 	)
 
 	BeforeAll(func() {
+		By("Setting up test variables", func() {
+			_, callerFile, _, ok := runtime.Caller(0)
+			Expect(ok).To(BeTrue(), "Failed to determine test file path")
+			testDir = filepath.Dir(callerFile)
+
+			crFiles = []string{"csi-huawei-cr.yml", "csi-hpe-cr.yml", "csi-netapp-cr.yml"}
+			crFilesDir = filepath.Join(testDir, "files")
+
+			storageClassNames = []string{"hsclass-200", "hpe-iscsi", "csi-netapp-sc1"}
+		})
+
+		By("Validating environment variables in CR files", func() {
+			var allUnsetVars []string
+
+			for _, fileName := range crFiles {
+				filePath := filepath.Join(crFilesDir, fileName)
+
+				// Skip if file doesn't exist
+				if _, err := os.Stat(filePath); os.IsNotExist(err) {
+					continue
+				}
+
+				content, err := os.ReadFile(filePath)
+				Expect(err).NotTo(HaveOccurred(), "Failed to read file: "+fileName)
+
+				unsetVars := kubernetes.FindUnsetEnvVars(string(content))
+				if len(unsetVars) > 0 {
+					GinkgoWriter.Printf("    ❌ %s requires env vars: %v\n", fileName, unsetVars)
+					allUnsetVars = append(allUnsetVars, unsetVars...)
+				}
+			}
+
+			Expect(allUnsetVars).To(BeEmpty(), "Environment variables for custom resources are not set: "+strings.Join(allUnsetVars, ", "))
+		})
+
 		By("Outputting environment variables", func() {
 			GinkgoWriter.Printf("    📋 Environment variables (without default values):\n")
 
@@ -154,12 +194,6 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 	It("should create NGCs", func() {
 		ctx := context.Background()
 
-		// Resolve file path relative to test directory (same approach as CreateTestCluster)
-		// runtime.Caller(0) gets this test file's location
-		_, callerFile, _, ok := runtime.Caller(0)
-		Expect(ok).To(BeTrue(), "Failed to determine test file path")
-		testDir := filepath.Dir(callerFile)
-
 		yamlFilePathNGCs := filepath.Join(testDir, "files", "ngc.yml")
 
 		By("Applying NGCs", func() {
@@ -180,20 +214,15 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 
 	It("should create modules' custom resources", func() {
 		ctx := context.Background()
-		crFiles := []string{"csi-huawei-cr.yml", "csi-hpe-cr.yml", "csi-netapp-cr.yml"}
-
-		// Resolve file path relative to test directory
-		_, callerFile, _, ok := runtime.Caller(0)
-		Expect(ok).To(BeTrue(), "Failed to determine test file path")
-		testDir := filepath.Dir(callerFile)
-		filesDir := filepath.Join(testDir, "files")
 
 		By("Applying all storage custom resources", func() {
 			GinkgoWriter.Printf("    ▶️ Creating storage resources from %d files...\n", len(crFiles))
 
-			var combinedContent string
+			applyClient, err := kubernetes.NewApplyClient(testClusterResources.Kubeconfig)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create apply client")
+
 			for _, fileName := range crFiles {
-				filePath := filepath.Join(filesDir, fileName)
+				filePath := filepath.Join(crFilesDir, fileName)
 
 				// Skip if file doesn't exist
 				if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -201,27 +230,15 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 					continue
 				}
 
-				content, err := os.ReadFile(filePath)
-				Expect(err).NotTo(HaveOccurred(), "Failed to read file: "+fileName)
-
-				// Add document separator if not first file
-				if combinedContent != "" {
-					combinedContent += "\n---\n"
-				}
-				combinedContent += string(content)
+				GinkgoWriter.Printf("    📄 Applying %s...\n", fileName)
+				err = applyClient.CreateYAMLFromFileWithEnvvars(ctx, filePath, "")
+				Expect(err).NotTo(HaveOccurred(), "Failed to apply "+fileName)
 			}
-
-			applyClient, err := kubernetes.NewApplyClient(testClusterResources.Kubeconfig)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create apply client")
-
-			err = applyClient.CreateYAML(ctx, combinedContent, "")
-			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
 
 			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
 		})
 
 		By("Waiting for StorageClasses to become available", func() {
-			storageClassNames := []string{"hsclass-200", "hpe", "netapp"}
 
 			GinkgoWriter.Printf("    ▶️ Waiting for %d StorageClasses...\n", len(storageClassNames))
 

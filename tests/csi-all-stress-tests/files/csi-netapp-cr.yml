@@ -1,0 +1,33 @@
+---
+apiVersion: storage.deckhouse.io/v1alpha1
+kind: NetappStorageConnection
+metadata:
+  name: csi-netapp-conn1
+spec:
+  controlPlane:
+    address: 172.17.1.82
+    password: '${NETAPP_PASSWORD}'
+    protocol: ontapi
+    svm: svm0
+    username: admin
+  dataPlane:
+    iSCSI:
+      chap:
+        chapInitiatorSecret: '${NETAPP_CHAP_INITIATOR_SECRET}'
+        chapTargetInitiatorSecret: '${NETAPP_CHAP_TARGET_INITIATOR_SECRET}'
+        chapTargetUsername: target@dm|n
+        chapUsername: chap@dm1n
+        useChap: false
+    nfs:
+      address: 10.200.0.80
+      version: "3"
+    protocol: iscsi
+---
+apiVersion: storage.deckhouse.io/v1alpha1
+kind: NetappStorageClass
+metadata:
+  name: csi-netapp-sc1
+spec:
+  connectionName: csi-netapp-conn1
+  fsType: ext4
+  provisioningType: thin

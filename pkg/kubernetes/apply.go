@@ -19,6 +19,8 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -221,6 +223,57 @@ func (c *ApplyClient) createDocument(ctx context.Context, yamlDoc string, defaul
 	}
 
 	return nil
+}
+
+// CreateYAMLFromFileWithEnvvars reads a YAML file, validates environment variables, substitutes them, and creates resources
+// Returns error if file cannot be read, any ${VAR} is not set, or resource creation fails
+func (c *ApplyClient) CreateYAMLFromFileWithEnvvars(ctx context.Context, filePath string, namespace string) error {
+	// Read file content
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read file %s: %w", filePath, err)
+	}
+
+	yamlContent := string(content)
+
+	// Find all ${VAR} patterns and check if they're set
+	unsetVars := FindUnsetEnvVars(yamlContent)
+	if len(unsetVars) > 0 {
+		return fmt.Errorf("environment variables not set: %v", unsetVars)
+	}
+
+	// Substitute environment variables
+	expanded := os.ExpandEnv(yamlContent)
+
+	// Create resources
+	return c.CreateYAML(ctx, expanded, namespace)
+}
+
+// FindUnsetEnvVars finds all ${VAR} patterns in content and returns those that are not set
+func FindUnsetEnvVars(content string) []string {
+	// Match ${VAR} pattern
+	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	seen := make(map[string]bool)
+	var unset []string
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		varName := match[1]
+		if seen[varName] {
+			continue
+		}
+		seen[varName] = true
+
+		if os.Getenv(varName) == "" {
+			unset = append(unset, varName)
+		}
+	}
+
+	return unset
 }
 
 // splitYAMLDocuments splits YAML content by "---" separator
