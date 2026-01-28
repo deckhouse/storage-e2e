@@ -177,6 +177,12 @@ func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition) (string, error
 	// Format: %s.10.10.1.5.sslip.io (dots in IP are preserved)
 	publicDomainTemplate := fmt.Sprintf("%%s.%s.sslip.io", firstMasterIP)
 
+	// Default devBranch to "main" if not specified
+	devBranch := clusterDef.DKPParameters.DevBranch
+	if devBranch == "" {
+		devBranch = "main"
+	}
+
 	// Prepare template data
 	templateData := struct {
 		PodSubnetCIDR        string
@@ -187,6 +193,7 @@ func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition) (string, error
 		RegistryDockerCfg    string
 		PublicDomainTemplate string
 		InternalNetworkCIDR  string
+		DevBranch            string
 	}{
 		PodSubnetCIDR:        clusterDef.DKPParameters.PodSubnetCIDR,
 		ServiceSubnetCIDR:    clusterDef.DKPParameters.ServiceSubnetCIDR,
@@ -196,6 +203,7 @@ func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition) (string, error
 		RegistryDockerCfg:    config.RegistryDockerCfg,
 		PublicDomainTemplate: publicDomainTemplate,
 		InternalNetworkCIDR:  internalNetworkCIDR,
+		DevBranch:            devBranch,
 	}
 
 	// Get the test file name from the caller

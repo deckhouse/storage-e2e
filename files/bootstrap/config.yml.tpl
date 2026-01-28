@@ -18,7 +18,7 @@ kind: InitConfiguration
 deckhouse:
   imagesRepo: {{ .ImagesRepo }}
   registryDockerCfg: {{ .RegistryDockerCfg }}
-  devBranch : main
+  devBranch: {{ .DevBranch }}
 ---
 # Настройки модуля deckhouse.
 # https://deckhouse.ru/products/kubernetes-platform/documentation/v1/modules/deckhouse/configuration.html
