@@ -342,18 +342,18 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(7, "SSH connection to setup node established")
 
-	logger.Step(8, "Installing Docker on setup node (this may take up to %v)", config.DockerInstallTimeout)
-	// Step 8: Install Docker on setup node
+	logger.Step(8, "Waiting for Docker to be ready on setup node (this may take up to %v)", config.DockerInstallTimeout)
+	// Step 8: Wait for Docker to be ready (installed via cloud-init)
 	dockerCtx, cancel := context.WithTimeout(ctx, config.DockerInstallTimeout)
-	err = InstallDocker(dockerCtx, setupSSHClient)
+	err = WaitForDockerReady(dockerCtx, setupSSHClient)
 	cancel()
 	if err != nil {
 		setupSSHClient.Close()
 		baseClusterResources.SSHClient.Close()
 		baseClusterResources.TunnelInfo.StopFunc()
-		return nil, fmt.Errorf("failed to install Docker on setup node: %w", err)
+		return nil, fmt.Errorf("Docker is not ready on setup node: %w", err)
 	}
-	logger.StepComplete(8, "Docker installed on setup node")
+	logger.StepComplete(8, "Docker is ready on setup node")
 
 	logger.Step(9, "Preparing bootstrap configuration")
 	// Step 9: Prepare bootstrap config

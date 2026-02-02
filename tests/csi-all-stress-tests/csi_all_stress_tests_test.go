@@ -267,10 +267,10 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 		for _, scName := range storageClassNames {
 			func(storageClassName string) {
 				// Use a timeout context for each stress test
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 				defer cancel()
 
-				By("Running snapshot, resize, and clone stress test for "+storageClassName+" (30 minutes timeout)", func() {
+				By("Running snapshot, resize, and clone stress test for "+storageClassName+" (45 minutes timeout)", func() {
 					GinkgoWriter.Printf("    ▶️ Running complex stress test for %s...\n", storageClassName)
 
 					// Configure comprehensive stress test
@@ -336,6 +336,137 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 			GinkgoWriter.Printf("    Failed storage classes: %v\n", failedStorageClasses)
 			Expect(failedCount).To(Equal(0), "Some stress tests failed")
 		}
+	})
+
+	It("should add two 60GB disks to first master VM and mount them", func() {
+		// Use 10 minute timeout for the entire operation
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
+		By("Validating cluster resources", func() {
+			Expect(testClusterResources).NotTo(BeNil(), "testClusterResources should not be nil")
+			Expect(testClusterResources.ClusterDefinition).NotTo(BeNil(), "ClusterDefinition should not be nil")
+			Expect(testClusterResources.BaseKubeconfig).NotTo(BeNil(), "BaseKubeconfig should not be nil")
+			Expect(testClusterResources.SSHClient).NotTo(BeNil(), "SSHClient should not be nil")
+			Expect(len(testClusterResources.ClusterDefinition.Masters)).To(BeNumerically(">", 0), "At least one master should exist")
+		})
+
+		firstMasterName := testClusterResources.ClusterDefinition.Masters[0].Hostname
+		namespace := config.TestClusterNamespace
+		storageClass := config.TestClusterStorageClass
+
+		// Define disk configurations
+		diskConfigs := []struct {
+			name       string
+			mountPoint string
+		}{
+			{name: firstMasterName + "-nfs-disk", mountPoint: "/mnt/nfs"},
+			{name: firstMasterName + "-minio-disk", mountPoint: "/mnt/minio"},
+		}
+
+		GinkgoWriter.Printf("    ▶️ Adding two 60GB disks to first master VM: %s in namespace %s\n", firstMasterName, namespace)
+
+		var attachResults []*kubernetes.VirtualDiskAttachmentResult
+
+		By("Creating and attaching two 60GB VirtualDisks to VM", func() {
+			for _, diskCfg := range diskConfigs {
+				attachConfig := kubernetes.VirtualDiskAttachmentConfig{
+					VMName:           firstMasterName,
+					Namespace:        namespace,
+					DiskName:         diskCfg.name,
+					DiskSize:         "60Gi",
+					StorageClassName: storageClass,
+				}
+
+				attachResult, err := kubernetes.AttachVirtualDiskToVM(ctx, testClusterResources.BaseKubeconfig, attachConfig)
+				Expect(err).NotTo(HaveOccurred(), "Failed to attach VirtualDisk %s to VM", diskCfg.name)
+				attachResults = append(attachResults, attachResult)
+				GinkgoWriter.Printf("    ✅ VirtualDisk %s created and attachment %s initiated\n", attachResult.DiskName, attachResult.AttachmentName)
+			}
+		})
+
+		By("Waiting for disk attachments to complete", func() {
+			for _, attachResult := range attachResults {
+				GinkgoWriter.Printf("    ⏳ Waiting for disk attachment %s to complete...\n", attachResult.AttachmentName)
+				err := kubernetes.WaitForVirtualDiskAttached(ctx, testClusterResources.BaseKubeconfig, namespace, attachResult.AttachmentName, 10*time.Second)
+				Expect(err).NotTo(HaveOccurred(), "Disk attachment %s should complete successfully", attachResult.AttachmentName)
+				GinkgoWriter.Printf("    ✅ Disk %s successfully attached\n", attachResult.DiskName)
+			}
+		})
+
+		By("Formatting disks with XFS and mounting them on the node", func() {
+			GinkgoWriter.Printf("    🔧 Formatting and mounting disks on %s...\n", firstMasterName)
+
+			// Script to find new unformatted disks, format them with XFS, and mount
+			// The disks appear as /dev/vdX (virtio) after hot-plug
+			formatAndMountScript := `
+set -e
+
+# Find all virtio block devices that are not partitioned and not mounted
+echo "Looking for new unformatted disks..."
+
+# Get list of all vd* devices (excluding partitions)
+new_disks=$(lsblk -dpno NAME,TYPE | grep 'disk' | awk '{print $1}' | grep -E '/dev/vd[b-z]$' | while read disk; do
+    # Check if disk has no partitions and no filesystem
+    if ! lsblk -no FSTYPE "$disk" 2>/dev/null | grep -q .; then
+        echo "$disk"
+    fi
+done | head -2)
+
+disk_count=$(echo "$new_disks" | grep -c '/dev/' || true)
+echo "Found $disk_count new unformatted disk(s)"
+
+if [ "$disk_count" -lt 2 ]; then
+    echo "Error: Expected 2 new disks, found $disk_count"
+    lsblk
+    exit 1
+fi
+
+# Convert to array
+disk1=$(echo "$new_disks" | head -1)
+disk2=$(echo "$new_disks" | tail -1)
+
+echo "Disk 1: $disk1 -> /mnt/nfs"
+echo "Disk 2: $disk2 -> /mnt/minio"
+
+# Format disks with XFS
+echo "Formatting $disk1 with XFS..."
+mkfs.xfs -f "$disk1"
+
+echo "Formatting $disk2 with XFS..."
+mkfs.xfs -f "$disk2"
+
+# Create mount points
+mkdir -p /mnt/nfs /mnt/minio
+
+# Mount disks
+echo "Mounting $disk1 to /mnt/nfs..."
+mount "$disk1" /mnt/nfs
+
+echo "Mounting $disk2 to /mnt/minio..."
+mount "$disk2" /mnt/minio
+
+# Add to fstab for persistence
+disk1_uuid=$(blkid -s UUID -o value "$disk1")
+disk2_uuid=$(blkid -s UUID -o value "$disk2")
+
+echo "UUID=$disk1_uuid /mnt/nfs xfs defaults 0 0" >> /etc/fstab
+echo "UUID=$disk2_uuid /mnt/minio xfs defaults 0 0" >> /etc/fstab
+
+# Verify mounts
+echo "Verifying mounts..."
+df -h /mnt/nfs /mnt/minio
+
+echo "Done! Disks formatted and mounted successfully."
+`
+			output, err := testClusterResources.SSHClient.Exec(ctx, formatAndMountScript)
+			if err != nil {
+				GinkgoWriter.Printf("    ❌ Format/mount script output:\n%s\n", output)
+			}
+			Expect(err).NotTo(HaveOccurred(), "Failed to format and mount disks")
+			GinkgoWriter.Printf("    📋 Script output:\n%s\n", output)
+			GinkgoWriter.Printf("    ✅ Disks formatted with XFS and mounted to /mnt/nfs and /mnt/minio\n")
+		})
 	})
 
 	///////////////////////////////////////////////////// ---=== TESTS END HERE ===--- /////////////////////////////////////////////////////

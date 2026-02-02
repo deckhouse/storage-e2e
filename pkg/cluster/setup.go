@@ -102,37 +102,46 @@ func GetOSInfo(ctx context.Context, sshClient ssh.SSHClient) (*OSInfo, error) {
 	return osInfo, nil
 }
 
-// InstallDocker installs Docker on the remote host via SSH.
-// Since the setup node is always Ubuntu 22.04, this function uses apt to install docker.io.
-// It runs: apt update && apt install docker.io -y, then starts docker and verifies with docker ps.
-func InstallDocker(ctx context.Context, sshClient ssh.SSHClient) error {
-	// Wait for apt locks to be released (handles unattended-upgrades, apt-daily, etc.)
-	// This is necessary because freshly booted Ubuntu VMs often have automatic update processes running
-	waitForLockCmd := `while sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do echo "Waiting for apt locks..."; sleep 5; done`
-	output, err := sshClient.Exec(ctx, waitForLockCmd)
-	if err != nil {
-		return fmt.Errorf("failed to wait for apt locks: %w\nOutput: %s", err, output)
-	}
+// WaitForDockerReady waits for Docker to be ready on the setup node.
+// Docker is installed via cloud-init during VM provisioning, so this function
+// waits for cloud-init to complete and verifies Docker is working.
+func WaitForDockerReady(ctx context.Context, sshClient ssh.SSHClient) error {
+	// Wait for cloud-init to complete (Docker is installed via cloud-init packages)
+	waitCmd := `
+set -e
 
-	// Update package list and install docker.io
-	cmd := "sudo apt-get update && sudo apt-get install -y docker.io"
-	output, err = sshClient.Exec(ctx, cmd)
-	if err != nil {
-		return fmt.Errorf("failed to update packages and install docker.io: %w\nOutput: %s", err, output)
-	}
+echo "Waiting for cloud-init to complete..."
+sudo cloud-init status --wait || true
 
-	// Start Docker service
-	cmd = "sudo systemctl start docker"
-	output, err = sshClient.Exec(ctx, cmd)
+# Wait for Docker service to be available (cloud-init enables it)
+max_wait=300
+waited=0
+echo "Waiting for Docker service to be ready..."
+while [ $waited -lt $max_wait ]; do
+    if sudo systemctl is-active --quiet docker 2>/dev/null; then
+        echo "Docker service is active"
+        break
+    fi
+    echo "Docker not ready yet, waiting... ($waited/$max_wait seconds)"
+    sleep 10
+    waited=$((waited + 10))
+done
+
+if [ $waited -ge $max_wait ]; then
+    echo "Docker service did not become ready in time, attempting to start it..."
+    sudo systemctl start docker || true
+fi
+`
+	output, err := sshClient.Exec(ctx, waitCmd)
 	if err != nil {
-		return fmt.Errorf("failed to start docker service: %w\nOutput: %s", err, output)
+		return fmt.Errorf("failed to wait for cloud-init/Docker: %w\nOutput: %s", err, output)
 	}
 
 	// Verify Docker is working by running docker ps
-	cmd = "sudo docker ps"
-	output, err = sshClient.Exec(ctx, cmd)
+	verifyCmd := "sudo docker ps"
+	output, err = sshClient.Exec(ctx, verifyCmd)
 	if err != nil {
-		return fmt.Errorf("failed to verify Docker installation (docker ps failed): %w\nOutput: %s", err, output)
+		return fmt.Errorf("Docker is not working (docker ps failed): %w\nOutput: %s", err, output)
 	}
 
 	return nil

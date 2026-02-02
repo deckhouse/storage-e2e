@@ -356,6 +356,14 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 			return fmt.Errorf("failed to get SSH public key content: %w", err)
 		}
 
+		// Use setup node cloud-init (with Docker) for bootstrap nodes, regular for others
+		var cloudInitData string
+		if strings.HasPrefix(vmName, "bootstrap-node-") {
+			cloudInitData = generateSetupNodeCloudInit(vmName, sshPublicKey)
+		} else {
+			cloudInitData = generateCloudInitUserData(vmName, sshPublicKey)
+		}
+
 		memoryQuantity := resource.MustParse(fmt.Sprintf("%dGi", node.RAM))
 		vm := &v1alpha2.VirtualMachine{
 			ObjectMeta: metav1.ObjectMeta{
@@ -391,7 +399,7 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				},
 				Provisioning: &v1alpha2.Provisioning{
 					Type:     "UserData",
-					UserData: generateCloudInitUserData(vmName, sshPublicKey),
+					UserData: cloudInitData,
 				},
 			},
 		}
@@ -466,7 +474,7 @@ func getCVMINameFromImageURL(imageURL string) string {
 	return name
 }
 
-// generateCloudInitUserData generates cloud-init user data for VM provisioning
+// generateCloudInitUserData generates cloud-init user data for VM provisioning (cluster nodes)
 func generateCloudInitUserData(hostname, sshPubKey string) string {
 	return fmt.Sprintf(`#cloud-config
 package_update: true
@@ -510,6 +518,46 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable --now qemu-guest-agent.service
   - echo 'source /root/.kubectl_aliases' >> /root/.bashrc
+`, sshPubKey, hostname)
+}
+
+// generateSetupNodeCloudInit generates cloud-init user data for the setup/bootstrap node.
+// This includes Docker which is required for running the Deckhouse installer.
+func generateSetupNodeCloudInit(hostname, sshPubKey string) string {
+	return fmt.Sprintf(`#cloud-config
+package_update: true
+packages:
+  - tmux
+  - htop
+  - qemu-guest-agent
+  - iputils-ping
+  - jq
+  - curl
+  - docker.io
+
+ssh_pwauth: true
+users:
+  - name: cloud
+    # passwd: cloud
+    passwd: $6$rounds=4096$vln/.aPHBOI7BMYR$bBMkqQvuGs5Gyd/1H5DP4m9HjQSy.kgrxpaGEHwkX7KEFV8BS.HZWPitAtZ2Vd8ZqIZRqmlykRCagTgPejt1i.
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    chpasswd: {expire: False}
+    lock_passwd: false
+    ssh_authorized_keys:
+      - %s
+write_files:
+  - path: /etc/ssh/sshd_config.d/allow_tcp_forwarding.conf
+    content: |
+      # Разрешить TCP forwarding
+      AllowTcpForwarding yes
+
+runcmd:
+  - systemctl restart ssh
+  - hostnamectl set-hostname %s
+  - systemctl daemon-reload
+  - systemctl enable --now qemu-guest-agent.service
+  - systemctl enable --now docker.service
 `, sshPubKey, hostname)
 }
 
