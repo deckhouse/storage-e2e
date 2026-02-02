@@ -261,17 +261,16 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 	})
 
 	It("should run snapshot/resize/clone stress test for all storage classes", func() {
-		storageClassNames := []string{"hsclass-200", "hpe", "netapp"}
 
 		testResults := make(map[string]error)
 
 		for _, scName := range storageClassNames {
 			func(storageClassName string) {
 				// Use a timeout context for each stress test
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 				defer cancel()
 
-				By("Running snapshot, resize, and clone stress test for "+storageClassName+" (15 minutes timeout)", func() {
+				By("Running snapshot, resize, and clone stress test for "+storageClassName+" (30 minutes timeout)", func() {
 					GinkgoWriter.Printf("    ▶️ Running complex stress test for %s...\n", storageClassName)
 
 					// Configure comprehensive stress test

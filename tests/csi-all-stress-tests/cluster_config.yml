@@ -44,7 +44,7 @@ clusterDefinition:
     serviceSubnetCIDR: "10.225.0.0/16"
     clusterDomain: "cluster.local"
     registryRepo: "dev-registry.deckhouse.io/sys/deckhouse-oss"
-    devBranch: "main"
+    devBranch: "pr17504"
     # Module configuration
     modules:
       - name: "snapshot-controller" # TODO add MPO

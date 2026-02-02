@@ -25,28 +25,4 @@ spec:
   pool: prod
   reclaimPolicy: Delete
   storageConnectionName: hsconn-200
----
-apiVersion: storage.deckhouse.io/v1alpha1
-kind: HuaweiStorageClass
-metadata:
-  name: huawei-fc-200
-spec:
-  fsType: ext4
-  pool: prod
-  reclaimPolicy: Delete
-  storageConnectionName: huawei-fc-200
----
-apiVersion: storage.deckhouse.io/v1alpha1
-kind: HuaweiStorageConnection
-metadata:
-  name: huawei-fc-200
-spec:
-  login: admin_200
-  maxClientThreads: 30
-  password: '${HUAWEI_PASSWORD}'
-  pools:
-  - prod
-  protocol: FC
-  storageType: OceanStorSAN
-  urls:
-  - https://10.200.0.101:8088
+

@@ -106,9 +106,17 @@ func GetOSInfo(ctx context.Context, sshClient ssh.SSHClient) (*OSInfo, error) {
 // Since the setup node is always Ubuntu 22.04, this function uses apt to install docker.io.
 // It runs: apt update && apt install docker.io -y, then starts docker and verifies with docker ps.
 func InstallDocker(ctx context.Context, sshClient ssh.SSHClient) error {
+	// Wait for apt locks to be released (handles unattended-upgrades, apt-daily, etc.)
+	// This is necessary because freshly booted Ubuntu VMs often have automatic update processes running
+	waitForLockCmd := `while sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do echo "Waiting for apt locks..."; sleep 5; done`
+	output, err := sshClient.Exec(ctx, waitForLockCmd)
+	if err != nil {
+		return fmt.Errorf("failed to wait for apt locks: %w\nOutput: %s", err, output)
+	}
+
 	// Update package list and install docker.io
 	cmd := "sudo apt-get update && sudo apt-get install -y docker.io"
-	output, err := sshClient.Exec(ctx, cmd)
+	output, err = sshClient.Exec(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to update packages and install docker.io: %w\nOutput: %s", err, output)
 	}
