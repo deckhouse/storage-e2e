@@ -22,3 +22,4 @@ spec:
   pool: test-cpg
   reclaimPolicy: Delete
   storageConnectionName: hpe
+  fsRepair: true

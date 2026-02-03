@@ -303,13 +303,13 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 					stressConfig := testkit.DefaultConfig()
 					stressConfig.Namespace = "stress-test-" + storageClassName
 					stressConfig.StorageClassName = storageClassName
-					stressConfig.PVCSize = "100Mi"
+					stressConfig.PVCSize = "300Mi"
 					stressConfig.PodsCount = 100
 					stressConfig.Iterations = 1
 					stressConfig.Mode = testkit.ModeSnapshotResizeCloning
 					stressConfig.SnapshotsPerPVC = 1
-					stressConfig.PVCSizeAfterResize = "200Mi"
-					stressConfig.PVCSizeAfterResizeStage2 = "300Mi"
+					stressConfig.PVCSizeAfterResize = "350Mi"
+					stressConfig.PVCSizeAfterResizeStage2 = "400Mi"
 					stressConfig.TestOrder = []testkit.TestStep{
 						testkit.StepRestoreFromSnapshot,
 						testkit.StepResize,
