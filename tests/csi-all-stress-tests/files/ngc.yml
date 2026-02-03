@@ -25,6 +25,7 @@ spec:
     # data nodes checksum to force bashible execution on nodes list change
     # {{ $.Values.csiYadroTatlinUnified.internal.dataNodesChecksum }}
 
+    export ISCSI_NODE_READY_LABEL="storage.deckhouse.io/node-ready-for-iscsi"
     export kubeconfig="/etc/kubernetes/kubelet.conf"
 
     export MULTIPATH_MAIN_CONF="/etc/multipath.conf"
@@ -57,9 +58,30 @@ spec:
       /sbin/mpathconf --enable --user_friendly_names y
     }
 
-    install_packages || echo "Failed to install packages, skipping configuration."
-    ensure_main_multipath_conf || echo "Failed to ensure main multipath conf, skipping configuration."
-    enable_services || echo "Failed to enable services, skipping configuration."
+    # Track success of all steps
+    all_success=true
+
+    if ! install_packages; then
+      echo "Failed to install packages, skipping configuration."
+      all_success=false
+    fi
+
+    if ! ensure_main_multipath_conf; then
+      echo "Failed to ensure main multipath conf, skipping configuration."
+      all_success=false
+    fi
+
+    if ! enable_services; then
+      echo "Failed to enable services, skipping configuration."
+      all_success=false
+    fi
+
+    # Only label node if all previous commands succeeded
+    if [ "$all_success" = true ]; then
+      bb-kubectl --kubeconfig $kubeconfig label nodes "$(hostname)" ${ISCSI_NODE_READY_LABEL}="true" --overwrite
+    else
+      echo "Skipping node labeling due to previous errors."
+    fi
 
 
 
@@ -90,6 +112,7 @@ spec:
     # data nodes checksum to force bashible execution on nodes list change
     # {{ $.Values.csiYadroTatlinUnified.internal.dataNodesChecksum }}
 
+    export ISCSI_NODE_READY_LABEL="storage.deckhouse.io/node-ready-for-iscsi"
     export MULTIPATH_MAIN_CONF="/etc/multipath.conf"
     export kubeconfig="/etc/kubernetes/kubelet.conf"
 
@@ -119,7 +142,28 @@ spec:
       systemctl start multipathd iscsid
     }
 
-    install_packages || echo "Failed to install packages, skipping configuration."
-    ensure_main_multipath_conf || echo "Failed to ensure main multipath conf, skipping configuration."
-    enable_services || echo "Failed to enable services, skipping configuration."
+    # Track success of all steps
+    all_success=true
+
+    if ! install_packages; then
+      echo "Failed to install packages, skipping configuration."
+      all_success=false
+    fi
+
+    if ! ensure_main_multipath_conf; then
+      echo "Failed to ensure main multipath conf, skipping configuration."
+      all_success=false
+    fi
+
+    if ! enable_services; then
+      echo "Failed to enable services, skipping configuration."
+      all_success=false
+    fi
+
+    # Only label node if all previous commands succeeded
+    if [ "$all_success" = true ]; then
+      bb-kubectl --kubeconfig $kubeconfig label nodes "$(hostname)" ${ISCSI_NODE_READY_LABEL}="true" --overwrite
+    else
+      echo "Skipping node labeling due to previous errors."
+    fi
 

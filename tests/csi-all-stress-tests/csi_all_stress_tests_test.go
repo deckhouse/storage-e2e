@@ -191,8 +191,10 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 	// ---=== TESTS START HERE ===--- //
 	////////////////////////////////////
 
-	It("should create NGCs", func() {
-		ctx := context.Background()
+	It("should create NGCs and wait for nodes to be labeled", func() {
+		// Use 10 minute timeout for NGCs to be applied and nodes to be labeled
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
 
 		yamlFilePathNGCs := filepath.Join(testDir, "files", "ngc.yml")
 
@@ -208,7 +210,31 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 			err = applyClient.CreateYAML(ctx, string(content), "")
 			Expect(err).NotTo(HaveOccurred(), "Failed to apply YAML resources")
 
-			GinkgoWriter.Printf("    ✅ Resources created successfully\n")
+			GinkgoWriter.Printf("    ✅ NGCs created successfully\n")
+		})
+
+		By("Waiting for all nodes to be labeled with iSCSI ready label", func() {
+			// Collect all node names from cluster definition
+			var nodeNames []string
+			for _, master := range testClusterResources.ClusterDefinition.Masters {
+				nodeNames = append(nodeNames, master.Hostname)
+			}
+			for _, worker := range testClusterResources.ClusterDefinition.Workers {
+				nodeNames = append(nodeNames, worker.Hostname)
+			}
+
+			GinkgoWriter.Printf("    ⏳ Waiting for %d nodes to be labeled (timeout: 10 minutes)...\n", len(nodeNames))
+			for _, name := range nodeNames {
+				GinkgoWriter.Printf("      - %s\n", name)
+			}
+
+			labelKey := "storage.deckhouse.io/node-ready-for-iscsi"
+			labelValue := "true"
+
+			err := kubernetes.WaitForNodesLabeled(ctx, testClusterResources.Kubeconfig, nodeNames, labelKey, labelValue)
+			Expect(err).NotTo(HaveOccurred(), "All nodes should be labeled with %s=%s", labelKey, labelValue)
+
+			GinkgoWriter.Printf("    ✅ All %d nodes are labeled and ready for iSCSI\n", len(nodeNames))
 		})
 	})
 
