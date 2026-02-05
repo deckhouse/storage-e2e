@@ -1754,8 +1754,8 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 		}
 
 		// Create SSH client with jump host (retry with exponential backoff)
-		maxRetries := 3
-		retryDelay := 2 * time.Second
+		maxRetries := config.SSHRetryCount
+		retryDelay := config.SSHRetryInitialDelay
 		var lastErr error
 		for attempt := 0; attempt < maxRetries; attempt++ {
 			if attempt > 0 {
@@ -1766,6 +1766,9 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 				case <-time.After(retryDelay):
 				}
 				retryDelay *= 2 // Exponential backoff
+				if retryDelay > config.SSHRetryMaxDelay {
+					retryDelay = config.SSHRetryMaxDelay
+				}
 			}
 
 			sshClient, lastErr = ssh.NewClientWithJumpHost(
@@ -1775,6 +1778,7 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 			if lastErr == nil {
 				break // Success
 			}
+			logger.Warn("SSH connection with jump host attempt %d/%d failed: %v", attempt+1, maxRetries, lastErr)
 		}
 		if lastErr != nil {
 			return nil, fmt.Errorf("failed to create SSH client with jump host after %d attempts: %w", maxRetries, lastErr)
@@ -1783,11 +1787,32 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 		masterHost = opts.TargetHost
 		masterUser = opts.TargetUser
 	} else {
-		// Direct connection (no jump host)
-		var err error
-		sshClient, err = ssh.NewClient(opts.SSHUser, opts.SSHHost, opts.SSHKeyPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SSH client: %w", err)
+		// Direct connection (no jump host) with retry logic
+		maxRetries := config.SSHRetryCount
+		retryDelay := config.SSHRetryInitialDelay
+		var lastErr error
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			if attempt > 0 {
+				// Wait before retry (exponential backoff)
+				select {
+				case <-ctx.Done():
+					return nil, fmt.Errorf("context cancelled while retrying SSH connection: %w", ctx.Err())
+				case <-time.After(retryDelay):
+				}
+				retryDelay *= 2 // Exponential backoff
+				if retryDelay > config.SSHRetryMaxDelay {
+					retryDelay = config.SSHRetryMaxDelay
+				}
+			}
+
+			sshClient, lastErr = ssh.NewClient(opts.SSHUser, opts.SSHHost, opts.SSHKeyPath)
+			if lastErr == nil {
+				break // Success
+			}
+			logger.Warn("SSH connection attempt %d/%d failed: %v", attempt+1, maxRetries, lastErr)
+		}
+		if lastErr != nil {
+			return nil, fmt.Errorf("failed to create SSH client after %d attempts: %w", maxRetries, lastErr)
 		}
 
 		masterHost = opts.SSHHost

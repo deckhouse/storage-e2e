@@ -719,7 +719,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 	// Retry logic handles temporary failures like proxy pod restarts (HTTP 401, connection errors, etc.)
 	cmd := fmt.Sprintf("sudo bash << 'BOOTSTRAP_EOF'\n%s\nBOOTSTRAP_EOF", bootstrapScript)
 
-	const maxRetries = 5
+	maxRetries := config.SSHRetryCount
 	var output string
 	var lastErr error
 
@@ -768,12 +768,15 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 		}
 
 		// Retryable error - wait with exponential backoff
-		backoffSeconds := time.Duration(1<<uint(attempt-1)) * 10 // 10s, 20s, 40s, 80s, 160s
+		backoffDuration := config.SSHRetryInitialDelay * time.Duration(1<<uint(attempt-1))
+		if backoffDuration > config.SSHRetryMaxDelay {
+			backoffDuration = config.SSHRetryMaxDelay
+		}
 		if mu != nil {
 			mu.Lock()
 		}
 		logger.Warn("Bootstrap script failed on node %s (%s) (attempt %d/%d), retrying in %v: %v",
-			node.Hostname, nodeIP, attempt, maxRetries, backoffSeconds*time.Second, lastErr)
+			node.Hostname, nodeIP, attempt, maxRetries, backoffDuration, lastErr)
 		if mu != nil {
 			mu.Unlock()
 		}
@@ -781,7 +784,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context cancelled while retrying bootstrap script on node %s: %w", node.Hostname, ctx.Err())
-		case <-time.After(backoffSeconds * time.Second):
+		case <-time.After(backoffDuration):
 			// Continue to next retry
 		}
 	}

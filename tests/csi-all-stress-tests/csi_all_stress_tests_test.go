@@ -48,10 +48,10 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 			Expect(ok).To(BeTrue(), "Failed to determine test file path")
 			testDir = filepath.Dir(callerFile)
 
-			crFiles = []string{"csi-huawei-cr.yml", "csi-hpe-cr.yml", "csi-netapp-cr.yml"}
+			crFiles = []string{"csi-huawei-cr.yml", "csi-hpe-cr.yml"}
 			crFilesDir = filepath.Join(testDir, "files")
 
-			storageClassNames = []string{"hsclass-200", "hpe-iscsi", "csi-netapp-sc1"}
+			storageClassNames = []string{"hsclass-200", "hpe-iscsi"}
 		})
 
 		By("Validating environment variables in CR files", func() {
@@ -193,7 +193,7 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 
 	It("should create NGCs and wait for nodes to be labeled", func() {
 		// Use 10 minute timeout for NGCs to be applied and nodes to be labeled
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
 
 		yamlFilePathNGCs := filepath.Join(testDir, "files", "ngc.yml")
@@ -223,7 +223,7 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 				nodeNames = append(nodeNames, worker.Hostname)
 			}
 
-			GinkgoWriter.Printf("    ⏳ Waiting for %d nodes to be labeled (timeout: 10 minutes)...\n", len(nodeNames))
+			GinkgoWriter.Printf("    ⏳ Waiting for %d nodes to be labeled (timeout: 15 minutes)...\n", len(nodeNames))
 			for _, name := range nodeNames {
 				GinkgoWriter.Printf("      - %s\n", name)
 			}

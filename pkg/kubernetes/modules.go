@@ -29,6 +29,7 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 	"github.com/deckhouse/storage-e2e/internal/logger"
+	"github.com/deckhouse/storage-e2e/pkg/retry"
 )
 
 // ModuleSpec defines a module to be enabled in the cluster.
@@ -86,32 +87,6 @@ func convertModuleSpecsToConfigs(modules []ModuleSpec) []*config.ModuleConfig {
 // EnableModulesWithSpecs enables and configures the specified modules in the test cluster.
 // It handles dependencies automatically through topological sort and waits for
 // each level of modules to become Ready before proceeding to the next level.
-//
-// Parameters:
-//   - ctx: context for cancellation
-//   - kubeconfig: kubernetes client config
-//   - sshClient: SSH client for cluster access
-//   - clusterDef: cluster definition (can be nil for existing clusters)
-//   - modules: list of module specifications to enable
-//
-// Example usage:
-//
-//	modules := []kubernetes.ModuleSpec{
-//	    {
-//	        Name:               "snapshot-controller",
-//	        Version:            1,
-//	        Enabled:            true,
-//	        ModulePullOverride: "main",
-//	    },
-//	    {
-//	        Name:               "csi-hpe",
-//	        Version:            1,
-//	        Enabled:            true,
-//	        Dependencies:       []string{"snapshot-controller"},
-//	        ModulePullOverride: "main",
-//	    },
-//	}
-//	err := kubernetes.EnableModulesWithSpecs(ctx, kubeconfig, sshClient, clusterDef, modules)
 func EnableModulesWithSpecs(ctx context.Context, kubeconfig *rest.Config, sshClient ssh.SSHClient, clusterDef *config.ClusterDefinition, modules []ModuleSpec) error {
 	// Convert ModuleSpec to config.ModuleConfig
 	moduleConfigs := convertModuleSpecsToConfigs(modules)
@@ -296,7 +271,7 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 			if err != nil {
 				lastErr = err
 				// Check if it's a retryable error (webhook or network timeout)
-				if (isWebhookConnectionError(err) || isRetryableNetworkError(err)) && attempt < maxRetries-1 {
+				if retry.IsRetryable(err) && attempt < maxRetries-1 {
 					if isWebhookConnectionError(err) {
 						logger.Debug("webhook-handler connection error for %s", moduleConfig.Name)
 					} else {
@@ -321,7 +296,7 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 			if err != nil {
 				lastErr = err
 				// Check if it's a retryable error (webhook or network timeout)
-				if (isWebhookConnectionError(err) || isRetryableNetworkError(err)) && attempt < maxRetries-1 {
+				if retry.IsRetryable(err) && attempt < maxRetries-1 {
 					if isWebhookConnectionError(err) {
 						logger.Debug("webhook-handler connection error for %s", moduleConfig.Name)
 					} else {
@@ -408,7 +383,7 @@ func configureModulePullOverride(ctx context.Context, kubeconfig *rest.Config, m
 				if err := deckhouse.CreateModulePullOverride(ctx, kubeconfig, moduleConfig.Name, imageTag); err != nil {
 					lastErr = err
 					// Check if it's a retryable error (timeout, TLS handshake, connection refused, etc.)
-					if isRetryableNetworkError(err) && attempt < maxRetries-1 {
+					if retry.IsRetryable(err) && attempt < maxRetries-1 {
 						logger.Warn("Retryable error creating ModulePullOverride for %s: %v", moduleConfig.Name, err)
 						continue
 					}
@@ -420,7 +395,7 @@ func configureModulePullOverride(ctx context.Context, kubeconfig *rest.Config, m
 				if err := deckhouse.UpdateModulePullOverride(ctx, kubeconfig, moduleConfig.Name, imageTag); err != nil {
 					lastErr = err
 					// Check if it's a retryable error
-					if isRetryableNetworkError(err) && attempt < maxRetries-1 {
+					if retry.IsRetryable(err) && attempt < maxRetries-1 {
 						logger.Warn("Retryable error updating ModulePullOverride for %s: %v", moduleConfig.Name, err)
 						continue
 					}
@@ -438,22 +413,6 @@ func configureModulePullOverride(ctx context.Context, kubeconfig *rest.Config, m
 	}
 
 	return nil
-}
-
-// isRetryableNetworkError checks if an error is a network error that should be retried
-func isRetryableNetworkError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	// Check for common retryable network errors
-	return strings.Contains(errStr, "TLS handshake timeout") ||
-		strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "connection reset") ||
-		strings.Contains(errStr, "i/o timeout") ||
-		strings.Contains(errStr, "context deadline exceeded") ||
-		strings.Contains(errStr, "EOF") ||
-		strings.Contains(errStr, "broken pipe")
 }
 
 // EnableAndConfigureModules enables and configures modules based on cluster definition

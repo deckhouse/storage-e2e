@@ -161,7 +161,7 @@ spec:
     fi
 
     # Only label node if all previous commands succeeded
-    if [ "$all_success" = true ]; then
+    if [ "$all_success" == "true" ]; then
       bb-kubectl --kubeconfig $kubeconfig label nodes "$(hostname)" ${ISCSI_NODE_READY_LABEL}="true" --overwrite
     else
       echo "Skipping node labeling due to previous errors."

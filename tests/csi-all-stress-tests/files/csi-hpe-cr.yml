@@ -18,8 +18,8 @@ metadata:
 spec:
   accessProtocol: iscsi
   cpg: test-cpg
-  fsType: xfs
+  fsType: ext4
   pool: test-cpg
   reclaimPolicy: Delete
   storageConnectionName: hpe
-  fsRepair: true
+  # fsRepair: true

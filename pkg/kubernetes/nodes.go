@@ -83,7 +83,7 @@ func WaitForNodesLabeled(ctx context.Context, kubeconfig *rest.Config, nodeNames
 						}
 					}
 
-					logger.Debug("Node %s does not have label %s=%s yet", name, labelKey, labelValue)
+					// logger.Debug("Node %s does not have label %s=%s yet", name, labelKey, labelValue)
 				}
 			}
 		}(nodeName)

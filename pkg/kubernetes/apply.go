@@ -31,6 +31,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
+
+	"github.com/deckhouse/storage-e2e/pkg/retry"
 )
 
 // ApplyClient handles applying YAML manifests to a Kubernetes cluster
@@ -127,24 +129,26 @@ func (c *ApplyClient) applyDocument(ctx context.Context, yamlDoc string, default
 		dr = c.dynamicClient.Resource(mapping.Resource)
 	}
 
-	// Try to get existing resource
-	existing, err := dr.Get(ctx, obj.GetName(), metav1.GetOptions{})
-	if err == nil {
-		// Resource exists, update it
-		obj.SetResourceVersion(existing.GetResourceVersion())
-		_, err = dr.Update(ctx, obj, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to update %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+	// Try to get existing resource with retry for transient errors
+	operationName := fmt.Sprintf("apply %s/%s", obj.GetKind(), obj.GetName())
+	return retry.DoVoid(ctx, retry.DefaultConfig, operationName, func() error {
+		existing, err := dr.Get(ctx, obj.GetName(), metav1.GetOptions{})
+		if err == nil {
+			// Resource exists, update it
+			obj.SetResourceVersion(existing.GetResourceVersion())
+			_, err = dr.Update(ctx, obj, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to update %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+			}
+		} else {
+			// Resource doesn't exist, create it
+			_, err = dr.Create(ctx, obj, metav1.CreateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+			}
 		}
-	} else {
-		// Resource doesn't exist, create it
-		_, err = dr.Create(ctx, obj, metav1.CreateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
-		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // CreateYAML creates resources from YAML manifest(s)
@@ -216,13 +220,15 @@ func (c *ApplyClient) createDocument(ctx context.Context, yamlDoc string, defaul
 		dr = c.dynamicClient.Resource(mapping.Resource)
 	}
 
-	// Create resource
-	_, err = dr.Create(ctx, obj, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
-	}
-
-	return nil
+	// Create resource with retry for transient errors
+	operationName := fmt.Sprintf("create %s/%s", obj.GetKind(), obj.GetName())
+	return retry.DoVoid(ctx, retry.DefaultConfig, operationName, func() error {
+		_, err = dr.Create(ctx, obj, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+		}
+		return nil
+	})
 }
 
 // CreateYAMLFromFileWithEnvvars reads a YAML file, validates environment variables, substitutes them, and creates resources

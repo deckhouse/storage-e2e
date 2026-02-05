@@ -154,7 +154,8 @@ func Success(format string, args ...interface{}) {
 // Info logs general informational messages (DEBUG level only)
 func Info(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	GetLogger().Info(msg)
+	fullMsg := addEmoji("ℹ️", msg)
+	GetLogger().Info(fullMsg, "type", "info")
 }
 
 // Warn logs warning messages

@@ -34,14 +34,21 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
+
+	"github.com/deckhouse/storage-e2e/internal/config"
 )
 
 // client implements Client interface
 type client struct {
+	mu              sync.Mutex
 	sshClient       *ssh.Client
 	keepaliveCtx    context.Context
 	keepaliveCancel context.CancelFunc
 	keepaliveWg     sync.WaitGroup
+	// Connection parameters for reconnection
+	user    string
+	host    string
+	keyPath string
 }
 
 // copyWithContext copies data from src to dst with context cancellation support
@@ -234,6 +241,10 @@ func (c *client) Create(user, host, keyPath string) (SSHClient, error) {
 		sshClient:       sshClient,
 		keepaliveCtx:    keepaliveCtx,
 		keepaliveCancel: keepaliveCancel,
+		// Store connection parameters for reconnection
+		user:    user,
+		host:    host,
+		keyPath: keyPath,
 	}
 	newClient.startKeepalive()
 
@@ -249,7 +260,7 @@ func (c *client) startKeepalive() {
 	c.keepaliveWg.Add(1)
 	go func() {
 		defer c.keepaliveWg.Done()
-		ticker := time.NewTicker(60 * time.Second)
+		ticker := time.NewTicker(config.SSHKeepaliveInterval)
 		defer ticker.Stop()
 
 		for {
@@ -267,6 +278,98 @@ func (c *client) startKeepalive() {
 			}
 		}
 	}()
+}
+
+// isConnectionError checks if the error indicates a broken SSH connection
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	errStr := err.Error()
+	connectionPatterns := []string{
+		"failed to create SSH session",
+		"ssh: handshake failed",
+		"ssh: connection lost",
+		"use of closed network connection",
+		"connection refused",
+		"connection reset",
+		"broken pipe",
+		"EOF",
+		"i/o timeout",
+	}
+	for _, pattern := range connectionPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// reconnect attempts to re-establish the SSH connection
+func (c *client) reconnect(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Stop old keepalive
+	if c.keepaliveCancel != nil {
+		c.keepaliveCancel()
+		c.keepaliveWg.Wait()
+	}
+
+	// Close old connection
+	if c.sshClient != nil {
+		_ = c.sshClient.Close()
+	}
+
+	// Reconnect with retry
+	retryDelay := config.SSHRetryInitialDelay
+	var lastErr error
+
+	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryDelay):
+				retryDelay *= 2
+				if retryDelay > config.SSHRetryMaxDelay {
+					retryDelay = config.SSHRetryMaxDelay
+				}
+			}
+		}
+
+		sshConfig, err := createSSHConfig(c.user, c.keyPath)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		addr := c.host
+		if !strings.Contains(addr, ":") {
+			addr = addr + ":22"
+		}
+
+		sshClient, err := ssh.Dial("tcp", addr, sshConfig)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// Success - update client
+		c.sshClient = sshClient
+		c.keepaliveCtx, c.keepaliveCancel = context.WithCancel(context.Background())
+		c.startKeepalive()
+		return nil
+	}
+
+	return fmt.Errorf("failed to reconnect after %d attempts: %w", config.SSHRetryCount, lastErr)
 }
 
 // StartTunnel starts an SSH tunnel with port forwarding from local to remote
@@ -362,37 +465,66 @@ func (c *client) StartTunnel(ctx context.Context, localPort, remotePort string) 
 	return stop, nil
 }
 
-// Exec executes a command on the remote host
+// Exec executes a command on the remote host with automatic retry and reconnection
 func (c *client) Exec(ctx context.Context, cmd string) (string, error) {
-	// Check context before starting
-	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("context error before execution: %w", err)
-	}
+	var output string
+	var lastErr error
 
-	session, err := c.sshClient.NewSession()
-	if err != nil {
-		return "", fmt.Errorf("failed to create SSH session: %w", err)
-	}
-	defer session.Close()
-
-	// Note: session.CombinedOutput doesn't support context directly,
-	// but we check context before and after the call
-	// For better cancellation support, consider using session.Start() with context-aware goroutines
-	output, err := session.CombinedOutput(cmd)
-	if err != nil {
-		// Check if context was cancelled during execution
-		if ctx.Err() != nil {
-			return string(output), fmt.Errorf("context cancelled: %w", ctx.Err())
+	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
+		// Check context before starting
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("context error before execution: %w", err)
 		}
-		return string(output), fmt.Errorf("command failed: %w", err)
+
+		c.mu.Lock()
+		sshClient := c.sshClient
+		c.mu.Unlock()
+
+		session, err := sshClient.NewSession()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create SSH session: %w", err)
+			if isConnectionError(err) {
+				// Try to reconnect
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return "", fmt.Errorf("SSH session failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue // Retry with new connection
+			}
+			return "", lastErr
+		}
+
+		output, err := session.CombinedOutput(cmd)
+		session.Close()
+
+		if err != nil {
+			// Check if context was cancelled
+			if ctx.Err() != nil {
+				return string(output), fmt.Errorf("context cancelled: %w", ctx.Err())
+			}
+
+			lastErr = fmt.Errorf("command failed: %w", err)
+
+			// Check if it's a connection error that might benefit from reconnection
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return string(output), fmt.Errorf("command failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue // Retry with new connection
+			}
+
+			// Non-connection error (actual command failure) - don't retry
+			return string(output), lastErr
+		}
+
+		// Check context after execution
+		if err := ctx.Err(); err != nil {
+			return string(output), fmt.Errorf("context cancelled: %w", err)
+		}
+
+		return string(output), nil
 	}
 
-	// Check context after execution
-	if err := ctx.Err(); err != nil {
-		return string(output), fmt.Errorf("context cancelled: %w", err)
-	}
-
-	return string(output), nil
+	return output, fmt.Errorf("SSH exec failed after %d attempts: %w", config.SSHRetryCount, lastErr)
 }
 
 // ExecFatal executes a command and returns error if it fails
@@ -404,38 +536,73 @@ func (c *client) ExecFatal(ctx context.Context, cmd string) string {
 	return output
 }
 
-// Upload uploads a local file to the remote host
+// Upload uploads a local file to the remote host with automatic retry and reconnection
 func (c *client) Upload(ctx context.Context, localPath, remotePath string) error {
-	// Check context before starting
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context error before upload: %w", err)
+	var lastErr error
+
+	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
+		// Check context before starting
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context error before upload: %w", err)
+		}
+
+		c.mu.Lock()
+		sshClient := c.sshClient
+		c.mu.Unlock()
+
+		sftpClient, err := sftp.NewClient(sshClient)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create SFTP client: %w", err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return fmt.Errorf("SFTP client creation failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return lastErr
+		}
+
+		localFile, err := os.Open(localPath)
+		if err != nil {
+			sftpClient.Close()
+			return fmt.Errorf("failed to open local file %s: %w", localPath, err)
+		}
+
+		remoteFile, err := sftpClient.Create(remotePath)
+		if err != nil {
+			localFile.Close()
+			sftpClient.Close()
+			lastErr = fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return fmt.Errorf("remote file creation failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return lastErr
+		}
+
+		// Use context-aware copy
+		_, err = copyWithContext(ctx, remoteFile, localFile)
+		remoteFile.Close()
+		localFile.Close()
+		sftpClient.Close()
+
+		if err != nil {
+			lastErr = fmt.Errorf("failed to copy file: %w", err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return fmt.Errorf("file copy failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return lastErr
+		}
+
+		return nil
 	}
 
-	sftpClient, err := sftp.NewClient(c.sshClient)
-	if err != nil {
-		return fmt.Errorf("failed to create SFTP client: %w", err)
-	}
-	defer sftpClient.Close()
-
-	localFile, err := os.Open(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to open local file %s: %w", localPath, err)
-	}
-	defer localFile.Close()
-
-	remoteFile, err := sftpClient.Create(remotePath)
-	if err != nil {
-		return fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
-	}
-	defer remoteFile.Close()
-
-	// Use context-aware copy
-	_, err = copyWithContext(ctx, remoteFile, localFile)
-	if err != nil {
-		return fmt.Errorf("failed to copy file: %w", err)
-	}
-
-	return nil
+	return fmt.Errorf("SSH upload failed after %d attempts: %w", config.SSHRetryCount, lastErr)
 }
 
 // Close closes the SSH connection
@@ -497,15 +664,18 @@ func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHo
 	}
 
 	// Connect to target host through jump host with retry
-	maxRetries := 10
-	retryDelay := 5 * time.Second
+	maxRetries := config.SSHRetryCount
+	retryDelay := config.SSHRetryInitialDelay
 	var targetClient *ssh.Client
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			time.Sleep(retryDelay)
-			retryDelay *= 2 // Exponential backoff: 5s, 10s, 20s, 40s...
+			retryDelay *= 2 // Exponential backoff
+			if retryDelay > config.SSHRetryMaxDelay {
+				retryDelay = config.SSHRetryMaxDelay
+			}
 		}
 
 		targetConn, err := jumpClient.Dial("tcp", targetAddr)
@@ -535,18 +705,121 @@ func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHo
 	return &jumpHostClient{
 		jumpClient:   jumpClient,
 		targetClient: targetClient,
+		// Store connection parameters for reconnection
+		jumpUser:      jumpUser,
+		jumpHost:      jumpHost,
+		jumpKeyPath:   jumpKeyPath,
+		targetUser:    targetUser,
+		targetHost:    targetHost,
+		targetKeyPath: targetKeyPath,
 	}, nil
 }
 
 // jumpHostClient wraps both jump host and target client connections
 type jumpHostClient struct {
+	mu           sync.Mutex
 	jumpClient   *ssh.Client
 	targetClient *ssh.Client
+	// Connection parameters for reconnection
+	jumpUser      string
+	jumpHost      string
+	jumpKeyPath   string
+	targetUser    string
+	targetHost    string
+	targetKeyPath string
 }
 
 // Create creates a new SSH client (not used for jump host client)
 func (c *jumpHostClient) Create(user, host, keyPath string) (SSHClient, error) {
 	return nil, fmt.Errorf("Create not supported for jump host client")
+}
+
+// reconnect attempts to re-establish the SSH connection through jump host
+func (c *jumpHostClient) reconnect(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Close old connections
+	if c.targetClient != nil {
+		_ = c.targetClient.Close()
+	}
+	if c.jumpClient != nil {
+		_ = c.jumpClient.Close()
+	}
+
+	retryDelay := config.SSHRetryInitialDelay
+	var lastErr error
+
+	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryDelay):
+				retryDelay *= 2
+				if retryDelay > config.SSHRetryMaxDelay {
+					retryDelay = config.SSHRetryMaxDelay
+				}
+			}
+		}
+
+		// Reconnect to jump host
+		jumpConfig, err := createSSHConfig(c.jumpUser, c.jumpKeyPath)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		jumpAddr := c.jumpHost
+		if !strings.Contains(jumpAddr, ":") {
+			jumpAddr = jumpAddr + ":22"
+		}
+
+		jumpClient, err := ssh.Dial("tcp", jumpAddr, jumpConfig)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to reconnect to jump host: %w", err)
+			continue
+		}
+
+		// Reconnect to target through jump host
+		targetConfig, err := createSSHConfig(c.targetUser, c.targetKeyPath)
+		if err != nil {
+			jumpClient.Close()
+			lastErr = err
+			continue
+		}
+
+		targetAddr := c.targetHost
+		if !strings.Contains(targetAddr, ":") {
+			targetAddr = targetAddr + ":22"
+		}
+
+		targetConn, err := jumpClient.Dial("tcp", targetAddr)
+		if err != nil {
+			jumpClient.Close()
+			lastErr = fmt.Errorf("failed to dial target through jump host: %w", err)
+			continue
+		}
+
+		targetClientConn, targetChans, targetReqs, err := ssh.NewClientConn(targetConn, targetAddr, targetConfig)
+		if err != nil {
+			targetConn.Close()
+			jumpClient.Close()
+			lastErr = fmt.Errorf("failed to establish target connection: %w", err)
+			continue
+		}
+
+		// Success
+		c.jumpClient = jumpClient
+		c.targetClient = ssh.NewClient(targetClientConn, targetChans, targetReqs)
+		return nil
+	}
+
+	return fmt.Errorf("failed to reconnect after %d attempts: %w", config.SSHRetryCount, lastErr)
 }
 
 // StartTunnel starts an SSH tunnel with port forwarding from local to remote
@@ -651,34 +924,64 @@ func startTunnelOnClient(ctx context.Context, sshClient *ssh.Client, localPort, 
 	return stop, nil
 }
 
-// Exec executes a command on the remote host
+// Exec executes a command on the remote host with automatic retry and reconnection
 func (c *jumpHostClient) Exec(ctx context.Context, cmd string) (string, error) {
-	// Check context before starting
-	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("context error before execution: %w", err)
-	}
+	var output string
+	var lastErr error
 
-	session, err := c.targetClient.NewSession()
-	if err != nil {
-		return "", fmt.Errorf("failed to create SSH session: %w", err)
-	}
-	defer session.Close()
-
-	output, err := session.CombinedOutput(cmd)
-	if err != nil {
-		// Check if context was cancelled during execution
-		if ctx.Err() != nil {
-			return string(output), fmt.Errorf("context cancelled: %w", ctx.Err())
+	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
+		// Check context before starting
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("context error before execution: %w", err)
 		}
-		return string(output), fmt.Errorf("command failed: %w", err)
+
+		c.mu.Lock()
+		targetClient := c.targetClient
+		c.mu.Unlock()
+
+		session, err := targetClient.NewSession()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create SSH session: %w", err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return "", fmt.Errorf("SSH session failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return "", lastErr
+		}
+
+		output, err := session.CombinedOutput(cmd)
+		session.Close()
+
+		if err != nil {
+			// Check if context was cancelled
+			if ctx.Err() != nil {
+				return string(output), fmt.Errorf("context cancelled: %w", ctx.Err())
+			}
+
+			lastErr = fmt.Errorf("command failed: %w", err)
+
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return string(output), fmt.Errorf("command failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+
+			// Non-connection error - don't retry
+			return string(output), lastErr
+		}
+
+		// Check context after execution
+		if err := ctx.Err(); err != nil {
+			return string(output), fmt.Errorf("context cancelled: %w", err)
+		}
+
+		return string(output), nil
 	}
 
-	// Check context after execution
-	if err := ctx.Err(); err != nil {
-		return string(output), fmt.Errorf("context cancelled: %w", err)
-	}
-
-	return string(output), nil
+	return output, fmt.Errorf("SSH exec failed after %d attempts: %w", config.SSHRetryCount, lastErr)
 }
 
 // ExecFatal executes a command and returns error if it fails
@@ -690,38 +993,73 @@ func (c *jumpHostClient) ExecFatal(ctx context.Context, cmd string) string {
 	return output
 }
 
-// Upload uploads a local file to the remote host
+// Upload uploads a local file to the remote host with automatic retry and reconnection
 func (c *jumpHostClient) Upload(ctx context.Context, localPath, remotePath string) error {
-	// Check context before starting
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context error before upload: %w", err)
+	var lastErr error
+
+	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
+		// Check context before starting
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context error before upload: %w", err)
+		}
+
+		c.mu.Lock()
+		targetClient := c.targetClient
+		c.mu.Unlock()
+
+		sftpClient, err := sftp.NewClient(targetClient)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create SFTP client: %w", err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return fmt.Errorf("SFTP client creation failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return lastErr
+		}
+
+		localFile, err := os.Open(localPath)
+		if err != nil {
+			sftpClient.Close()
+			return fmt.Errorf("failed to open local file %s: %w", localPath, err)
+		}
+
+		remoteFile, err := sftpClient.Create(remotePath)
+		if err != nil {
+			localFile.Close()
+			sftpClient.Close()
+			lastErr = fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return fmt.Errorf("remote file creation failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return lastErr
+		}
+
+		// Use context-aware copy
+		_, err = copyWithContext(ctx, remoteFile, localFile)
+		remoteFile.Close()
+		localFile.Close()
+		sftpClient.Close()
+
+		if err != nil {
+			lastErr = fmt.Errorf("failed to copy file: %w", err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return fmt.Errorf("file copy failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return lastErr
+		}
+
+		return nil
 	}
 
-	sftpClient, err := sftp.NewClient(c.targetClient)
-	if err != nil {
-		return fmt.Errorf("failed to create SFTP client: %w", err)
-	}
-	defer sftpClient.Close()
-
-	localFile, err := os.Open(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to open local file %s: %w", localPath, err)
-	}
-	defer localFile.Close()
-
-	remoteFile, err := sftpClient.Create(remotePath)
-	if err != nil {
-		return fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
-	}
-	defer remoteFile.Close()
-
-	// Use context-aware copy
-	_, err = copyWithContext(ctx, remoteFile, localFile)
-	if err != nil {
-		return fmt.Errorf("failed to copy file: %w", err)
-	}
-
-	return nil
+	return fmt.Errorf("SSH upload failed after %d attempts: %w", config.SSHRetryCount, lastErr)
 }
 
 // Close closes both SSH connections

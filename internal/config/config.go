@@ -63,4 +63,11 @@ const (
 
 	// Commander operations
 	CommanderClusterReadyTimeout = 30 * time.Minute // Default timeout for waiting for Commander cluster to become ready
+
+	// SSH operations - retry configuration for all SSH-related operations
+	// This includes: connection establishment, command execution, tunnel creation, reconnection
+	SSHRetryCount        = 10               // Number of retry attempts for SSH operations
+	SSHRetryInitialDelay = 2 * time.Second  // Initial delay before first retry (doubles with each retry)
+	SSHRetryMaxDelay     = 60 * time.Second // Maximum delay between retries
+	SSHKeepaliveInterval = 60 * time.Second // Interval for SSH keepalive requests
 )
