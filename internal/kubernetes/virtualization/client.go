@@ -18,11 +18,13 @@ package virtualization
 
 import (
 	"context"
+	"fmt"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/deckhouse/storage-e2e/pkg/retry"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 )
 
@@ -32,21 +34,26 @@ type Client struct {
 }
 
 // NewClient creates a new virtualization client from a rest.Config
-// It uses controller-runtime client which provides type-safe access to CRDs
+// It uses controller-runtime client which provides type-safe access to CRDs.
+// Includes retry logic for transient network errors during client creation,
+// since controller-runtime client.New() performs API discovery which can fail
+// with TLS handshake timeouts or other transient network issues.
 func NewClient(ctx context.Context, config *rest.Config) (*Client, error) {
-	scheme := runtime.NewScheme()
+	return retry.Do(ctx, retry.DefaultConfig, "create virtualization client", func() (*Client, error) {
+		scheme := runtime.NewScheme()
 
-	// Register virtualization API types with the scheme
-	if err := v1alpha2.SchemeBuilder.AddToScheme(scheme); err != nil {
-		return nil, err
-	}
+		// Register virtualization API types with the scheme
+		if err := v1alpha2.SchemeBuilder.AddToScheme(scheme); err != nil {
+			return nil, fmt.Errorf("failed to add virtualization scheme: %w", err)
+		}
 
-	cl, err := client.New(config, client.Options{Scheme: scheme})
-	if err != nil {
-		return nil, err
-	}
+		cl, err := client.New(config, client.Options{Scheme: scheme})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create controller-runtime client: %w", err)
+		}
 
-	return &Client{client: cl}, nil
+		return &Client{client: cl}, nil
+	})
 }
 
 // VirtualMachines returns a VirtualMachine client

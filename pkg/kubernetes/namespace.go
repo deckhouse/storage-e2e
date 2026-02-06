@@ -23,13 +23,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
 
 // CreateNamespaceIfNotExists creates a namespace if it doesn't exist, or returns the existing one.
 func CreateNamespaceIfNotExists(ctx context.Context, config *rest.Config, name string) (*corev1.Namespace, error) {
-	clientset, err := kubernetes.NewForConfig(config)
+	clientset, err := NewClientsetWithRetry(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}

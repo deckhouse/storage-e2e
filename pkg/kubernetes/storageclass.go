@@ -23,7 +23,6 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/logger"
@@ -57,8 +56,8 @@ func WaitForStorageClasses(ctx context.Context, kubeconfig *rest.Config, storage
 func WaitForStorageClass(ctx context.Context, kubeconfig *rest.Config, storageClassName string, timeout time.Duration) error {
 	logger.Debug("Waiting for StorageClass %s to become available (timeout: %v)", storageClassName, timeout)
 
-	// Create clientset from kubeconfig
-	clientset, err := k8sclient.NewForConfig(kubeconfig)
+	// Create clientset from kubeconfig with retry for transient network errors
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}
@@ -91,8 +90,8 @@ func WaitForStorageClass(ctx context.Context, kubeconfig *rest.Config, storageCl
 func WaitForStorageClassDeletion(ctx context.Context, kubeconfig *rest.Config, storageClassName string, timeout time.Duration) error {
 	logger.Debug("Waiting for StorageClass %s to be deleted (timeout: %v)", storageClassName, timeout)
 
-	// Create clientset from kubeconfig
-	clientset, err := k8sclient.NewForConfig(kubeconfig)
+	// Create clientset from kubeconfig with retry for transient network errors
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}

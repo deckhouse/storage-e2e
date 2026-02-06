@@ -170,14 +170,14 @@ func NewStressTestRunner(config *Config, restConfig *rest.Config) (*StressTestRu
 	cfg := *restConfig
 	cfg.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
 
-	// Create native Kubernetes clientset
-	clientset, err := kubernetes.NewForConfig(&cfg)
+	// Create native Kubernetes clientset with retry for transient network errors
+	clientset, err := pkgkubernetes.NewClientsetWithRetry(context.Background(), &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
 	}
 
-	// Create dynamic client for custom resources like VolumeSnapshots
-	dynamicClient, err := dynamic.NewForConfig(&cfg)
+	// Create dynamic client for custom resources like VolumeSnapshots with retry
+	dynamicClient, err := pkgkubernetes.NewDynamicClientWithRetry(context.Background(), &cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
@@ -1764,7 +1764,7 @@ func (r *StressTestRunner) executeStage2(ctx context.Context, pvcNames []string)
 
 // CleanupStressNamespaces deletes all namespaces with the load-test=true label.
 func CleanupStressNamespaces(ctx context.Context, kubeconfig *rest.Config) error {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := pkgkubernetes.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}

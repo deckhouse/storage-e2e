@@ -25,10 +25,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/logger"
+	k8sutils "github.com/deckhouse/storage-e2e/pkg/kubernetes"
 	"github.com/deckhouse/storage-e2e/pkg/retry"
 )
 
@@ -59,7 +59,7 @@ type ClusterLockInfo struct {
 // If the cluster is already locked, it returns an error with information about who holds the lock.
 // Uses retry logic for transient network errors.
 func AcquireClusterLock(ctx context.Context, kubeconfig *rest.Config, testName string) error {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -129,7 +129,7 @@ func AcquireClusterLock(ctx context.Context, kubeconfig *rest.Config, testName s
 // It is safe to call even if the lock doesn't exist (no error will be returned).
 // Uses retry logic for transient network errors.
 func ReleaseClusterLock(ctx context.Context, kubeconfig *rest.Config) error {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -150,7 +150,7 @@ func ReleaseClusterLock(ctx context.Context, kubeconfig *rest.Config) error {
 
 // IsClusterLocked checks if the cluster is currently locked by checking for the lock ConfigMap.
 func IsClusterLocked(ctx context.Context, kubeconfig *rest.Config) (bool, error) {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return false, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -168,7 +168,7 @@ func IsClusterLocked(ctx context.Context, kubeconfig *rest.Config) (bool, error)
 // GetClusterLockInfo retrieves information about the current cluster lock.
 // Returns an error if the cluster is not locked.
 func GetClusterLockInfo(ctx context.Context, kubeconfig *rest.Config) (*ClusterLockInfo, error) {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}

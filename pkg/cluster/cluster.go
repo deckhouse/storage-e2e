@@ -443,7 +443,7 @@ func CreateTestCluster(
 	secretsWaitCtx, cancel := context.WithTimeout(ctx, config.SecretsWaitTimeout)
 	defer cancel()
 	secretNamespace := "d8-cloud-instance-manager"
-	clientset, err := k8s.NewForConfig(testClusterResources.Kubeconfig)
+	clientset, err := kubernetes.NewClientsetWithRetry(secretsWaitCtx, testClusterResources.Kubeconfig)
 	if err != nil {
 		testClusterResources.SSHClient.Close()
 		testClusterResources.TunnelInfo.StopFunc()
@@ -1470,8 +1470,8 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config, opts ...Ch
 	namespace := "d8-system"
 	deploymentName := "deckhouse"
 
-	// Get clientset for checking deployment
-	clientset, err := k8s.NewForConfig(kubeconfig)
+	// Get clientset for checking deployment, with retry for transient network errors
+	clientset, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -1561,7 +1561,7 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config, opts ...Ch
 
 // checkBootstrapSecrets verifies that both bootstrap secrets are available
 func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespace string) error {
-	clientset, err := k8s.NewForConfig(kubeconfig)
+	clientset, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -1603,7 +1603,7 @@ func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespa
 // the deckhouse service has endpoints registered on port 4223.
 // This should be called before attempting to create/update ModuleConfigs to avoid webhook connection refused errors.
 func WaitForWebhookHandler(ctx context.Context, kubeconfig *rest.Config, timeout time.Duration) error {
-	clientset, err := k8s.NewForConfig(kubeconfig)
+	clientset, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}

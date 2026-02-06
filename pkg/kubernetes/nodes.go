@@ -22,7 +22,6 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/logger"
@@ -43,7 +42,7 @@ func WaitForNodesLabeled(ctx context.Context, kubeconfig *rest.Config, nodeNames
 		return nil
 	}
 
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}

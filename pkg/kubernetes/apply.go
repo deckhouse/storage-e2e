@@ -42,21 +42,24 @@ type ApplyClient struct {
 }
 
 // NewApplyClient creates a new ApplyClient
+// Includes retry logic for transient network errors during client creation
 func NewApplyClient(config *rest.Config) (*ApplyClient, error) {
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
-	}
+	return retry.Do(context.Background(), retry.DefaultConfig, "create apply client", func() (*ApplyClient, error) {
+		dynamicClient, err := dynamic.NewForConfig(config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+		}
 
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create discovery client: %w", err)
-	}
+		discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create discovery client: %w", err)
+		}
 
-	return &ApplyClient{
-		dynamicClient:   dynamicClient,
-		discoveryClient: discoveryClient,
-	}, nil
+		return &ApplyClient{
+			dynamicClient:   dynamicClient,
+			discoveryClient: discoveryClient,
+		}, nil
+	})
 }
 
 // ApplyYAML applies YAML manifest(s) to the cluster

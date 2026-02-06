@@ -33,7 +33,6 @@ import (
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
@@ -806,7 +805,7 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 		return fmt.Errorf("clusterDef cannot be nil")
 	}
 
-	clientset, err := k8s.NewForConfig(kubeconfig)
+	clientset, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
