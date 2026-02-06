@@ -39,12 +39,12 @@ clusterDefinition:
       diskSize: 30
   # DKP parameters
   dkpParameters:
-    kubernetesVersion: "1.35"
+    kubernetesVersion: "1.34"
     podSubnetCIDR: "10.112.0.0/16"
     serviceSubnetCIDR: "10.225.0.0/16"
     clusterDomain: "test-cluster.local"
     registryRepo: "dev-registry.deckhouse.io/sys/deckhouse-oss"
-    devBranch: "pr17504"
+    devBranch: "main"
     # Module configuration
     modules:
       - name: "snapshot-controller" # TODO add MPO
@@ -52,43 +52,43 @@ clusterDefinition:
         enabled: true
         modulePullOverride: "main" # imageTag for ModulePullOverride. Main is default value, used if not specified. Created always when rehistryRepo starts with dev-
         dependencies: []
-      - name: "sds-local-volume"
-        version: 1
-        enabled: true
-        dependencies:
-          - "snapshot-controller"
-          - "sds-node-configurator"
-      - name: "sds-node-configurator"
-        version: 1
-        enabled: true
-        settings:
-          enableThinProvisioning: true
-        dependencies: []
-      - name: "csi-huawei"
-        version: 1
-        enabled: true
-        modulePullOverride: "main"
-        dependencies:
-          - "snapshot-controller"
+      # - name: "sds-local-volume"
+      #   version: 1
+      #   enabled: true
+      #   dependencies:
+      #     - "snapshot-controller"
+      #     - "sds-node-configurator"
+      # - name: "sds-node-configurator"
+      #   version: 1
+      #   enabled: true
+      #   settings:
+      #     enableThinProvisioning: true
+      #   dependencies: []
+      # - name: "csi-huawei"
+      #   version: 1
+      #   enabled: true
+      #   modulePullOverride: "main"
+      #   dependencies:
+      #     - "snapshot-controller"
       - name: "csi-hpe"
         version: 1
         enabled: true
         modulePullOverride: "main"
         dependencies:
           - "snapshot-controller"
-      - name: "csi-netapp"
-        version: 1
-        enabled: true
-        dependencies:
-          - "snapshot-controller"
-      - name: "csi-s3"
-        version: 1
-        enabled: true
-        dependencies:
-          - "snapshot-controller"
-      - name: "csi-scsi-generic"
-        version: 1
-        enabled: true
-        dependencies:
-          - "snapshot-controller"
+      # - name: "csi-netapp"
+      #   version: 1
+      #   enabled: true
+      #   dependencies:
+      #     - "snapshot-controller"
+      # - name: "csi-s3"
+      #   version: 1
+      #   enabled: true
+      #   dependencies:
+      #     - "snapshot-controller"
+      # - name: "csi-scsi-generic"
+      #   version: 1
+      #   enabled: true
+      #   dependencies:
+      #     - "snapshot-controller"
 
