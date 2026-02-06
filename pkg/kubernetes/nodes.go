@@ -71,7 +71,7 @@ func WaitForNodesLabeled(ctx context.Context, kubeconfig *rest.Config, nodeNames
 				case <-ticker.C:
 					node, err := clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 					if err != nil {
-						logger.Warn("Error getting node %s: %v", name, err)
+						logger.Warn("Error getting node %s: %v. Retrying...", name, err)
 						continue
 					}
 

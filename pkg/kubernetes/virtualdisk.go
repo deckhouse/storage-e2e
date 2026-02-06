@@ -159,7 +159,7 @@ func WaitForVirtualDiskAttached(ctx context.Context, kubeconfig *rest.Config, na
 		case <-ticker.C:
 			attachment, err := virtClient.VirtualMachineBlockDeviceAttachments().Get(ctx, namespace, attachmentName)
 			if err != nil {
-				logger.Warn("Error getting VirtualMachineBlockDeviceAttachment %s/%s: %v", namespace, attachmentName, err)
+				logger.Warn("Error getting VirtualMachineBlockDeviceAttachment %s/%s: %v. Retrying...", namespace, attachmentName, err)
 				continue
 			}
 

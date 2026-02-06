@@ -4,7 +4,7 @@ kind: NodeGroupConfiguration
 metadata:
   name: iscsi-and-multipath-install-for-redos-like.sh
 spec:
-  weight: 98
+  weight: 97
   nodeGroups: ["*"]
   bundles: ["centos", "redos"]
   content: |
@@ -42,6 +42,7 @@ spec:
         bb-sync-file "${MULTIPATH_MAIN_CONF}" - <<'EOF'
     defaults {
         user_friendly_names yes
+        find_multipaths no
     }
     EOF
       fi
@@ -91,7 +92,7 @@ kind: NodeGroupConfiguration
 metadata:
   name: iscsi-and-multipath-install-for-debian-and-alt-like.sh
 spec:
-  weight: 98
+  weight: 97
   nodeGroups: ["*"]
   bundles: ["ubuntu-lts", "debian", "astra", "altlinux"]
   content: |
@@ -128,6 +129,7 @@ spec:
         bb-sync-file "${MULTIPATH_MAIN_CONF}" - <<'EOF'
           defaults {
               user_friendly_names yes
+              find_multipaths no
           }
     EOF
       fi

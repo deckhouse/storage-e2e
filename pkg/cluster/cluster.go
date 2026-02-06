@@ -400,16 +400,10 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(11, "Cluster bootstrapped successfully")
 
-	logger.Step(12, "Stopping base cluster tunnel (needed for test cluster tunnel)")
-	// Step 12: Store base cluster kubeconfig before stopping tunnel (needed for cleanup)
+	// Store base cluster kubeconfig (tunnel stays open for later use)
 	baseKubeconfig := baseClusterResources.Kubeconfig
 	baseKubeconfigPath := baseClusterResources.KubeconfigPath
-
-	// Step 13: Stop base cluster tunnel (needed for test cluster tunnel)
-	if baseClusterResources.TunnelInfo != nil && baseClusterResources.TunnelInfo.StopFunc != nil {
-		baseClusterResources.TunnelInfo.StopFunc()
-	}
-	logger.StepComplete(12, "Base cluster tunnel stopped")
+	baseTunnelInfo := baseClusterResources.TunnelInfo
 
 	logger.Step(13, "Connecting to test cluster master %s", firstMasterIP)
 	// Step 14: Connect to test cluster
@@ -545,7 +539,7 @@ func CreateTestCluster(
 	testClusterResources.BaseClusterClient = baseClusterResources.SSHClient
 	testClusterResources.BaseKubeconfig = baseKubeconfig
 	testClusterResources.BaseKubeconfigPath = baseKubeconfigPath
-	testClusterResources.BaseTunnelInfo = nil // Tunnel was stopped, will be re-established if needed
+	testClusterResources.BaseTunnelInfo = baseTunnelInfo
 	testClusterResources.SetupSSHClient = setupSSHClient
 
 	return testClusterResources, nil

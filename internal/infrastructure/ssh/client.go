@@ -700,11 +700,16 @@ func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHo
 		return nil, fmt.Errorf("failed to connect to target host after %d attempts: %w", maxRetries, lastErr)
 	}
 
+	// Start keepalive for both connections
+	keepaliveCtx, keepaliveCancel := context.WithCancel(context.Background())
+
 	// Return a client that wraps both connections
 	// When closing, we need to close both connections
-	return &jumpHostClient{
-		jumpClient:   jumpClient,
-		targetClient: targetClient,
+	jc := &jumpHostClient{
+		jumpClient:      jumpClient,
+		targetClient:    targetClient,
+		keepaliveCtx:    keepaliveCtx,
+		keepaliveCancel: keepaliveCancel,
 		// Store connection parameters for reconnection
 		jumpUser:      jumpUser,
 		jumpHost:      jumpHost,
@@ -712,7 +717,9 @@ func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHo
 		targetUser:    targetUser,
 		targetHost:    targetHost,
 		targetKeyPath: targetKeyPath,
-	}, nil
+	}
+	jc.startKeepalive()
+	return jc, nil
 }
 
 // jumpHostClient wraps both jump host and target client connections
@@ -720,6 +727,10 @@ type jumpHostClient struct {
 	mu           sync.Mutex
 	jumpClient   *ssh.Client
 	targetClient *ssh.Client
+	// Keepalive for both connections
+	keepaliveCtx    context.Context
+	keepaliveCancel context.CancelFunc
+	keepaliveWg     sync.WaitGroup
 	// Connection parameters for reconnection
 	jumpUser      string
 	jumpHost      string
@@ -729,6 +740,51 @@ type jumpHostClient struct {
 	targetKeyPath string
 }
 
+// startKeepalive starts goroutines that send keepalive requests to both connections
+func (c *jumpHostClient) startKeepalive() {
+	// Keepalive for jump client
+	c.keepaliveWg.Add(1)
+	go func() {
+		defer c.keepaliveWg.Done()
+		ticker := time.NewTicker(config.SSHKeepaliveInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-c.keepaliveCtx.Done():
+				return
+			case <-ticker.C:
+				c.mu.Lock()
+				if c.jumpClient != nil {
+					_, _, _ = c.jumpClient.SendRequest("keepalive@openssh.com", true, nil)
+				}
+				c.mu.Unlock()
+			}
+		}
+	}()
+
+	// Keepalive for target client
+	c.keepaliveWg.Add(1)
+	go func() {
+		defer c.keepaliveWg.Done()
+		ticker := time.NewTicker(config.SSHKeepaliveInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-c.keepaliveCtx.Done():
+				return
+			case <-ticker.C:
+				c.mu.Lock()
+				if c.targetClient != nil {
+					_, _, _ = c.targetClient.SendRequest("keepalive@openssh.com", true, nil)
+				}
+				c.mu.Unlock()
+			}
+		}
+	}()
+}
+
 // Create creates a new SSH client (not used for jump host client)
 func (c *jumpHostClient) Create(user, host, keyPath string) (SSHClient, error) {
 	return nil, fmt.Errorf("Create not supported for jump host client")
@@ -736,6 +792,12 @@ func (c *jumpHostClient) Create(user, host, keyPath string) (SSHClient, error) {
 
 // reconnect attempts to re-establish the SSH connection through jump host
 func (c *jumpHostClient) reconnect(ctx context.Context) error {
+	// Stop old keepalives (outside lock to avoid deadlock)
+	if c.keepaliveCancel != nil {
+		c.keepaliveCancel()
+		c.keepaliveWg.Wait()
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -813,9 +875,14 @@ func (c *jumpHostClient) reconnect(ctx context.Context) error {
 			continue
 		}
 
-		// Success
+		// Success - update clients
 		c.jumpClient = jumpClient
 		c.targetClient = ssh.NewClient(targetClientConn, targetChans, targetReqs)
+		c.keepaliveCtx, c.keepaliveCancel = context.WithCancel(context.Background())
+		// Unlock before starting keepalive to avoid deadlock (keepalive goroutines acquire lock)
+		c.mu.Unlock()
+		c.startKeepalive()
+		c.mu.Lock() // Re-lock for deferred unlock
 		return nil
 	}
 
@@ -1064,6 +1131,12 @@ func (c *jumpHostClient) Upload(ctx context.Context, localPath, remotePath strin
 
 // Close closes both SSH connections
 func (c *jumpHostClient) Close() error {
+	// Stop keepalive goroutines first
+	if c.keepaliveCancel != nil {
+		c.keepaliveCancel()
+		c.keepaliveWg.Wait()
+	}
+
 	var errs []error
 	if c.targetClient != nil {
 		if err := c.targetClient.Close(); err != nil {
