@@ -177,6 +177,13 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(1, "Cluster configuration loaded successfully from %s", yamlConfigPath)
 
+	// Generate a unique suffix for this cluster instance to avoid SAN initiator collisions.
+	// SANs remember iSCSI initiator names keyed by hostname; reusing the same hostnames
+	// (master-1, worker-1, etc.) across cluster recreations causes stale initiator mappings.
+	clusterSuffix := GenerateRandomSuffix(5)
+	appendHostnameSuffix(clusterDefinition, clusterSuffix)
+	logger.Info("Cluster hostnames randomized with suffix: -%s", clusterSuffix)
+
 	// Get SSH credentials from environment variables
 	sshHost := config.SSHHost
 	sshUser := config.SSHUser
@@ -789,6 +796,12 @@ func UseCommanderCluster(ctx context.Context) (*CommanderClusterResources, error
 	logger.StepComplete(1, "Connected to Commander at %s", config.CommanderURL)
 
 	clusterName := config.CommanderClusterName
+	// Append random suffix to ensure unique node names across cluster recreations.
+	// Commander templates use the cluster name as the "prefix" for node naming,
+	// so randomizing it prevents SAN initiator name collisions.
+	clusterSuffix := GenerateRandomSuffix(5)
+	clusterName = clusterName + "-" + clusterSuffix
+	logger.Info("Commander cluster name randomized: %s", clusterName)
 	createdByUs := false
 
 	logger.Step(2, "Checking if cluster '%s' exists in Commander", clusterName)

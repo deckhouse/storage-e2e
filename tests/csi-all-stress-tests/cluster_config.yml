@@ -39,7 +39,7 @@ clusterDefinition:
       diskSize: 30
   # DKP parameters
   dkpParameters:
-    kubernetesVersion: "1.34"
+    kubernetesVersion: "Automatic" # 1.34, 1.35 etc.
     podSubnetCIDR: "10.112.0.0/16"
     serviceSubnetCIDR: "10.225.0.0/16"
     clusterDomain: "test-cluster.local"
@@ -73,7 +73,7 @@ clusterDefinition:
       - name: "csi-hpe"
         version: 1
         enabled: true
-        modulePullOverride: "main"
+        modulePullOverride: "mr60"
         dependencies:
           - "snapshot-controller"
       # - name: "csi-netapp"

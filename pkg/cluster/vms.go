@@ -266,6 +266,19 @@ func getVMNodes(clusterDef *config.ClusterDefinition) []config.ClusterNode {
 	return vmNodes
 }
 
+// appendHostnameSuffix appends a random suffix to all node hostnames in the cluster definition
+// to ensure unique iSCSI initiator names across cluster recreations.
+// This prevents SAN initiator name collisions when multiple clusters use the same base hostnames
+// (e.g., "master-1" becomes "master-1-x7k2m").
+func appendHostnameSuffix(clusterDef *config.ClusterDefinition, suffix string) {
+	for i := range clusterDef.Masters {
+		clusterDef.Masters[i].Hostname = clusterDef.Masters[i].Hostname + "-" + suffix
+	}
+	for i := range clusterDef.Workers {
+		clusterDef.Workers[i].Hostname = clusterDef.Workers[i].Hostname + "-" + suffix
+	}
+}
+
 // createCVI creates or gets a ClusterVirtualImage and waits for it to be Ready (15 min timeout)
 func createCVI(ctx context.Context, virtClient *virtualization.Client, cvmiName, imageURL string) error {
 	cviCtx, cancel := context.WithTimeout(ctx, config.ClusterVirtualImageReadinessTimeout)
