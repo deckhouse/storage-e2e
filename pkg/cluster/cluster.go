@@ -177,12 +177,26 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(1, "Cluster configuration loaded successfully from %s", yamlConfigPath)
 
-	// Generate a unique suffix for this cluster instance to avoid SAN initiator collisions.
+	// Randomize hostnames to avoid SAN initiator collisions.
 	// SANs remember iSCSI initiator names keyed by hostname; reusing the same hostnames
 	// (master-1, worker-1, etc.) across cluster recreations causes stale initiator mappings.
-	clusterSuffix := GenerateRandomSuffix(5)
-	appendHostnameSuffix(clusterDefinition, clusterSuffix)
-	logger.Info("Cluster hostnames randomized with suffix: -%s", clusterSuffix)
+	// Each node gets its own unique suffix to minimize collision likelihood.
+	randomizeHostnames(clusterDefinition)
+	logger.Info("Cluster hostnames randomized: masters=%v, workers=%v",
+		func() []string {
+			names := make([]string, len(clusterDefinition.Masters))
+			for i, m := range clusterDefinition.Masters {
+				names[i] = m.Hostname
+			}
+			return names
+		}(),
+		func() []string {
+			names := make([]string, len(clusterDefinition.Workers))
+			for i, w := range clusterDefinition.Workers {
+				names[i] = w.Hostname
+			}
+			return names
+		}())
 
 	// Get SSH credentials from environment variables
 	sshHost := config.SSHHost

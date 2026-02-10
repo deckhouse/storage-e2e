@@ -266,16 +266,16 @@ func getVMNodes(clusterDef *config.ClusterDefinition) []config.ClusterNode {
 	return vmNodes
 }
 
-// appendHostnameSuffix appends a random suffix to all node hostnames in the cluster definition
+// randomizeHostnames appends a unique random suffix to each node hostname in the cluster definition
 // to ensure unique iSCSI initiator names across cluster recreations.
-// This prevents SAN initiator name collisions when multiple clusters use the same base hostnames
-// (e.g., "master-1" becomes "master-1-x7k2m").
-func appendHostnameSuffix(clusterDef *config.ClusterDefinition, suffix string) {
+// Each node gets its own suffix to minimize collision likelihood
+// (e.g., "master-1" becomes "master-1-x7k2m", "worker-1" becomes "worker-1-r9g3p").
+func randomizeHostnames(clusterDef *config.ClusterDefinition) {
 	for i := range clusterDef.Masters {
-		clusterDef.Masters[i].Hostname = clusterDef.Masters[i].Hostname + "-" + suffix
+		clusterDef.Masters[i].Hostname = clusterDef.Masters[i].Hostname + "-" + GenerateRandomSuffix(5)
 	}
 	for i := range clusterDef.Workers {
-		clusterDef.Workers[i].Hostname = clusterDef.Workers[i].Hostname + "-" + suffix
+		clusterDef.Workers[i].Hostname = clusterDef.Workers[i].Hostname + "-" + GenerateRandomSuffix(5)
 	}
 }
 

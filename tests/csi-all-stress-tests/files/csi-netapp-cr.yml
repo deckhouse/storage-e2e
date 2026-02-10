@@ -11,13 +11,13 @@ spec:
     svm: svm0
     username: admin
   dataPlane:
-    iSCSI:
-      chap:
-        chapInitiatorSecret: '${NETAPP_CHAP_INITIATOR_SECRET}'
-        chapTargetInitiatorSecret: '${NETAPP_CHAP_TARGET_INITIATOR_SECRET}'
-        chapTargetUsername: target@dm|n
-        chapUsername: chap@dm1n
-        useChap: false
+    # iSCSI:
+    #   chap:
+    #     chapInitiatorSecret: '${NETAPP_CHAP_INITIATOR_SECRET}'
+    #     chapTargetInitiatorSecret: '${NETAPP_CHAP_TARGET_INITIATOR_SECRET}'
+    #     chapTargetUsername: target@dm|n
+    #     chapUsername: chap@dm1n
+    #     useChap: false
     nfs:
       address: 10.200.0.80
       version: "3"
