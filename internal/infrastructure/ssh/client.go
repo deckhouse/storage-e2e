@@ -33,6 +33,7 @@ import (
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/term"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
@@ -229,10 +230,29 @@ func createSSHConfig(user, keyPathOrBase64 string) (*ssh.ClientConfig, *sshKeyIn
 	}
 	logger.Debug("SSH key loaded: path=%s, algorithm=%s, fingerprint=%s", keyInfo.Path, keyInfo.Algorithm, keyInfo.Fingerprint)
 
+	// Collect all signers: file-based key first, then SSH agent keys as fallback
+	allSigners := []ssh.Signer{signer}
+
+	// Try SSH agent as fallback (matches terminal ssh behavior)
+	if agentSock := os.Getenv("SSH_AUTH_SOCK"); agentSock != "" {
+		conn, agentErr := net.Dial("unix", agentSock)
+		if agentErr == nil {
+			agentClient := agent.NewClient(conn)
+			agentSigners, agentErr := agentClient.Signers()
+			if agentErr == nil && len(agentSigners) > 0 {
+				logger.Debug("SSH agent available (%s): %d key(s) loaded as fallback", agentSock, len(agentSigners))
+				allSigners = append(allSigners, agentSigners...)
+			}
+			// Note: don't close conn here -- the agent signers need it alive for signing
+		} else {
+			logger.Debug("SSH agent socket found but connection failed: %v", agentErr)
+		}
+	}
+
 	return &ssh.ClientConfig{
 		User: user,
 		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
+			ssh.PublicKeys(allSigners...),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}, keyInfo, nil
