@@ -36,7 +36,17 @@ import (
 	"golang.org/x/term"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
+	"github.com/deckhouse/storage-e2e/internal/logger"
 )
+
+// sshKeyInfo holds metadata about the SSH key used for authentication.
+// This is used to produce diagnostic log messages and enriched error messages
+// when authentication fails.
+type sshKeyInfo struct {
+	Path        string // Resolved filesystem path of the private key
+	Algorithm   string // Key algorithm (e.g. ssh-ed25519, ssh-rsa, ecdsa-sha2-nistp256)
+	Fingerprint string // SHA256 fingerprint of the public key
+}
 
 // client implements Client interface
 type client struct {
@@ -167,18 +177,21 @@ func getSSHPrivateKeyPath(keyPathOrBase64 string) (string, error) {
 	return expandPath(keyPathOrBase64)
 }
 
-// createSSHConfig creates SSH client config with support for passphrase-protected keys
-func createSSHConfig(user, keyPathOrBase64 string) (*ssh.ClientConfig, error) {
+// createSSHConfig creates SSH client config with support for passphrase-protected keys.
+// It returns the SSH client config, key metadata (for diagnostics), and an error.
+// The key metadata includes the resolved path, algorithm, and SHA256 fingerprint of the key,
+// which is useful for debugging authentication failures.
+func createSSHConfig(user, keyPathOrBase64 string) (*ssh.ClientConfig, *sshKeyInfo, error) {
 	// keyPathOrBase64 can be either a file path or a base64-encoded private key
 	// Use GetSSHPrivateKeyPath to handle both cases
 	expandedKeyPath, err := getSSHPrivateKeyPath(keyPathOrBase64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get private key path: %w", err)
+		return nil, nil, fmt.Errorf("failed to get private key path: %w", err)
 	}
 
 	key, err := os.ReadFile(expandedKeyPath)
 	if err != nil {
-		return nil, fmt.Errorf("unable to read private key %s: %w", expandedKeyPath, err)
+		return nil, nil, fmt.Errorf("unable to read private key %s: %w", expandedKeyPath, err)
 	}
 
 	// Always try parsing without passphrase first
@@ -186,7 +199,7 @@ func createSSHConfig(user, keyPathOrBase64 string) (*ssh.ClientConfig, error) {
 	if err != nil {
 		// Only if the error specifically indicates passphrase protection, try with passphrase
 		if !strings.Contains(err.Error(), "ssh: this private key is passphrase protected") {
-			return nil, fmt.Errorf("unable to parse private key: %w", err)
+			return nil, nil, fmt.Errorf("unable to parse private key '%s': %w", expandedKeyPath, err)
 		}
 
 		// Key is passphrase-protected, get passphrase
@@ -198,15 +211,23 @@ func createSSHConfig(user, keyPathOrBase64 string) (*ssh.ClientConfig, error) {
 			var readErr error
 			pass, readErr = readPassword("    Enter passphrase for '" + expandedKeyPath + "': ")
 			if readErr != nil {
-				return nil, fmt.Errorf("SSH key '%s' is passphrase protected. Set SSH_PASSPHRASE environment variable: export SSH_PASSPHRASE='your-passphrase'\nOriginal error: %w", expandedKeyPath, readErr)
+				return nil, nil, fmt.Errorf("SSH key '%s' is passphrase protected. Set SSH_PASSPHRASE environment variable: export SSH_PASSPHRASE='your-passphrase'\nOriginal error: %w", expandedKeyPath, readErr)
 			}
 		}
 
 		signer, err = ssh.ParsePrivateKeyWithPassphrase(key, pass)
 		if err != nil {
-			return nil, fmt.Errorf("unable to parse private key with passphrase: %w", err)
+			return nil, nil, fmt.Errorf("unable to parse private key '%s' with passphrase: %w", expandedKeyPath, err)
 		}
 	}
+
+	// Collect key metadata for diagnostics
+	keyInfo := &sshKeyInfo{
+		Path:        expandedKeyPath,
+		Algorithm:   signer.PublicKey().Type(),
+		Fingerprint: ssh.FingerprintSHA256(signer.PublicKey()),
+	}
+	logger.Debug("SSH key loaded: path=%s, algorithm=%s, fingerprint=%s", keyInfo.Path, keyInfo.Algorithm, keyInfo.Fingerprint)
 
 	return &ssh.ClientConfig{
 		User: user,
@@ -214,12 +235,12 @@ func createSSHConfig(user, keyPathOrBase64 string) (*ssh.ClientConfig, error) {
 			ssh.PublicKeys(signer),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}, nil
+	}, keyInfo, nil
 }
 
 // Create creates a new SSH client
 func (c *client) Create(user, host, keyPath string) (SSHClient, error) {
-	sshConfig, err := createSSHConfig(user, keyPath)
+	sshConfig, keyInfo, err := createSSHConfig(user, keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SSH config: %w", err)
 	}
@@ -232,7 +253,8 @@ func (c *client) Create(user, host, keyPath string) (SSHClient, error) {
 
 	sshClient, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to %s@%s: %w", user, addr, err)
+		return nil, fmt.Errorf("failed to connect to %s@%s: %w\n  Key used: %s (algorithm: %s, fingerprint: %s)\n  Hint: verify this key's public part is in authorized_keys on the server",
+			user, addr, err, keyInfo.Path, keyInfo.Algorithm, keyInfo.Fingerprint)
 	}
 
 	// Start keepalive mechanism (equivalent to ServerAliveInterval=60)
@@ -345,7 +367,7 @@ func (c *client) reconnect(ctx context.Context) error {
 			}
 		}
 
-		sshConfig, err := createSSHConfig(c.user, c.keyPath)
+		sshConfig, keyInfo, err := createSSHConfig(c.user, c.keyPath)
 		if err != nil {
 			lastErr = err
 			continue
@@ -358,7 +380,8 @@ func (c *client) reconnect(ctx context.Context) error {
 
 		sshClient, err := ssh.Dial("tcp", addr, sshConfig)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("failed to connect to %s@%s: %w\n  Key used: %s (algorithm: %s, fingerprint: %s)\n  Hint: verify this key's public part is in authorized_keys on the server",
+				c.user, addr, err, keyInfo.Path, keyInfo.Algorithm, keyInfo.Fingerprint)
 			continue
 		}
 
@@ -633,7 +656,7 @@ func NewClient(user, host, keyPath string) (SSHClient, error) {
 // It first connects to the jump host, then establishes a connection to the target host through it
 func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHost, targetKeyPath string) (SSHClient, error) {
 	// Create SSH config for jump host
-	jumpConfig, err := createSSHConfig(jumpUser, jumpKeyPath)
+	jumpConfig, jumpKeyInfo, err := createSSHConfig(jumpUser, jumpKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SSH config for jump host: %w", err)
 	}
@@ -647,11 +670,12 @@ func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHo
 	// Connect to jump host
 	jumpClient, err := ssh.Dial("tcp", jumpAddr, jumpConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to jump host %s@%s: %w", jumpUser, jumpAddr, err)
+		return nil, fmt.Errorf("failed to connect to jump host %s@%s: %w\n  Key used: %s (algorithm: %s, fingerprint: %s)\n  Hint: verify this key's public part is in authorized_keys on the server",
+			jumpUser, jumpAddr, err, jumpKeyInfo.Path, jumpKeyInfo.Algorithm, jumpKeyInfo.Fingerprint)
 	}
 
 	// Create SSH config for target host
-	targetConfig, err := createSSHConfig(targetUser, targetKeyPath)
+	targetConfig, _, err := createSSHConfig(targetUser, targetKeyPath)
 	if err != nil {
 		jumpClient.Close()
 		return nil, fmt.Errorf("failed to create SSH config for target host: %w", err)
@@ -830,7 +854,7 @@ func (c *jumpHostClient) reconnect(ctx context.Context) error {
 		}
 
 		// Reconnect to jump host
-		jumpConfig, err := createSSHConfig(c.jumpUser, c.jumpKeyPath)
+		jumpConfig, jumpKeyInfo, err := createSSHConfig(c.jumpUser, c.jumpKeyPath)
 		if err != nil {
 			lastErr = err
 			continue
@@ -843,12 +867,13 @@ func (c *jumpHostClient) reconnect(ctx context.Context) error {
 
 		jumpClient, err := ssh.Dial("tcp", jumpAddr, jumpConfig)
 		if err != nil {
-			lastErr = fmt.Errorf("failed to reconnect to jump host: %w", err)
+			lastErr = fmt.Errorf("failed to reconnect to jump host: %w\n  Key used: %s (algorithm: %s, fingerprint: %s)\n  Hint: verify this key's public part is in authorized_keys on the server",
+				err, jumpKeyInfo.Path, jumpKeyInfo.Algorithm, jumpKeyInfo.Fingerprint)
 			continue
 		}
 
 		// Reconnect to target through jump host
-		targetConfig, err := createSSHConfig(c.targetUser, c.targetKeyPath)
+		targetConfig, _, err := createSSHConfig(c.targetUser, c.targetKeyPath)
 		if err != nil {
 			jumpClient.Close()
 			lastErr = err

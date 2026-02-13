@@ -2001,6 +2001,28 @@ func OutputEnvironmentVariables() {
 		GinkgoWriter.Printf("      SSH_USER: %s\n", config.SSHUser)
 	}
 
+	// SSH_PRIVATE_KEY - show path (not content, could be base64)
+	if config.SSHPrivateKey != "" {
+		if strings.Contains(config.SSHPrivateKey, "/") || strings.HasPrefix(config.SSHPrivateKey, "~") {
+			GinkgoWriter.Printf("      SSH_PRIVATE_KEY: %s\n", config.SSHPrivateKey)
+		} else {
+			GinkgoWriter.Printf("      SSH_PRIVATE_KEY: <base64 content>\n")
+		}
+	} else {
+		GinkgoWriter.Printf("      SSH_PRIVATE_KEY: %s (default)\n", config.SSHPrivateKeyDefaultValue)
+	}
+
+	// SSH_PUBLIC_KEY - show path or indicate inline content
+	if config.SSHPublicKey != "" {
+		if strings.Contains(config.SSHPublicKey, "/") || strings.HasPrefix(config.SSHPublicKey, "~") {
+			GinkgoWriter.Printf("      SSH_PUBLIC_KEY: %s\n", config.SSHPublicKey)
+		} else {
+			GinkgoWriter.Printf("      SSH_PUBLIC_KEY: <inline content>\n")
+		}
+	} else {
+		GinkgoWriter.Printf("      SSH_PUBLIC_KEY: %s (default)\n", config.SSHPublicKeyDefaultValue)
+	}
+
 	// SSH_JUMP_HOST - no masking (optional, for existing cluster mode)
 	if config.SSHJumpHost != "" {
 		GinkgoWriter.Printf("      SSH_JUMP_HOST: %s\n", config.SSHJumpHost)
