@@ -337,8 +337,7 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(6, "VM information gathered")
 
-	logger.Step(7, "Establishing SSH connection to setup node")
-	// Step 7: Establish SSH connection to setup node
+	// Step 7: Get setup node IP and wait for SSH readiness
 	setupNode, err := GetSetupNode(clusterDefinition)
 	if err != nil {
 		baseClusterResources.SSHClient.Close()
@@ -352,6 +351,19 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("setup node IP address is not set")
 	}
 
+	logger.Step(7, "Waiting for SSH to be ready on setup node %s (this may take up to %v)", setupNodeIP, config.SetupNodeSSHReadyTimeout)
+	sshReadyCtx, cancel := context.WithTimeout(ctx, config.SetupNodeSSHReadyTimeout)
+	err = WaitForSSHReady(sshReadyCtx, baseClusterResources.SSHClient, setupNodeIP)
+	cancel()
+	if err != nil {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("SSH is not ready on setup node %s: %w", setupNodeIP, err)
+	}
+	logger.StepComplete(7, "SSH is ready on setup node %s", setupNodeIP)
+
+	logger.Step(8, "Establishing SSH connection to setup node")
+	// Step 8: Establish SSH connection to setup node
 	setupSSHClient, err := ssh.NewClientWithJumpHost(
 		sshUser, sshHost, sshKeyPath, // jump host
 		config.VMSSHUser, setupNodeIP, sshKeyPath, // target host
@@ -361,10 +373,10 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to create SSH client to setup node: %w", err)
 	}
-	logger.StepComplete(7, "SSH connection to setup node established")
+	logger.StepComplete(8, "SSH connection to setup node established")
 
-	logger.Step(8, "Waiting for Docker to be ready on setup node (this may take up to %v)", config.DockerInstallTimeout)
-	// Step 8: Wait for Docker to be ready (installed via cloud-init)
+	logger.Step(9, "Waiting for Docker to be ready on setup node (this may take up to %v)", config.DockerInstallTimeout)
+	// Step 9: Wait for Docker to be ready (installed via cloud-init)
 	dockerCtx, cancel := context.WithTimeout(ctx, config.DockerInstallTimeout)
 	err = WaitForDockerReady(dockerCtx, setupSSHClient)
 	cancel()
@@ -374,10 +386,10 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("Docker is not ready on setup node: %w", err)
 	}
-	logger.StepComplete(8, "Docker is ready on setup node")
+	logger.StepComplete(9, "Docker is ready on setup node")
 
-	logger.Step(9, "Preparing bootstrap configuration")
-	// Step 9: Prepare bootstrap config
+	logger.Step(10, "Preparing bootstrap configuration")
+	// Step 10: Prepare bootstrap config
 	bootstrapConfig, err := PrepareBootstrapConfig(clusterDefinition)
 	if err != nil {
 		setupSSHClient.Close()
@@ -385,10 +397,10 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to prepare bootstrap config: %w", err)
 	}
-	logger.StepComplete(9, "Bootstrap configuration prepared")
+	logger.StepComplete(10, "Bootstrap configuration prepared")
 
-	logger.Step(10, "Uploading bootstrap files to setup node")
-	// Step 10: Upload bootstrap files
+	logger.Step(11, "Uploading bootstrap files to setup node")
+	// Step 11: Upload bootstrap files
 	uploadCtx, cancel := context.WithTimeout(ctx, config.BootstrapUploadTimeout)
 	err = UploadBootstrapFiles(uploadCtx, setupSSHClient, sshKeyPath, bootstrapConfig)
 	cancel()
@@ -398,10 +410,10 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to upload bootstrap files: %w", err)
 	}
-	logger.StepComplete(10, "Bootstrap files uploaded")
+	logger.StepComplete(11, "Bootstrap files uploaded")
 
-	logger.Step(11, "Bootstrapping cluster (this may take up to %v)", config.DKPDeployTimeout)
-	// Step 11: Bootstrap cluster
+	logger.Step(12, "Bootstrapping cluster (this may take up to %v)", config.DKPDeployTimeout)
+	// Step 12: Bootstrap cluster
 	firstMasterIP := clusterDefinition.Masters[0].IPAddress
 	if firstMasterIP == "" {
 		setupSSHClient.Close()
@@ -419,14 +431,14 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to bootstrap cluster: %w", err)
 	}
-	logger.StepComplete(11, "Cluster bootstrapped successfully")
+	logger.StepComplete(12, "Cluster bootstrapped successfully")
 
 	// Store base cluster kubeconfig (tunnel stays open for later use)
 	baseKubeconfig := baseClusterResources.Kubeconfig
 	baseKubeconfigPath := baseClusterResources.KubeconfigPath
 	baseTunnelInfo := baseClusterResources.TunnelInfo
 
-	logger.Step(13, "Connecting to test cluster master %s", firstMasterIP)
+	logger.Step(14, "Connecting to test cluster master %s", firstMasterIP)
 	// Step 14: Connect to test cluster
 	testClusterResources, err := ConnectToCluster(ctx, ConnectClusterOptions{
 		SSHUser:       sshUser,
@@ -442,10 +454,10 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("failed to connect to test cluster: %w", err)
 	}
-	logger.StepComplete(13, "Connected to test cluster")
+	logger.StepComplete(14, "Connected to test cluster")
 
-	logger.Step(14, "Creating NodeGroup for workers")
-	// Step 14: Create NodeGroup for workers
+	logger.Step(15, "Creating NodeGroup for workers")
+	// Step 15: Create NodeGroup for workers
 	nodegroupCtx, cancel := context.WithTimeout(ctx, config.NodeGroupTimeout)
 	err = kubernetes.CreateStaticNodeGroup(nodegroupCtx, testClusterResources.Kubeconfig, "worker")
 	cancel()
@@ -456,10 +468,10 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("failed to create worker NodeGroup: %w", err)
 	}
-	logger.StepComplete(14, "NodeGroup for workers created")
+	logger.StepComplete(15, "NodeGroup for workers created")
 
 	logger.Debug("Waiting for master and worker bootstrap secrets to appear")
-	// Step 14.1: Wait for bootstrap secrets to appear after NodeGroup creation
+	// Step 15.1: Wait for bootstrap secrets to appear after NodeGroup creation
 	// The secrets are created by Deckhouse after the NodeGroup is created, so we need to wait
 	secretsWaitCtx, cancel := context.WithTimeout(ctx, config.SecretsWaitTimeout)
 	defer cancel()
@@ -498,8 +510,8 @@ func CreateTestCluster(
 		}
 	}
 
-	logger.Step(15, "Verifying cluster is ready (this may take up to %v)", config.ClusterHealthTimeout)
-	// Step 15: Verify cluster is ready
+	logger.Step(16, "Verifying cluster is ready (this may take up to %v)", config.ClusterHealthTimeout)
+	// Step 16: Verify cluster is ready
 	healthCtx, cancel := context.WithTimeout(ctx, config.ClusterHealthTimeout)
 	err = CheckClusterHealth(healthCtx, testClusterResources.Kubeconfig)
 	cancel()
@@ -510,10 +522,10 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("cluster is not ready: %w", err)
 	}
-	logger.StepComplete(15, "Cluster is ready")
+	logger.StepComplete(16, "Cluster is ready")
 
-	logger.Step(16, "Adding nodes to the cluster")
-	// Step 16: Add nodes to cluster
+	logger.Step(17, "Adding nodes to the cluster")
+	// Step 17: Add nodes to cluster
 	nodesCtx, cancel := context.WithTimeout(ctx, config.NodesReadyTimeout)
 	err = AddNodesToCluster(nodesCtx, testClusterResources.Kubeconfig, clusterDefinition, sshUser, sshHost, sshKeyPath)
 	cancel()
@@ -524,7 +536,7 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("failed to add nodes to the cluster: %w", err)
 	}
-	logger.StepComplete(16, "Nodes added to cluster")
+	logger.StepComplete(17, "Nodes added to cluster")
 
 	logger.Info("Waiting for all nodes to become Ready (this may take up to %v)", config.NodesReadyTimeout)
 	// Wait for all nodes to become Ready
@@ -540,8 +552,8 @@ func CreateTestCluster(
 	}
 	logger.Success("All nodes are Ready")
 
-	logger.Step(17, "Enabling and configuring modules")
-	// Step 17: Enable and configure modules
+	logger.Step(18, "Enabling and configuring modules")
+	// Step 18: Enable and configure modules
 	// Note: EnableAndConfigureModules has internal timeouts per module (ModuleDeployTimeout)
 	// We use the parent context which has ClusterCreationTimeout
 	err = kubernetes.EnableAndConfigureModules(ctx, testClusterResources.Kubeconfig, clusterDefinition, testClusterResources.SSHClient)
@@ -552,7 +564,7 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("failed to enable and configure modules: %w", err)
 	}
-	logger.StepComplete(17, "Modules are enabled, configured and Ready")
+	logger.StepComplete(18, "Modules are enabled, configured and Ready")
 
 	// Set cluster definition and VM resources
 	testClusterResources.ClusterDefinition = clusterDefinition

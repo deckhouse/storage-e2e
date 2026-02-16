@@ -45,9 +45,10 @@ const (
 	NodesReadyTimeout = 15 * time.Minute // Timeout for waiting for nodes to become Ready
 
 	// Cluster bootstrap and setup
-	DKPDeployTimeout       = 30 * time.Minute // Timeout for DKP deployment (dhctl bootstrap)
-	DockerInstallTimeout   = 10 * time.Minute // Timeout for Docker installation on setup node
-	BootstrapUploadTimeout = 5 * time.Minute  // Timeout for uploading bootstrap files
+	SetupNodeSSHReadyTimeout = 5 * time.Minute  // Timeout for waiting for SSH to become reachable on a freshly created VM
+	DKPDeployTimeout         = 30 * time.Minute // Timeout for DKP deployment (dhctl bootstrap)
+	DockerInstallTimeout     = 10 * time.Minute // Timeout for Docker installation on setup node
+	BootstrapUploadTimeout   = 5 * time.Minute  // Timeout for uploading bootstrap files
 
 	// Kubernetes operations
 	ModuleCheckTimeout   = 10 * time.Second // Timeout for checking module status

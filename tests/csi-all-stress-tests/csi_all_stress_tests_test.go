@@ -48,11 +48,11 @@ var _ = Describe("All CSIs Stress Tests", Ordered, func() {
 			Expect(ok).To(BeTrue(), "Failed to determine test file path")
 			testDir = filepath.Dir(callerFile)
 
-			crFiles = []string{"csi-hpe-cr.yml"}
+			crFiles = []string{"csi-huawei-cr.yml"}
 			// crFiles = []string{"csi-huawei-cr.yml", "csi-hpe-cr.yml", "csi-netapp-cr.yml", "csi-s3-cr.yml"}
 			crFilesDir = filepath.Join(testDir, "files")
 
-			storageClassNames = []string{"hpe-iscsi"}
+			storageClassNames = []string{"hsclass-200"}
 			// storageClassNames = []string{"hsclass-200", "hpe-iscsi", "csi-netapp-sc1"}
 		})
 

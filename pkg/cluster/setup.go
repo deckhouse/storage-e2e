@@ -101,6 +101,28 @@ func GetOSInfo(ctx context.Context, sshClient ssh.SSHClient) (*OSInfo, error) {
 	return osInfo, nil
 }
 
+// WaitForSSHReady waits until port 22 is reachable on the target VM through
+// the base cluster SSH client. This should be called after VMs reach "Running"
+// state but before attempting a full SSH connection, because cloud-init may
+// still be configuring networking and the SSH daemon.
+func WaitForSSHReady(ctx context.Context, baseSSHClient ssh.SSHClient, targetIP string) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for SSH to be ready on %s", targetIP)
+		case <-ticker.C:
+			output, err := baseSSHClient.Exec(ctx, fmt.Sprintf("nc -z -w 5 %s 22 && echo SSH_READY", targetIP))
+			if err == nil && strings.Contains(output, "SSH_READY") {
+				return nil
+			}
+			logger.Debug("SSH not ready yet on %s, retrying...", targetIP)
+		}
+	}
+}
+
 // WaitForDockerReady waits for Docker to be ready on the setup node.
 // Docker is installed via cloud-init during VM provisioning, so this function
 // waits for cloud-init to complete and verifies Docker is working.

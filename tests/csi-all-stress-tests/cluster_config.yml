@@ -64,18 +64,18 @@ clusterDefinition:
       #   settings:
       #     enableThinProvisioning: true
       #   dependencies: []
-      # - name: "csi-huawei"
-      #   version: 1
-      #   enabled: true
-      #   modulePullOverride: "main"
-      #   dependencies:
-      #     - "snapshot-controller"
-      - name: "csi-hpe"
+      - name: "csi-huawei"
         version: 1
         enabled: true
-        modulePullOverride: "mr60"
+        modulePullOverride: "mr55"
         dependencies:
           - "snapshot-controller"
+      # - name: "csi-hpe"
+      #   version: 1
+      #   enabled: true
+      #   modulePullOverride: "mr60"
+      #   dependencies:
+      #     - "snapshot-controller"
       # - name: "csi-netapp"
       #   version: 1
       #   enabled: true
