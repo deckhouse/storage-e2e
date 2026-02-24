@@ -20,6 +20,7 @@ Timeout `240m` is a global timeout for entire testkit. Adjust it on your needs.
 go test -timeout=240m -v ./tests/test-folder-name -count=1 -ginkgo.focus="should create virtual machines"
 ```
 
+
 ## Testkits description
 
 ### test-template
@@ -46,6 +47,12 @@ Stress tests for all CSI storage drivers. This test suite:
 Designed to validate any CSI driver stability under high load with concurrent PVC operations, snapshots, and clones. Configure which drivers to test by editing `crFiles` and `storageClassNames` in the test file.
 
 Run the test: `go test -timeout=120m -v ./tests/csi-all-stress-tests -count=1`
+
+
+## Functions Glossary (exportable only)
+
+See [pkg/FUNCTIONS_GLOSSARY.md](pkg/FUNCTIONS_GLOSSARY.md) for a full list of all exported functions in the `pkg/` directory, grouped by resource (cluster, VM, PVC, LVMVolumeGroup, etc.).
+
 
 ## Environment Variables
 
