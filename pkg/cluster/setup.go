@@ -33,7 +33,6 @@ import (
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
@@ -102,29 +101,68 @@ func GetOSInfo(ctx context.Context, sshClient ssh.SSHClient) (*OSInfo, error) {
 	return osInfo, nil
 }
 
-// InstallDocker installs Docker on the remote host via SSH.
-// Since the setup node is always Ubuntu 22.04, this function uses apt to install docker.io.
-// It runs: apt update && apt install docker.io -y, then starts docker and verifies with docker ps.
-func InstallDocker(ctx context.Context, sshClient ssh.SSHClient) error {
-	// Update package list and install docker.io
-	cmd := "sudo apt-get update && sudo apt-get install -y docker.io"
-	output, err := sshClient.Exec(ctx, cmd)
-	if err != nil {
-		return fmt.Errorf("failed to update packages and install docker.io: %w\nOutput: %s", err, output)
-	}
+// WaitForSSHReady waits until port 22 is reachable on the target VM through
+// the base cluster SSH client. This should be called after VMs reach "Running"
+// state but before attempting a full SSH connection, because cloud-init may
+// still be configuring networking and the SSH daemon.
+func WaitForSSHReady(ctx context.Context, baseSSHClient ssh.SSHClient, targetIP string) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
-	// Start Docker service
-	cmd = "sudo systemctl start docker"
-	output, err = sshClient.Exec(ctx, cmd)
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for SSH to be ready on %s", targetIP)
+		case <-ticker.C:
+			output, err := baseSSHClient.Exec(ctx, fmt.Sprintf("nc -z -w 5 %s 22 && echo SSH_READY", targetIP))
+			if err == nil && strings.Contains(output, "SSH_READY") {
+				return nil
+			}
+			logger.Debug("SSH not ready yet on %s, retrying...", targetIP)
+		}
+	}
+}
+
+// WaitForDockerReady waits for Docker to be ready on the setup node.
+// Docker is installed via cloud-init during VM provisioning, so this function
+// waits for cloud-init to complete and verifies Docker is working.
+func WaitForDockerReady(ctx context.Context, sshClient ssh.SSHClient) error {
+	// Wait for cloud-init to complete (Docker is installed via cloud-init packages)
+	waitCmd := `
+set -e
+
+echo "Waiting for cloud-init to complete..."
+sudo cloud-init status --wait || true
+
+# Wait for Docker service to be available (cloud-init enables it)
+max_wait=300
+waited=0
+echo "Waiting for Docker service to be ready..."
+while [ $waited -lt $max_wait ]; do
+    if sudo systemctl is-active --quiet docker 2>/dev/null; then
+        echo "Docker service is active"
+        break
+    fi
+    echo "Docker not ready yet, waiting... ($waited/$max_wait seconds)"
+    sleep 10
+    waited=$((waited + 10))
+done
+
+if [ $waited -ge $max_wait ]; then
+    echo "Docker service did not become ready in time, attempting to start it..."
+    sudo systemctl start docker || true
+fi
+`
+	output, err := sshClient.Exec(ctx, waitCmd)
 	if err != nil {
-		return fmt.Errorf("failed to start docker service: %w\nOutput: %s", err, output)
+		return fmt.Errorf("failed to wait for cloud-init/Docker: %w\nOutput: %s", err, output)
 	}
 
 	// Verify Docker is working by running docker ps
-	cmd = "sudo docker ps"
-	output, err = sshClient.Exec(ctx, cmd)
+	verifyCmd := "sudo docker ps"
+	output, err = sshClient.Exec(ctx, verifyCmd)
 	if err != nil {
-		return fmt.Errorf("failed to verify Docker installation (docker ps failed): %w\nOutput: %s", err, output)
+		return fmt.Errorf("Docker is not working (docker ps failed): %w\nOutput: %s", err, output)
 	}
 
 	return nil
@@ -177,6 +215,12 @@ func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition) (string, error
 	// Format: %s.10.10.1.5.sslip.io (dots in IP are preserved)
 	publicDomainTemplate := fmt.Sprintf("%%s.%s.sslip.io", firstMasterIP)
 
+	// Default devBranch to "main" if not specified
+	devBranch := clusterDef.DKPParameters.DevBranch
+	if devBranch == "" {
+		devBranch = "main"
+	}
+
 	// Prepare template data
 	templateData := struct {
 		PodSubnetCIDR        string
@@ -187,6 +231,7 @@ func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition) (string, error
 		RegistryDockerCfg    string
 		PublicDomainTemplate string
 		InternalNetworkCIDR  string
+		DevBranch            string
 	}{
 		PodSubnetCIDR:        clusterDef.DKPParameters.PodSubnetCIDR,
 		ServiceSubnetCIDR:    clusterDef.DKPParameters.ServiceSubnetCIDR,
@@ -196,6 +241,7 @@ func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition) (string, error
 		RegistryDockerCfg:    config.RegistryDockerCfg,
 		PublicDomainTemplate: publicDomainTemplate,
 		InternalNetworkCIDR:  internalNetworkCIDR,
+		DevBranch:            devBranch,
 	}
 
 	// Get the test file name from the caller
@@ -694,7 +740,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 	// Retry logic handles temporary failures like proxy pod restarts (HTTP 401, connection errors, etc.)
 	cmd := fmt.Sprintf("sudo bash << 'BOOTSTRAP_EOF'\n%s\nBOOTSTRAP_EOF", bootstrapScript)
 
-	const maxRetries = 5
+	maxRetries := config.SSHRetryCount
 	var output string
 	var lastErr error
 
@@ -743,12 +789,15 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 		}
 
 		// Retryable error - wait with exponential backoff
-		backoffSeconds := time.Duration(1<<uint(attempt-1)) * 10 // 10s, 20s, 40s, 80s, 160s
+		backoffDuration := config.SSHRetryInitialDelay * time.Duration(1<<uint(attempt-1))
+		if backoffDuration > config.SSHRetryMaxDelay {
+			backoffDuration = config.SSHRetryMaxDelay
+		}
 		if mu != nil {
 			mu.Lock()
 		}
 		logger.Warn("Bootstrap script failed on node %s (%s) (attempt %d/%d), retrying in %v: %v",
-			node.Hostname, nodeIP, attempt, maxRetries, backoffSeconds*time.Second, lastErr)
+			node.Hostname, nodeIP, attempt, maxRetries, backoffDuration, lastErr)
 		if mu != nil {
 			mu.Unlock()
 		}
@@ -756,7 +805,7 @@ func addNodeToCluster(ctx context.Context, node config.ClusterNode, bootstrapScr
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context cancelled while retrying bootstrap script on node %s: %w", node.Hostname, ctx.Err())
-		case <-time.After(backoffSeconds * time.Second):
+		case <-time.After(backoffDuration):
 			// Continue to next retry
 		}
 	}
@@ -778,7 +827,7 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 		return fmt.Errorf("clusterDef cannot be nil")
 	}
 
-	clientset, err := k8s.NewForConfig(kubeconfig)
+	clientset, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}

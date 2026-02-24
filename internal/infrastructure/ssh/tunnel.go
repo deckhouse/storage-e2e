@@ -21,9 +21,13 @@ import (
 	"fmt"
 	netstd "net"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/deckhouse/storage-e2e/internal/config"
+	"github.com/deckhouse/storage-e2e/internal/logger"
 )
 
 // StartTunnel starts an SSH tunnel with port forwarding from local to remote
@@ -40,6 +44,9 @@ func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePo
 	}
 
 	stopChan := make(chan struct{})
+	var connectionErrors int64 // Track connection errors for logging
+
+	logger.Debug("SSH tunnel started: local:%s -> remote:%s", localPort, remotePort)
 
 	go func() {
 		defer listener.Close()
@@ -47,8 +54,10 @@ func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePo
 			// Check context and stop channel
 			select {
 			case <-ctx.Done():
+				logger.Debug("SSH tunnel stopped (context done): local:%s -> remote:%s", localPort, remotePort)
 				return
 			case <-stopChan:
+				logger.Debug("SSH tunnel stopped (stop signal): local:%s -> remote:%s", localPort, remotePort)
 				return
 			default:
 			}
@@ -76,7 +85,7 @@ func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePo
 				case <-stopChan:
 					return
 				default:
-					// Continue if not stopped
+					// Continue if not stopped (this is normal for timeout-based accept)
 					continue
 				}
 			}
@@ -85,10 +94,18 @@ func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePo
 				defer localConn.Close()
 				remoteConn, err := sshClient.Dial("tcp", "127.0.0.1:"+remotePort)
 				if err != nil {
-					// Connection failed, just return - the error will be visible to the client
+					// Log connection errors (but don't spam - only log every 10th error)
+					errCount := atomic.AddInt64(&connectionErrors, 1)
+					if errCount == 1 || errCount%10 == 0 {
+						logger.Warn("SSH tunnel connection error (count: %d): failed to dial remote port %s: %v",
+							errCount, remotePort, err)
+					}
 					return
 				}
 				defer remoteConn.Close()
+
+				// Reset error counter on successful connection
+				atomic.StoreInt64(&connectionErrors, 0)
 
 				// Copy data bidirectionally with context support
 				done := make(chan struct{}, 2)
@@ -127,7 +144,8 @@ func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePo
 }
 
 // EstablishSSHTunnel establishes an SSH tunnel with port forwarding from remote node to local port on the client
-// It automatically finds a free local port to avoid conflicts when running parallel tests
+// It automatically finds a free local port to avoid conflicts when running parallel tests.
+// Uses retry logic for transient connection errors.
 // Returns the tunnel info, local port and error if the tunnel fails to start
 func EstablishSSHTunnel(ctx context.Context, sshClient SSHClient, remotePort string) (*TunnelInfo, error) {
 	// Parse remote port to integer
@@ -136,27 +154,53 @@ func EstablishSSHTunnel(ctx context.Context, sshClient SSHClient, remotePort str
 		return nil, fmt.Errorf("invalid remote port %s: %w", remotePort, err)
 	}
 
-	// Find a free local port automatically
-	localPort, err := findFreePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find free local port: %w", err)
-	}
-	localPortStr := strconv.Itoa(localPort)
+	// Retry configuration for tunnel establishment using centralized SSH config
+	maxRetries := config.SSHRetryCount
+	retryDelay := config.SSHRetryInitialDelay
+	var lastErr error
+	var tunnelInfo *TunnelInfo
 
-	// Start the SSH tunnel with context
-	// --== NOTE! If sshClient was created with NewClientWithJumpHost, it already handles jump host routing ==--
-	stopFunc, err := sshClient.StartTunnel(ctx, localPortStr, remotePort)
-	if err != nil {
-		return nil, fmt.Errorf("failed to start SSH tunnel (local:%d -> remote:%d): %w", localPort, remotePortInt, err)
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			logger.Debug("Retrying SSH tunnel establishment (attempt %d/%d) after %v", attempt+1, maxRetries, retryDelay)
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("context cancelled while retrying tunnel establishment: %w", ctx.Err())
+			case <-time.After(retryDelay):
+				retryDelay *= 2 // Exponential backoff
+				if retryDelay > config.SSHRetryMaxDelay {
+					retryDelay = config.SSHRetryMaxDelay
+				}
+			}
+		}
+
+		// Find a free local port automatically (do this in the loop in case previous port became unavailable)
+		localPort, err := findFreePort()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to find free local port: %w", err)
+			continue
+		}
+		localPortStr := strconv.Itoa(localPort)
+
+		// Start the SSH tunnel with context
+		// --== NOTE! If sshClient was created with NewClientWithJumpHost, it already handles jump host routing ==--
+		stopFunc, err := sshClient.StartTunnel(ctx, localPortStr, remotePort)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to start SSH tunnel (local:%d -> remote:%d): %w", localPort, remotePortInt, err)
+			logger.Warn("SSH tunnel establishment failed (attempt %d/%d): %v", attempt+1, maxRetries, lastErr)
+			continue
+		}
+
+		tunnelInfo = &TunnelInfo{
+			LocalPort:  localPort,
+			RemotePort: remotePortInt,
+			StopFunc:   stopFunc,
+		}
+		logger.Info("SSH tunnel established: local:%d -> remote:%d", localPort, remotePortInt)
+		return tunnelInfo, nil
 	}
 
-	tunnelInfo := &TunnelInfo{
-		LocalPort:  localPort,
-		RemotePort: remotePortInt,
-		StopFunc:   stopFunc,
-	}
-
-	return tunnelInfo, nil
+	return nil, fmt.Errorf("failed to establish SSH tunnel after %d attempts: %w", maxRetries, lastErr)
 }
 
 // findFreePort finds an available TCP port on localhost

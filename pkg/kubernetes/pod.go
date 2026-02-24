@@ -31,7 +31,7 @@ import (
 
 // WaitForAllPodsReadyInNamespace waits for all pods in a namespace to be in Ready condition
 func WaitForAllPodsReadyInNamespace(ctx context.Context, kubeconfig *rest.Config, namespace string, timeout time.Duration) error {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}

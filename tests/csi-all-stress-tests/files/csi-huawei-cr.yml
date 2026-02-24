@@ -10,7 +10,7 @@ spec:
   urls:
     - https://10.200.0.101:8088
   login: "admin_200"
-  password: '<PASSWORD>'
+  password: '${HUAWEI_PASSWORD}'
   protocol: ISCSI
   portals:
     - 10.200.0.101
@@ -25,3 +25,4 @@ spec:
   pool: prod
   reclaimPolicy: Delete
   storageConnectionName: hsconn-200
+

@@ -19,6 +19,8 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,6 +31,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
+
+	"github.com/deckhouse/storage-e2e/pkg/retry"
 )
 
 // ApplyClient handles applying YAML manifests to a Kubernetes cluster
@@ -38,21 +42,24 @@ type ApplyClient struct {
 }
 
 // NewApplyClient creates a new ApplyClient
+// Includes retry logic for transient network errors during client creation
 func NewApplyClient(config *rest.Config) (*ApplyClient, error) {
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
-	}
+	return retry.Do(context.Background(), retry.DefaultConfig, "create apply client", func() (*ApplyClient, error) {
+		dynamicClient, err := dynamic.NewForConfig(config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+		}
 
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create discovery client: %w", err)
-	}
+		discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create discovery client: %w", err)
+		}
 
-	return &ApplyClient{
-		dynamicClient:   dynamicClient,
-		discoveryClient: discoveryClient,
-	}, nil
+		return &ApplyClient{
+			dynamicClient:   dynamicClient,
+			discoveryClient: discoveryClient,
+		}, nil
+	})
 }
 
 // ApplyYAML applies YAML manifest(s) to the cluster
@@ -125,24 +132,26 @@ func (c *ApplyClient) applyDocument(ctx context.Context, yamlDoc string, default
 		dr = c.dynamicClient.Resource(mapping.Resource)
 	}
 
-	// Try to get existing resource
-	existing, err := dr.Get(ctx, obj.GetName(), metav1.GetOptions{})
-	if err == nil {
-		// Resource exists, update it
-		obj.SetResourceVersion(existing.GetResourceVersion())
-		_, err = dr.Update(ctx, obj, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to update %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+	// Try to get existing resource with retry for transient errors
+	operationName := fmt.Sprintf("apply %s/%s", obj.GetKind(), obj.GetName())
+	return retry.DoVoid(ctx, retry.DefaultConfig, operationName, func() error {
+		existing, err := dr.Get(ctx, obj.GetName(), metav1.GetOptions{})
+		if err == nil {
+			// Resource exists, update it
+			obj.SetResourceVersion(existing.GetResourceVersion())
+			_, err = dr.Update(ctx, obj, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to update %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+			}
+		} else {
+			// Resource doesn't exist, create it
+			_, err = dr.Create(ctx, obj, metav1.CreateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+			}
 		}
-	} else {
-		// Resource doesn't exist, create it
-		_, err = dr.Create(ctx, obj, metav1.CreateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
-		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 // CreateYAML creates resources from YAML manifest(s)
@@ -214,13 +223,66 @@ func (c *ApplyClient) createDocument(ctx context.Context, yamlDoc string, defaul
 		dr = c.dynamicClient.Resource(mapping.Resource)
 	}
 
-	// Create resource
-	_, err = dr.Create(ctx, obj, metav1.CreateOptions{})
+	// Create resource with retry for transient errors
+	operationName := fmt.Sprintf("create %s/%s", obj.GetKind(), obj.GetName())
+	return retry.DoVoid(ctx, retry.DefaultConfig, operationName, func() error {
+		_, err = dr.Create(ctx, obj, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+		}
+		return nil
+	})
+}
+
+// CreateYAMLFromFileWithEnvvars reads a YAML file, validates environment variables, substitutes them, and creates resources
+// Returns error if file cannot be read, any ${VAR} is not set, or resource creation fails
+func (c *ApplyClient) CreateYAMLFromFileWithEnvvars(ctx context.Context, filePath string, namespace string) error {
+	// Read file content
+	content, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to create %s/%s: %w", obj.GetKind(), obj.GetName(), err)
+		return fmt.Errorf("failed to read file %s: %w", filePath, err)
 	}
 
-	return nil
+	yamlContent := string(content)
+
+	// Find all ${VAR} patterns and check if they're set
+	unsetVars := FindUnsetEnvVars(yamlContent)
+	if len(unsetVars) > 0 {
+		return fmt.Errorf("environment variables not set: %v", unsetVars)
+	}
+
+	// Substitute environment variables
+	expanded := os.ExpandEnv(yamlContent)
+
+	// Create resources
+	return c.CreateYAML(ctx, expanded, namespace)
+}
+
+// FindUnsetEnvVars finds all ${VAR} patterns in content and returns those that are not set
+func FindUnsetEnvVars(content string) []string {
+	// Match ${VAR} pattern
+	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	seen := make(map[string]bool)
+	var unset []string
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		varName := match[1]
+		if seen[varName] {
+			continue
+		}
+		seen[varName] = true
+
+		if os.Getenv(varName) == "" {
+			unset = append(unset, varName)
+		}
+	}
+
+	return unset
 }
 
 // splitYAMLDocuments splits YAML content by "---" separator

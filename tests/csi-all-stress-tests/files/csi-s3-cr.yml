@@ -1,0 +1,14 @@
+---
+apiVersion: storage.deckhouse.io/v1alpha1
+kind: S3StorageClass
+metadata:
+  name: csi-s3-sc1
+spec:
+  accessKeyID: minioadmin
+  accessKeySecret: minioadmin
+  bucketName: test-bucket
+  endpointUrl: http://10.111.1.207:9000 # TODO: change to the actual endpoint
+  insecure: true
+  maxCacheSize: 500
+  region: us-east-1
+  

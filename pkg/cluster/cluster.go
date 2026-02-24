@@ -177,6 +177,27 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(1, "Cluster configuration loaded successfully from %s", yamlConfigPath)
 
+	// Randomize hostnames to avoid SAN initiator collisions.
+	// SANs remember iSCSI initiator names keyed by hostname; reusing the same hostnames
+	// (master-1, worker-1, etc.) across cluster recreations causes stale initiator mappings.
+	// Each node gets its own unique suffix to minimize collision likelihood.
+	randomizeHostnames(clusterDefinition)
+	logger.Info("Cluster hostnames randomized: masters=%v, workers=%v",
+		func() []string {
+			names := make([]string, len(clusterDefinition.Masters))
+			for i, m := range clusterDefinition.Masters {
+				names[i] = m.Hostname
+			}
+			return names
+		}(),
+		func() []string {
+			names := make([]string, len(clusterDefinition.Workers))
+			for i, w := range clusterDefinition.Workers {
+				names[i] = w.Hostname
+			}
+			return names
+		}())
+
 	// Get SSH credentials from environment variables
 	sshHost := config.SSHHost
 	sshUser := config.SSHUser
@@ -316,8 +337,7 @@ func CreateTestCluster(
 	}
 	logger.StepComplete(6, "VM information gathered")
 
-	logger.Step(7, "Establishing SSH connection to setup node")
-	// Step 7: Establish SSH connection to setup node
+	// Step 7: Get setup node IP and wait for SSH readiness
 	setupNode, err := GetSetupNode(clusterDefinition)
 	if err != nil {
 		baseClusterResources.SSHClient.Close()
@@ -331,6 +351,19 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("setup node IP address is not set")
 	}
 
+	logger.Step(7, "Waiting for SSH to be ready on setup node %s (this may take up to %v)", setupNodeIP, config.SetupNodeSSHReadyTimeout)
+	sshReadyCtx, cancel := context.WithTimeout(ctx, config.SetupNodeSSHReadyTimeout)
+	err = WaitForSSHReady(sshReadyCtx, baseClusterResources.SSHClient, setupNodeIP)
+	cancel()
+	if err != nil {
+		baseClusterResources.SSHClient.Close()
+		baseClusterResources.TunnelInfo.StopFunc()
+		return nil, fmt.Errorf("SSH is not ready on setup node %s: %w", setupNodeIP, err)
+	}
+	logger.StepComplete(7, "SSH is ready on setup node %s", setupNodeIP)
+
+	logger.Step(8, "Establishing SSH connection to setup node")
+	// Step 8: Establish SSH connection to setup node
 	setupSSHClient, err := ssh.NewClientWithJumpHost(
 		sshUser, sshHost, sshKeyPath, // jump host
 		config.VMSSHUser, setupNodeIP, sshKeyPath, // target host
@@ -340,23 +373,23 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to create SSH client to setup node: %w", err)
 	}
-	logger.StepComplete(7, "SSH connection to setup node established")
+	logger.StepComplete(8, "SSH connection to setup node established")
 
-	logger.Step(8, "Installing Docker on setup node (this may take up to %v)", config.DockerInstallTimeout)
-	// Step 8: Install Docker on setup node
+	logger.Step(9, "Waiting for Docker to be ready on setup node (this may take up to %v)", config.DockerInstallTimeout)
+	// Step 9: Wait for Docker to be ready (installed via cloud-init)
 	dockerCtx, cancel := context.WithTimeout(ctx, config.DockerInstallTimeout)
-	err = InstallDocker(dockerCtx, setupSSHClient)
+	err = WaitForDockerReady(dockerCtx, setupSSHClient)
 	cancel()
 	if err != nil {
 		setupSSHClient.Close()
 		baseClusterResources.SSHClient.Close()
 		baseClusterResources.TunnelInfo.StopFunc()
-		return nil, fmt.Errorf("failed to install Docker on setup node: %w", err)
+		return nil, fmt.Errorf("Docker is not ready on setup node: %w", err)
 	}
-	logger.StepComplete(8, "Docker installed on setup node")
+	logger.StepComplete(9, "Docker is ready on setup node")
 
-	logger.Step(9, "Preparing bootstrap configuration")
-	// Step 9: Prepare bootstrap config
+	logger.Step(10, "Preparing bootstrap configuration")
+	// Step 10: Prepare bootstrap config
 	bootstrapConfig, err := PrepareBootstrapConfig(clusterDefinition)
 	if err != nil {
 		setupSSHClient.Close()
@@ -364,10 +397,10 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to prepare bootstrap config: %w", err)
 	}
-	logger.StepComplete(9, "Bootstrap configuration prepared")
+	logger.StepComplete(10, "Bootstrap configuration prepared")
 
-	logger.Step(10, "Uploading bootstrap files to setup node")
-	// Step 10: Upload bootstrap files
+	logger.Step(11, "Uploading bootstrap files to setup node")
+	// Step 11: Upload bootstrap files
 	uploadCtx, cancel := context.WithTimeout(ctx, config.BootstrapUploadTimeout)
 	err = UploadBootstrapFiles(uploadCtx, setupSSHClient, sshKeyPath, bootstrapConfig)
 	cancel()
@@ -377,10 +410,10 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to upload bootstrap files: %w", err)
 	}
-	logger.StepComplete(10, "Bootstrap files uploaded")
+	logger.StepComplete(11, "Bootstrap files uploaded")
 
-	logger.Step(11, "Bootstrapping cluster (this may take up to %v)", config.DKPDeployTimeout)
-	// Step 11: Bootstrap cluster
+	logger.Step(12, "Bootstrapping cluster (this may take up to %v)", config.DKPDeployTimeout)
+	// Step 12: Bootstrap cluster
 	firstMasterIP := clusterDefinition.Masters[0].IPAddress
 	if firstMasterIP == "" {
 		setupSSHClient.Close()
@@ -398,20 +431,14 @@ func CreateTestCluster(
 		baseClusterResources.TunnelInfo.StopFunc()
 		return nil, fmt.Errorf("failed to bootstrap cluster: %w", err)
 	}
-	logger.StepComplete(11, "Cluster bootstrapped successfully")
+	logger.StepComplete(12, "Cluster bootstrapped successfully")
 
-	logger.Step(12, "Stopping base cluster tunnel (needed for test cluster tunnel)")
-	// Step 12: Store base cluster kubeconfig before stopping tunnel (needed for cleanup)
+	// Store base cluster kubeconfig (tunnel stays open for later use)
 	baseKubeconfig := baseClusterResources.Kubeconfig
 	baseKubeconfigPath := baseClusterResources.KubeconfigPath
+	baseTunnelInfo := baseClusterResources.TunnelInfo
 
-	// Step 13: Stop base cluster tunnel (needed for test cluster tunnel)
-	if baseClusterResources.TunnelInfo != nil && baseClusterResources.TunnelInfo.StopFunc != nil {
-		baseClusterResources.TunnelInfo.StopFunc()
-	}
-	logger.StepComplete(12, "Base cluster tunnel stopped")
-
-	logger.Step(13, "Connecting to test cluster master %s", firstMasterIP)
+	logger.Step(14, "Connecting to test cluster master %s", firstMasterIP)
 	// Step 14: Connect to test cluster
 	testClusterResources, err := ConnectToCluster(ctx, ConnectClusterOptions{
 		SSHUser:       sshUser,
@@ -427,10 +454,10 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("failed to connect to test cluster: %w", err)
 	}
-	logger.StepComplete(13, "Connected to test cluster")
+	logger.StepComplete(14, "Connected to test cluster")
 
-	logger.Step(14, "Creating NodeGroup for workers")
-	// Step 14: Create NodeGroup for workers
+	logger.Step(15, "Creating NodeGroup for workers")
+	// Step 15: Create NodeGroup for workers
 	nodegroupCtx, cancel := context.WithTimeout(ctx, config.NodeGroupTimeout)
 	err = kubernetes.CreateStaticNodeGroup(nodegroupCtx, testClusterResources.Kubeconfig, "worker")
 	cancel()
@@ -441,15 +468,15 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("failed to create worker NodeGroup: %w", err)
 	}
-	logger.StepComplete(14, "NodeGroup for workers created")
+	logger.StepComplete(15, "NodeGroup for workers created")
 
 	logger.Debug("Waiting for master and worker bootstrap secrets to appear")
-	// Step 14.1: Wait for bootstrap secrets to appear after NodeGroup creation
+	// Step 15.1: Wait for bootstrap secrets to appear after NodeGroup creation
 	// The secrets are created by Deckhouse after the NodeGroup is created, so we need to wait
 	secretsWaitCtx, cancel := context.WithTimeout(ctx, config.SecretsWaitTimeout)
 	defer cancel()
 	secretNamespace := "d8-cloud-instance-manager"
-	clientset, err := k8s.NewForConfig(testClusterResources.Kubeconfig)
+	clientset, err := kubernetes.NewClientsetWithRetry(secretsWaitCtx, testClusterResources.Kubeconfig)
 	if err != nil {
 		testClusterResources.SSHClient.Close()
 		testClusterResources.TunnelInfo.StopFunc()
@@ -483,8 +510,8 @@ func CreateTestCluster(
 		}
 	}
 
-	logger.Step(15, "Verifying cluster is ready (this may take up to %v)", config.ClusterHealthTimeout)
-	// Step 15: Verify cluster is ready
+	logger.Step(16, "Verifying cluster is ready (this may take up to %v)", config.ClusterHealthTimeout)
+	// Step 16: Verify cluster is ready
 	healthCtx, cancel := context.WithTimeout(ctx, config.ClusterHealthTimeout)
 	err = CheckClusterHealth(healthCtx, testClusterResources.Kubeconfig)
 	cancel()
@@ -495,10 +522,10 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("cluster is not ready: %w", err)
 	}
-	logger.StepComplete(15, "Cluster is ready")
+	logger.StepComplete(16, "Cluster is ready")
 
-	logger.Step(16, "Adding nodes to the cluster")
-	// Step 16: Add nodes to cluster
+	logger.Step(17, "Adding nodes to the cluster")
+	// Step 17: Add nodes to cluster
 	nodesCtx, cancel := context.WithTimeout(ctx, config.NodesReadyTimeout)
 	err = AddNodesToCluster(nodesCtx, testClusterResources.Kubeconfig, clusterDefinition, sshUser, sshHost, sshKeyPath)
 	cancel()
@@ -509,7 +536,7 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("failed to add nodes to the cluster: %w", err)
 	}
-	logger.StepComplete(16, "Nodes added to cluster")
+	logger.StepComplete(17, "Nodes added to cluster")
 
 	logger.Info("Waiting for all nodes to become Ready (this may take up to %v)", config.NodesReadyTimeout)
 	// Wait for all nodes to become Ready
@@ -525,8 +552,8 @@ func CreateTestCluster(
 	}
 	logger.Success("All nodes are Ready")
 
-	logger.Step(17, "Enabling and configuring modules")
-	// Step 17: Enable and configure modules
+	logger.Step(18, "Enabling and configuring modules")
+	// Step 18: Enable and configure modules
 	// Note: EnableAndConfigureModules has internal timeouts per module (ModuleDeployTimeout)
 	// We use the parent context which has ClusterCreationTimeout
 	err = kubernetes.EnableAndConfigureModules(ctx, testClusterResources.Kubeconfig, clusterDefinition, testClusterResources.SSHClient)
@@ -537,7 +564,7 @@ func CreateTestCluster(
 		baseClusterResources.SSHClient.Close()
 		return nil, fmt.Errorf("failed to enable and configure modules: %w", err)
 	}
-	logger.StepComplete(17, "Modules are enabled, configured and Ready")
+	logger.StepComplete(18, "Modules are enabled, configured and Ready")
 
 	// Set cluster definition and VM resources
 	testClusterResources.ClusterDefinition = clusterDefinition
@@ -545,7 +572,7 @@ func CreateTestCluster(
 	testClusterResources.BaseClusterClient = baseClusterResources.SSHClient
 	testClusterResources.BaseKubeconfig = baseKubeconfig
 	testClusterResources.BaseKubeconfigPath = baseKubeconfigPath
-	testClusterResources.BaseTunnelInfo = nil // Tunnel was stopped, will be re-established if needed
+	testClusterResources.BaseTunnelInfo = baseTunnelInfo
 	testClusterResources.SetupSSHClient = setupSSHClient
 
 	return testClusterResources, nil
@@ -795,6 +822,12 @@ func UseCommanderCluster(ctx context.Context) (*CommanderClusterResources, error
 	logger.StepComplete(1, "Connected to Commander at %s", config.CommanderURL)
 
 	clusterName := config.CommanderClusterName
+	// Append random suffix to ensure unique node names across cluster recreations.
+	// Commander templates use the cluster name as the "prefix" for node naming,
+	// so randomizing it prevents SAN initiator name collisions.
+	clusterSuffix := GenerateRandomSuffix(5)
+	clusterName = clusterName + "-" + clusterSuffix
+	logger.Info("Commander cluster name randomized: %s", clusterName)
 	createdByUs := false
 
 	logger.Step(2, "Checking if cluster '%s' exists in Commander", clusterName)
@@ -1476,8 +1509,8 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config, opts ...Ch
 	namespace := "d8-system"
 	deploymentName := "deckhouse"
 
-	// Get clientset for checking deployment
-	clientset, err := k8s.NewForConfig(kubeconfig)
+	// Get clientset for checking deployment, with retry for transient network errors
+	clientset, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -1567,7 +1600,7 @@ func CheckClusterHealth(ctx context.Context, kubeconfig *rest.Config, opts ...Ch
 
 // checkBootstrapSecrets verifies that both bootstrap secrets are available
 func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespace string) error {
-	clientset, err := k8s.NewForConfig(kubeconfig)
+	clientset, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -1609,7 +1642,7 @@ func checkBootstrapSecrets(ctx context.Context, kubeconfig *rest.Config, namespa
 // the deckhouse service has endpoints registered on port 4223.
 // This should be called before attempting to create/update ModuleConfigs to avoid webhook connection refused errors.
 func WaitForWebhookHandler(ctx context.Context, kubeconfig *rest.Config, timeout time.Duration) error {
-	clientset, err := k8s.NewForConfig(kubeconfig)
+	clientset, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -1754,8 +1787,8 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 		}
 
 		// Create SSH client with jump host (retry with exponential backoff)
-		maxRetries := 3
-		retryDelay := 2 * time.Second
+		maxRetries := config.SSHRetryCount
+		retryDelay := config.SSHRetryInitialDelay
 		var lastErr error
 		for attempt := 0; attempt < maxRetries; attempt++ {
 			if attempt > 0 {
@@ -1766,6 +1799,9 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 				case <-time.After(retryDelay):
 				}
 				retryDelay *= 2 // Exponential backoff
+				if retryDelay > config.SSHRetryMaxDelay {
+					retryDelay = config.SSHRetryMaxDelay
+				}
 			}
 
 			sshClient, lastErr = ssh.NewClientWithJumpHost(
@@ -1775,6 +1811,7 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 			if lastErr == nil {
 				break // Success
 			}
+			logger.Warn("SSH connection with jump host attempt %d/%d failed: %v", attempt+1, maxRetries, lastErr)
 		}
 		if lastErr != nil {
 			return nil, fmt.Errorf("failed to create SSH client with jump host after %d attempts: %w", maxRetries, lastErr)
@@ -1783,11 +1820,32 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 		masterHost = opts.TargetHost
 		masterUser = opts.TargetUser
 	} else {
-		// Direct connection (no jump host)
-		var err error
-		sshClient, err = ssh.NewClient(opts.SSHUser, opts.SSHHost, opts.SSHKeyPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SSH client: %w", err)
+		// Direct connection (no jump host) with retry logic
+		maxRetries := config.SSHRetryCount
+		retryDelay := config.SSHRetryInitialDelay
+		var lastErr error
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			if attempt > 0 {
+				// Wait before retry (exponential backoff)
+				select {
+				case <-ctx.Done():
+					return nil, fmt.Errorf("context cancelled while retrying SSH connection: %w", ctx.Err())
+				case <-time.After(retryDelay):
+				}
+				retryDelay *= 2 // Exponential backoff
+				if retryDelay > config.SSHRetryMaxDelay {
+					retryDelay = config.SSHRetryMaxDelay
+				}
+			}
+
+			sshClient, lastErr = ssh.NewClient(opts.SSHUser, opts.SSHHost, opts.SSHKeyPath)
+			if lastErr == nil {
+				break // Success
+			}
+			logger.Warn("SSH connection attempt %d/%d failed: %v", attempt+1, maxRetries, lastErr)
+		}
+		if lastErr != nil {
+			return nil, fmt.Errorf("failed to create SSH client after %d attempts: %w", maxRetries, lastErr)
 		}
 
 		masterHost = opts.SSHHost
@@ -1953,6 +2011,28 @@ func OutputEnvironmentVariables() {
 	// SSH_USER - no masking
 	if config.SSHUser != "" {
 		GinkgoWriter.Printf("      SSH_USER: %s\n", config.SSHUser)
+	}
+
+	// SSH_PRIVATE_KEY - show path (not content, could be base64)
+	if config.SSHPrivateKey != "" {
+		if strings.Contains(config.SSHPrivateKey, "/") || strings.HasPrefix(config.SSHPrivateKey, "~") {
+			GinkgoWriter.Printf("      SSH_PRIVATE_KEY: %s\n", config.SSHPrivateKey)
+		} else {
+			GinkgoWriter.Printf("      SSH_PRIVATE_KEY: <base64 content>\n")
+		}
+	} else {
+		GinkgoWriter.Printf("      SSH_PRIVATE_KEY: %s (default)\n", config.SSHPrivateKeyDefaultValue)
+	}
+
+	// SSH_PUBLIC_KEY - show path or indicate inline content
+	if config.SSHPublicKey != "" {
+		if strings.Contains(config.SSHPublicKey, "/") || strings.HasPrefix(config.SSHPublicKey, "~") {
+			GinkgoWriter.Printf("      SSH_PUBLIC_KEY: %s\n", config.SSHPublicKey)
+		} else {
+			GinkgoWriter.Printf("      SSH_PUBLIC_KEY: <inline content>\n")
+		}
+	} else {
+		GinkgoWriter.Printf("      SSH_PUBLIC_KEY: %s (default)\n", config.SSHPublicKeyDefaultValue)
 	}
 
 	// SSH_JUMP_HOST - no masking (optional, for existing cluster mode)

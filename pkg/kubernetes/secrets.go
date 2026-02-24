@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
 
@@ -33,7 +32,7 @@ import (
 // 3. Fuzzy match (ignoring common Unicode issues like non-breaking spaces)
 // Returns the actual secret name found (which may differ from the requested name due to Unicode issues)
 func FindSecretByName(ctx context.Context, kubeconfig *rest.Config, namespace, name string) (string, error) {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return "", fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -84,7 +83,7 @@ func GetSecretDataValue(ctx context.Context, kubeconfig *rest.Config, namespace,
 		return "", err
 	}
 
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return "", fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}

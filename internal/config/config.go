@@ -36,7 +36,7 @@ var DefaultSetupVM = ClusterNode{
 // Timeout constants for various operations during cluster creation and management
 const (
 	// VM operations
-	VMCreationTimeout                   = 20 * time.Second // Timeout for creating VMs
+	VMCreationTimeout                   = 20 * time.Minute // Timeout for creating VMs (includes ClusterVirtualImage creation which can take up to 15 minutes)
 	VMsRunningTimeout                   = 20 * time.Minute // Timeout for waiting for all VMs to become Running state
 	VMInfoTimeout                       = 30 * time.Second // Timeout for gathering VM information
 	ClusterVirtualImageReadinessTimeout = 15 * time.Minute // Timeout for waiting for ClusterVirtualImage to become provisioned (Ready)
@@ -45,9 +45,10 @@ const (
 	NodesReadyTimeout = 15 * time.Minute // Timeout for waiting for nodes to become Ready
 
 	// Cluster bootstrap and setup
-	DKPDeployTimeout       = 30 * time.Minute // Timeout for DKP deployment (dhctl bootstrap)
-	DockerInstallTimeout   = 10 * time.Minute // Timeout for Docker installation on setup node
-	BootstrapUploadTimeout = 5 * time.Minute  // Timeout for uploading bootstrap files
+	SetupNodeSSHReadyTimeout = 5 * time.Minute  // Timeout for waiting for SSH to become reachable on a freshly created VM
+	DKPDeployTimeout         = 30 * time.Minute // Timeout for DKP deployment (dhctl bootstrap)
+	DockerInstallTimeout     = 10 * time.Minute // Timeout for Docker installation on setup node
+	BootstrapUploadTimeout   = 5 * time.Minute  // Timeout for uploading bootstrap files
 
 	// Kubernetes operations
 	ModuleCheckTimeout   = 10 * time.Second // Timeout for checking module status
@@ -63,4 +64,11 @@ const (
 
 	// Commander operations
 	CommanderClusterReadyTimeout = 30 * time.Minute // Default timeout for waiting for Commander cluster to become ready
+
+	// SSH operations - retry configuration for all SSH-related operations
+	// This includes: connection establishment, command execution, tunnel creation, reconnection
+	SSHRetryCount        = 10               // Number of retry attempts for SSH operations
+	SSHRetryInitialDelay = 2 * time.Second  // Initial delay before first retry (doubles with each retry)
+	SSHRetryMaxDelay     = 60 * time.Second // Maximum delay between retries
+	SSHKeepaliveInterval = 60 * time.Second // Interval for SSH keepalive requests
 )

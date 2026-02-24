@@ -18,6 +18,7 @@ package deckhouse
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/go-logr/logr"
@@ -28,6 +29,7 @@ import (
 
 	deckhousev1alpha1 "github.com/deckhouse/deckhouse/deckhouse-controller/pkg/apis/deckhouse.io/v1alpha1"
 	deckhousev1alpha2 "github.com/deckhouse/deckhouse/deckhouse-controller/pkg/apis/deckhouse.io/v1alpha2"
+	"github.com/deckhouse/storage-e2e/pkg/retry"
 )
 
 var (
@@ -40,7 +42,10 @@ type Client struct {
 }
 
 // NewClient creates a new deckhouse client from a rest.Config
-// It uses controller-runtime client which provides type-safe access to CRDs
+// It uses controller-runtime client which provides type-safe access to CRDs.
+// Includes retry logic for transient network errors during client creation,
+// since controller-runtime client.New() performs API discovery which can fail
+// with TLS handshake timeouts or other transient network issues.
 func NewClient(ctx context.Context, config *rest.Config) (*Client, error) {
 	// Initialize controller-runtime logger once to suppress warnings
 	loggerSetOnce.Do(func() {
@@ -49,20 +54,22 @@ func NewClient(ctx context.Context, config *rest.Config) (*Client, error) {
 		ctrl.SetLogger(logr.Discard())
 	})
 
-	scheme := runtime.NewScheme()
+	return retry.Do(ctx, retry.DefaultConfig, "create deckhouse client", func() (*Client, error) {
+		scheme := runtime.NewScheme()
 
-	// Register deckhouse API types with the scheme
-	if err := deckhousev1alpha1.SchemeBuilder.AddToScheme(scheme); err != nil {
-		return nil, err
-	}
-	if err := deckhousev1alpha2.SchemeBuilder.AddToScheme(scheme); err != nil {
-		return nil, err
-	}
+		// Register deckhouse API types with the scheme
+		if err := deckhousev1alpha1.SchemeBuilder.AddToScheme(scheme); err != nil {
+			return nil, fmt.Errorf("failed to add deckhouse v1alpha1 scheme: %w", err)
+		}
+		if err := deckhousev1alpha2.SchemeBuilder.AddToScheme(scheme); err != nil {
+			return nil, fmt.Errorf("failed to add deckhouse v1alpha2 scheme: %w", err)
+		}
 
-	cl, err := client.New(config, client.Options{Scheme: scheme})
-	if err != nil {
-		return nil, err
-	}
+		cl, err := client.New(config, client.Options{Scheme: scheme})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create controller-runtime client: %w", err)
+		}
 
-	return &Client{client: cl}, nil
+		return &Client{client: cl}, nil
+	})
 }

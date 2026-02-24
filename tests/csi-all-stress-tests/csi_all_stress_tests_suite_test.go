@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package csi_huawei_stress_tests
+package csi_all_stress_tests
 
 import (
 	"testing"
@@ -44,12 +44,12 @@ var _ = AfterSuite(func() {
 	}
 })
 
-func TestCsiHuaweiStressTests(t *testing.T) {
+func TestCsiAllStressTests(t *testing.T) {
 	RegisterFailHandler(Fail)
 	// Configure Ginkgo to show verbose output
 	suiteConfig, reporterConfig := GinkgoConfiguration()
 	suiteConfig.Timeout = 2 * time.Hour // Allow 2 hours for stress tests
 	reporterConfig.Verbose = true
 	reporterConfig.ShowNodeEvents = false
-	RunSpecs(t, "Csi Huawei Stress Tests Suite", suiteConfig, reporterConfig)
+	RunSpecs(t, "Csi All Stress Tests Suite", suiteConfig, reporterConfig)
 }

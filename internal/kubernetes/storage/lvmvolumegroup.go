@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	snc "github.com/deckhouse/sds-node-configurator/api/v1alpha1"
+	"github.com/deckhouse/storage-e2e/pkg/retry"
 )
 
 // LVMVolumeGroupClient provides operations on LVMVolumeGroup resources
@@ -35,21 +36,26 @@ type LVMVolumeGroupClient struct {
 }
 
 // NewLVMVolumeGroupClient creates a new LVMVolumeGroup client from a rest.Config
-// It uses controller-runtime client which provides type-safe access to CRDs
+// It uses controller-runtime client which provides type-safe access to CRDs.
+// Includes retry logic for transient network errors during client creation,
+// since controller-runtime client.New() performs API discovery which can fail
+// with TLS handshake timeouts or other transient network issues.
 func NewLVMVolumeGroupClient(ctx context.Context, config *rest.Config) (*LVMVolumeGroupClient, error) {
-	scheme := runtime.NewScheme()
+	return retry.Do(ctx, retry.DefaultConfig, "create LVMVolumeGroup client", func() (*LVMVolumeGroupClient, error) {
+		scheme := runtime.NewScheme()
 
-	// Register sds-node-configurator API types with the scheme
-	if err := snc.AddToScheme(scheme); err != nil {
-		return nil, err
-	}
+		// Register sds-node-configurator API types with the scheme
+		if err := snc.AddToScheme(scheme); err != nil {
+			return nil, fmt.Errorf("failed to add sds-node-configurator scheme: %w", err)
+		}
 
-	cl, err := client.New(config, client.Options{Scheme: scheme})
-	if err != nil {
-		return nil, err
-	}
+		cl, err := client.New(config, client.Options{Scheme: scheme})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create controller-runtime client: %w", err)
+		}
 
-	return &LVMVolumeGroupClient{client: cl}, nil
+		return &LVMVolumeGroupClient{client: cl}, nil
+	})
 }
 
 // List lists all LVMVolumeGroups in the cluster

@@ -68,6 +68,7 @@ type DKPParameters struct {
 	ServiceSubnetCIDR string          `yaml:"serviceSubnetCIDR"`
 	ClusterDomain     string          `yaml:"clusterDomain"`
 	RegistryRepo      string          `yaml:"registryRepo"`
+	DevBranch         string          `yaml:"devBranch,omitempty"` // Development branch for dev-registry (default: main)
 	Modules           []*ModuleConfig `yaml:"modules,omitempty"`
 }
 

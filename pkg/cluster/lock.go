@@ -25,10 +25,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/logger"
+	k8sutils "github.com/deckhouse/storage-e2e/pkg/kubernetes"
+	"github.com/deckhouse/storage-e2e/pkg/retry"
 )
 
 const (
@@ -56,25 +57,11 @@ type ClusterLockInfo struct {
 
 // AcquireClusterLock creates a ConfigMap in the default namespace to indicate the cluster is busy.
 // If the cluster is already locked, it returns an error with information about who holds the lock.
+// Uses retry logic for transient network errors.
 func AcquireClusterLock(ctx context.Context, kubeconfig *rest.Config, testName string) error {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
-	}
-
-	// Check if lock already exists
-	_, err = clientset.CoreV1().ConfigMaps(ClusterLockNamespace).Get(ctx, ClusterLockConfigMapName, metav1.GetOptions{})
-	if err == nil {
-		// Lock exists, get lock info to provide helpful error message
-		lockInfo, infoErr := GetClusterLockInfo(ctx, kubeconfig)
-		if infoErr != nil {
-			return fmt.Errorf("cluster is already locked by another test (could not retrieve lock details: %v)", infoErr)
-		}
-		return fmt.Errorf("cluster is already locked: test=%s, locked_at=%s, locked_by=%s, hostname=%s, pid=%d",
-			lockInfo.TestName, lockInfo.LockedAt.Format(time.RFC3339), lockInfo.LockedBy, lockInfo.Hostname, lockInfo.PID)
-	}
-	if !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to check for existing cluster lock: %w", err)
 	}
 
 	// Get current user and hostname for lock info
@@ -106,38 +93,64 @@ func AcquireClusterLock(ctx context.Context, kubeconfig *rest.Config, testName s
 		},
 	}
 
-	_, err = clientset.CoreV1().ConfigMaps(ClusterLockNamespace).Create(ctx, lockConfigMap, metav1.CreateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to create cluster lock: %w", err)
-	}
+	// Use retry for transient network errors when checking and creating lock
+	return retry.DoVoid(ctx, retry.DefaultConfig, "acquire cluster lock", func() error {
+		// Check if lock already exists
+		_, err := clientset.CoreV1().ConfigMaps(ClusterLockNamespace).Get(ctx, ClusterLockConfigMapName, metav1.GetOptions{})
+		if err == nil {
+			// Lock exists, get lock info to provide helpful error message
+			// This is a permanent error (cluster is locked), not retryable
+			lockInfo, infoErr := GetClusterLockInfo(ctx, kubeconfig)
+			if infoErr != nil {
+				// Return non-retryable error
+				return fmt.Errorf("cluster is already locked by another test (could not retrieve lock details: %v)", infoErr)
+			}
+			// Return non-retryable error
+			return fmt.Errorf("cluster is already locked: test=%s, locked_at=%s, locked_by=%s, hostname=%s, pid=%d",
+				lockInfo.TestName, lockInfo.LockedAt.Format(time.RFC3339), lockInfo.LockedBy, lockInfo.Hostname, lockInfo.PID)
+		}
+		if !errors.IsNotFound(err) {
+			// This might be a transient error (network issue)
+			return fmt.Errorf("failed to check for existing cluster lock: %w", err)
+		}
 
-	logger.Info("Cluster lock acquired: test=%s, hostname=%s, pid=%d", testName, hostname, os.Getpid())
-	return nil
+		// Lock doesn't exist, try to create it
+		_, err = clientset.CoreV1().ConfigMaps(ClusterLockNamespace).Create(ctx, lockConfigMap, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to create cluster lock: %w", err)
+		}
+
+		logger.Info("Cluster lock acquired: test=%s, hostname=%s, pid=%d", testName, hostname, os.Getpid())
+		return nil
+	})
 }
 
 // ReleaseClusterLock removes the cluster lock ConfigMap.
 // It is safe to call even if the lock doesn't exist (no error will be returned).
+// Uses retry logic for transient network errors.
 func ReleaseClusterLock(ctx context.Context, kubeconfig *rest.Config) error {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
 
-	err = clientset.CoreV1().ConfigMaps(ClusterLockNamespace).Delete(ctx, ClusterLockConfigMapName, metav1.DeleteOptions{})
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return nil // Already deleted, not an error
+	return retry.DoVoid(ctx, retry.DefaultConfig, "release cluster lock", func() error {
+		err := clientset.CoreV1().ConfigMaps(ClusterLockNamespace).Delete(ctx, ClusterLockConfigMapName, metav1.DeleteOptions{})
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return nil // Already deleted, not an error
+			}
+			return fmt.Errorf("failed to release cluster lock: %w", err)
 		}
-		return fmt.Errorf("failed to release cluster lock: %w", err)
-	}
 
-	logger.Info("Cluster lock released")
-	return nil
+		logger.Info("Cluster lock released")
+		return nil
+	})
 }
 
 // IsClusterLocked checks if the cluster is currently locked by checking for the lock ConfigMap.
 func IsClusterLocked(ctx context.Context, kubeconfig *rest.Config) (bool, error) {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return false, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}
@@ -155,7 +168,7 @@ func IsClusterLocked(ctx context.Context, kubeconfig *rest.Config) (bool, error)
 // GetClusterLockInfo retrieves information about the current cluster lock.
 // Returns an error if the cluster is not locked.
 func GetClusterLockInfo(ctx context.Context, kubeconfig *rest.Config) (*ClusterLockInfo, error) {
-	clientset, err := kubernetes.NewForConfig(kubeconfig)
+	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kubernetes clientset: %w", err)
 	}

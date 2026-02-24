@@ -5,8 +5,8 @@ clusterDefinition:
       hostType: "vm"
       osType: "Ubuntu 22.04 6.2.0-39-generic" # See internal/config/images.go
       cpu: 8
-      coreFraction: 50
-      ram: 8
+      coreFraction: 100
+      ram: 16
       diskSize: 40
   workers: # Worker nodes configuration // TODO implement logic allowing to deploy different number of workes and masters with the same config.
     - hostname: "worker-1"
@@ -14,21 +14,21 @@ clusterDefinition:
       osType: "RedOS 8.0 6.6.26-1.red80.x86_64" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
-      ram: 6
+      ram: 8
       diskSize: 30
     - hostname: "worker-2"
       hostType: "vm"
       osType: "RedOS 7.3.6 5.15.78-2.el7.3.x86_64" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
-      ram: 6
+      ram: 8
       diskSize: 30
     - hostname: "worker-3"
       hostType: "vm"
       osType: "AltLinux Server 10.4" # See internal/config/images.go
       cpu: 4
       coreFraction: 50
-      ram: 6
+      ram: 8
       diskSize: 30
     - hostname: "worker-5"
       hostType: "vm"
@@ -39,11 +39,12 @@ clusterDefinition:
       diskSize: 30
   # DKP parameters
   dkpParameters:
-    kubernetesVersion: "Automatic"
+    kubernetesVersion: "Automatic" # 1.34, 1.35 etc.
     podSubnetCIDR: "10.112.0.0/16"
     serviceSubnetCIDR: "10.225.0.0/16"
-    clusterDomain: "cluster.local"
+    clusterDomain: "test-cluster.local"
     registryRepo: "dev-registry.deckhouse.io/sys/deckhouse-oss"
+    devBranch: "main"
     # Module configuration
     modules:
       - name: "snapshot-controller" # TODO add MPO
@@ -51,16 +52,43 @@ clusterDefinition:
         enabled: true
         modulePullOverride: "main" # imageTag for ModulePullOverride. Main is default value, used if not specified. Created always when rehistryRepo starts with dev-
         dependencies: []
-      - name: "sds-local-volume"
+      # - name: "sds-local-volume"
+      #   version: 1
+      #   enabled: true
+      #   dependencies:
+      #     - "snapshot-controller"
+      #     - "sds-node-configurator"
+      # - name: "sds-node-configurator"
+      #   version: 1
+      #   enabled: true
+      #   settings:
+      #     enableThinProvisioning: true
+      #   dependencies: []
+      - name: "csi-huawei"
         version: 1
         enabled: true
+        modulePullOverride: "mr55"
         dependencies:
           - "snapshot-controller"
-          - "sds-node-configurator"
-      - name: "sds-node-configurator"
-        version: 1
-        enabled: true
-        settings:
-          enableThinProvisioning: true
-        dependencies: []
+      # - name: "csi-hpe"
+      #   version: 1
+      #   enabled: true
+      #   modulePullOverride: "mr60"
+      #   dependencies:
+      #     - "snapshot-controller"
+      # - name: "csi-netapp"
+      #   version: 1
+      #   enabled: true
+      #   dependencies:
+      #     - "snapshot-controller"
+      # - name: "csi-s3"
+      #   version: 1
+      #   enabled: true
+      #   dependencies:
+      #     - "snapshot-controller"
+      # - name: "csi-scsi-generic"
+      #   version: 1
+      #   enabled: true
+      #   dependencies:
+      #     - "snapshot-controller"
 
