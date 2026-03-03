@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
@@ -102,4 +103,22 @@ func WaitForNodesLabeled(ctx context.Context, kubeconfig *rest.Config, nodeNames
 	}
 
 	return nil
+}
+
+// GetNodeInternalIP returns the InternalIP of the node in the given cluster. Empty string if not found.
+func GetNodeInternalIP(ctx context.Context, kubeconfig *rest.Config, nodeName string) (string, error) {
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
+	if err != nil {
+		return "", fmt.Errorf("create clientset: %w", err)
+	}
+	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("get node %s: %w", nodeName, err)
+	}
+	for _, addr := range node.Status.Addresses {
+		if addr.Type == corev1.NodeInternalIP {
+			return addr.Address, nil
+		}
+	}
+	return "", fmt.Errorf("node %s has no InternalIP", nodeName)
 }

@@ -69,11 +69,17 @@ var (
 	// SSH credentials to deploy to VM
 	VMSSHUser             = os.Getenv("SSH_VM_USER")
 	VMSSHUserDefaultValue = "cloud"
+	// VMSSHPassword when set is used to SSH from jump host to VMs (cloud@vmIP) via sshpass. Leave empty for key-based auth.
+	VMSSHPassword = os.Getenv("SSH_VM_PASSWORD")
 
 	// KubeConfigPath is the path to a kubeconfig file. If SSH retrieval fails (e.g., sudo requires password),
 	// this path will be used as a fallback. If not set and SSH fails, the user will be notified to download
 	// the kubeconfig manually and set this environment variable, test will fail.
 	KubeConfigPath = os.Getenv("KUBE_CONFIG_PATH")
+
+	// KubeInsecureSkipTLSVerify when set to "true" disables TLS certificate verification for Kubernetes API
+	// (e.g. when using self-signed certs or connecting via tunnel to 127.0.0.1). Default: "false".
+	KubeInsecureSkipTLSVerify = os.Getenv("KUBE_INSECURE_SKIP_TLS_VERIFY")
 
 	// TestClusterCreateMode specifies the cluster creation mode. Must be set to either "alwaysUseExisting" or "alwaysCreateNew". If not set, test will fail.
 	TestClusterCreateMode = os.Getenv("TEST_CLUSTER_CREATE_MODE")
@@ -86,6 +92,16 @@ var (
 	// TestClusterNamespace specifies the namespace for DKP cluster deployment
 	TestClusterNamespace             = os.Getenv("TEST_CLUSTER_NAMESPACE")
 	TestClusterNamespaceDefaultValue = "e2e-test-cluster"
+
+	// TestClusterForceLockRelease when set to "true" or "True" (only for alwaysUseExisting) forces release of an
+	// existing cluster lock before acquiring. Use when a previous run left the lock (e.g. crash, Ctrl+C).
+	// Do not use if another test might be using the cluster.
+	TestClusterForceLockRelease = os.Getenv("TEST_CLUSTER_FORCE_LOCK_RELEASE")
+
+	// TestClusterResume when set to "true" or "True" (only for alwaysCreateNew) tries to continue from a previous
+	// failed run: if state was saved after step 6 (VMs created, IPs gathered), connects to the first master and
+	// runs remaining steps (add nodes, enable modules). Set to "true" and re-run the test after a mid-deploy failure.
+	TestClusterResume = os.Getenv("TEST_CLUSTER_RESUME")
 
 	// TestClusterStorageClass specifies the storage class for DKP cluster deployment
 	TestClusterStorageClass = os.Getenv("TEST_CLUSTER_STORAGE_CLASS")

@@ -11,6 +11,24 @@ End-to-end tests for Deckhouse storage components.
 5. Write your test in `tests/<your-test-name>/<your-test-name>_test.go` (Section marked `---=== TESTS START HERE ===---`)
 6. Run the test: `go test -timeout=240m -v ./tests/<your-test-name> -count=1`
 
+### Run using an existing cluster (no VM creation)
+
+Use this mode to run tests against a cluster that is already running (faster iterations, no virtualization/VM setup).
+
+1. Set cluster creation mode to use existing cluster:
+   ```bash
+   export TEST_CLUSTER_CREATE_MODE=alwaysUseExisting
+   ```
+2. Point SSH to the **test cluster** (the Kubernetes API master you want to run tests on):
+   - **Direct access:** `SSH_HOST` = IP/hostname of the cluster master, `SSH_USER` = user that can run `sudo cat /etc/kubernetes/admin.conf` on that host.
+   - **Via jump host:** set `SSH_JUMP_HOST`, `SSH_JUMP_USER`, `SSH_JUMP_KEY_PATH` (optional); `SSH_HOST`/`SSH_USER` are the target cluster master.
+3. Source the rest of your test env (e.g. `source tests/<your-test-name>/test_exports`), then run:
+   ```bash
+   go test -timeout=240m -v ./tests/<your-test-name> -count=1
+   ```
+
+Kubeconfig is written to `temp/<test-name>/` (e.g. `temp/sds_node_configurator_test/kubeconfig-<master-ip>.yml`). The framework acquires a cluster lock so only one test run uses the cluster at a time. If a previous run left the lock (crash, Ctrl+C), set `TEST_CLUSTER_FORCE_LOCK_RELEASE=true` for the next run (do not use if another test might be using the cluster).
+
 The `-count=1` flag prevents Go from using cached test results.
 Timeout `240m` is a global timeout for entire testkit. Adjust it on your needs.
 
@@ -71,6 +89,7 @@ See [pkg/FUNCTIONS_GLOSSARY.md](pkg/FUNCTIONS_GLOSSARY.md) for a full list of al
 - `SSH_PUBLIC_KEY` -- Path to SSH public key file, or plain-text key content. Default: `~/.ssh/id_rsa.pub`
 - `SSH_PASSPHRASE` -- Passphrase for the SSH private key. Required for non-interactive mode with encrypted keys
 - `SSH_VM_USER` -- SSH user for connecting to VMs deployed inside the test cluster. Default: `cloud`
+- `SSH_VM_PASSWORD` -- Password for SSH to VMs (e.g. `cloud`) when connecting from jump host for lsblk checks. If set, uses `sshpass`; leave empty for key-based auth. Required when VMs accept only password auth.
 - `SSH_JUMP_HOST` -- Jump host address for connecting to clusters behind a bastion
 - `SSH_JUMP_USER` -- Jump host SSH user. Defaults to `SSH_USER` if jump host is set
 - `SSH_JUMP_KEY_PATH` -- Jump host SSH key path. Defaults to `SSH_PRIVATE_KEY` if jump host is set
@@ -79,8 +98,10 @@ See [pkg/FUNCTIONS_GLOSSARY.md](pkg/FUNCTIONS_GLOSSARY.md) for a full list of al
 
 - `YAML_CONFIG_FILENAME` -- Filename of the cluster definition YAML. Default: `cluster_config.yml`
 - `TEST_CLUSTER_CLEANUP` -- Set to `true` to remove the test cluster after tests complete. Default: `false`
+- `TEST_CLUSTER_RESUME` -- Set to `true` to continue from a previous failed run (only for `alwaysCreateNew`). If the test failed in the middle of cluster creation, re-run with `TEST_CLUSTER_RESUME=true`; the framework will load saved state from `temp/<test-name>/cluster-state.json` (written after step 6), restore VM hostnames, and run the remaining steps (connect to first master, add nodes, enable modules). Requires that step 6 (VMs created, VM info gathered) completed before the failure.
 - `TEST_CLUSTER_NAMESPACE` -- Namespace for DKP cluster deployment. Default: `e2e-test-cluster`
 - `KUBE_CONFIG_PATH` -- Path to a kubeconfig file. Used as fallback if SSH-based kubeconfig retrieval fails
+- `KUBE_INSECURE_SKIP_TLS_VERIFY` -- Set to `true` to skip TLS certificate verification for the Kubernetes API (e.g. self-signed certs or tunnel to 127.0.0.1). Default: not set (verify TLS)
 - `IMAGE_PULL_POLICY` -- Image pull policy for ClusterVirtualImages: `Always` or `IfNotExists`. Default: `IfNotExists`
 
 ### Logging

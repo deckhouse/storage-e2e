@@ -639,26 +639,24 @@ type vmIPResult struct {
 	hostname string
 }
 
+// GatherVMInfoOptions optionally customizes GatherVMInfo behaviour.
+// Pass nil for default (gather all VMs including setup).
+type GatherVMInfoOptions struct {
+	// SkipSetupVM when true skips the setup/bootstrap VM. Use when resuming after Deckhouse is up:
+	// the bootstrap node is removed at that point and only master/worker VMs exist.
+	SkipSetupVM bool
+}
+
 // GatherVMInfo gathers IP addresses for all VMs in the cluster definition and fills them into ClusterDefinition.
 // This should be called once while connected to the base cluster, before switching to test cluster.
 // It modifies clusterDef in-place by setting IPAddress field for each VM node.
-func GatherVMInfo(ctx context.Context, virtClient *virtualization.Client, namespace string, clusterDef *config.ClusterDefinition, vmResources *VMResources) error {
+// When opts.SkipSetupVM is true, the setup (bootstrap) VM is not queried and clusterDef.Setup is left unchanged.
+func GatherVMInfo(ctx context.Context, virtClient *virtualization.Client, namespace string, clusterDef *config.ClusterDefinition, vmResources *VMResources, opts *GatherVMInfoOptions) error {
+	if opts == nil {
+		opts = &GatherVMInfoOptions{}
+	}
 	var wg sync.WaitGroup
 	results := make(chan vmIPResult)
-
-	// Count total VMs to gather info for
-	totalVMs := 0
-	for i := range clusterDef.Masters {
-		if clusterDef.Masters[i].HostType == config.HostTypeVM {
-			totalVMs++
-		}
-	}
-	for i := range clusterDef.Workers {
-		if clusterDef.Workers[i].HostType == config.HostTypeVM {
-			totalVMs++
-		}
-	}
-	totalVMs++ // setup node
 
 	// Gather info for all masters in parallel
 	for i := range clusterDef.Masters {
@@ -686,14 +684,16 @@ func GatherVMInfo(ctx context.Context, virtClient *virtualization.Client, namesp
 		}
 	}
 
-	// Gather info for setup node in parallel
+	// Gather info for setup node unless skipped (e.g. resume: bootstrap VM already removed)
 	setupVMName := vmResources.SetupVMName
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ip, err := GetVMIPAddress(ctx, virtClient, namespace, setupVMName)
-		results <- vmIPResult{node: nil, ip: ip, err: err, hostname: setupVMName}
-	}()
+	if !opts.SkipSetupVM && setupVMName != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ip, err := GetVMIPAddress(ctx, virtClient, namespace, setupVMName)
+			results <- vmIPResult{node: nil, ip: ip, err: err, hostname: setupVMName}
+		}()
+	}
 
 	// Close results channel when all goroutines complete
 	go func() {
@@ -716,15 +716,18 @@ func GatherVMInfo(ctx context.Context, virtClient *virtualization.Client, namesp
 		}
 	}
 
+	if opts.SkipSetupVM {
+		// Do not touch clusterDef.Setup; bootstrap VM is gone
+		return nil
+	}
+
 	// Create or update clusterDef.Setup with the generated VM info
 	if clusterDef.Setup == nil {
-		// Create setup node from DefaultSetupVM template
 		setupNode := config.DefaultSetupVM
 		setupNode.Hostname = setupVMName
 		setupNode.IPAddress = setupIP
 		clusterDef.Setup = &setupNode
 	} else {
-		// Update existing setup node
 		clusterDef.Setup.Hostname = setupVMName
 		clusterDef.Setup.IPAddress = setupIP
 	}
