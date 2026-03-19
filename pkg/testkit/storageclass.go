@@ -40,6 +40,12 @@ type DefaultStorageClassConfig struct {
 	// ThinPoolName is required when LVMType is "Thin".
 	ThinPoolName string
 
+	// ThinPoolSize is the size of the thin pool (e.g. "70%", "90%", "10Gi"). Default: "90%".
+	ThinPoolSize string
+
+	// ThinPoolAllocationLimit sets the overprovisioning limit for the thin pool (e.g. "150%"). Default: "150%".
+	ThinPoolAllocationLimit string
+
 	// VGName is the LVM Volume Group name to create on each node (default: "vg-local").
 	VGName string
 
@@ -96,6 +102,12 @@ func (c *DefaultStorageClassConfig) applyDefaults() {
 	}
 	if c.ThinPoolName == "" {
 		c.ThinPoolName = "thinpool"
+	}
+	if c.ThinPoolSize == "" {
+		c.ThinPoolSize = "90%"
+	}
+	if c.ThinPoolAllocationLimit == "" {
+		c.ThinPoolAllocationLimit = "150%"
 	}
 	if c.DiskSize == "" {
 		c.DiskSize = "20Gi"
@@ -261,7 +273,21 @@ func CreateDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 		logger.Info("Found %d consumable block device(s) on node %s", len(bds), nodeName)
 
 		lvgName := fmt.Sprintf("lvg-%s", nodeName)
-		err := kubernetes.CreateLVMVolumeGroup(ctx, kubeconfig, lvgName, nodeName, []string{bds[0].Name}, cfg.VGName)
+		var err error
+		switch cfg.LVMType {
+		case "Thin":
+			err = kubernetes.CreateLVMVolumeGroupWithThinPool(ctx, kubeconfig, lvgName, nodeName, []string{bds[0].Name}, cfg.VGName, []kubernetes.ThinPoolSpec{
+				{
+					Name:            cfg.ThinPoolName,
+					Size:            cfg.ThinPoolSize,
+					AllocationLimit: cfg.ThinPoolAllocationLimit,
+				},
+			})
+		case "Thick":
+			err = kubernetes.CreateLVMVolumeGroup(ctx, kubeconfig, lvgName, nodeName, []string{bds[0].Name}, cfg.VGName)
+		default:
+			return "", fmt.Errorf("invalid LVMType: %s", cfg.LVMType)
+		}
 		if err != nil && !apierrors.IsAlreadyExists(err) {
 			return "", fmt.Errorf("failed to create LVG %s: %w", lvgName, err)
 		}
