@@ -60,32 +60,3 @@ func GetVMPodNodeAndContainerID(ctx context.Context, baseConfig *rest.Config, na
 	}
 	return "", "", fmt.Errorf("no running pod for VM %s in namespace %s", vmName, namespace)
 }
-
-// GetNodeSSHAddress returns an address (IP or hostname) suitable for SSH from the jump host to the given node.
-// It prefers InternalIP, then ExternalIP, so that the jump host can reach the node when the K8s node name does not resolve.
-func GetNodeSSHAddress(ctx context.Context, baseConfig *rest.Config, nodeName string) (string, error) {
-	clientset, err := kubernetes.NewForConfig(baseConfig)
-	if err != nil {
-		return "", fmt.Errorf("create clientset: %w", err)
-	}
-	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("get node %s: %w", nodeName, err)
-	}
-	var internalIP, externalIP string
-	for _, addr := range node.Status.Addresses {
-		switch addr.Type {
-		case corev1.NodeInternalIP:
-			internalIP = addr.Address
-		case corev1.NodeExternalIP:
-			externalIP = addr.Address
-		}
-	}
-	if internalIP != "" {
-		return internalIP, nil
-	}
-	if externalIP != "" {
-		return externalIP, nil
-	}
-	return "", fmt.Errorf("node %s has no InternalIP or ExternalIP", nodeName)
-}

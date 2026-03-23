@@ -77,10 +77,6 @@ var (
 	// the kubeconfig manually and set this environment variable, test will fail.
 	KubeConfigPath = os.Getenv("KUBE_CONFIG_PATH")
 
-	// KubeInsecureSkipTLSVerify when set to "true" disables TLS certificate verification for Kubernetes API
-	// (e.g. when using self-signed certs or connecting via tunnel to 127.0.0.1). Default: "false".
-	KubeInsecureSkipTLSVerify = os.Getenv("KUBE_INSECURE_SKIP_TLS_VERIFY")
-
 	// TestClusterCreateMode specifies the cluster creation mode. Must be set to either "alwaysUseExisting" or "alwaysCreateNew". If not set, test will fail.
 	TestClusterCreateMode = os.Getenv("TEST_CLUSTER_CREATE_MODE")
 
@@ -92,11 +88,6 @@ var (
 	// TestClusterNamespace specifies the namespace for DKP cluster deployment
 	TestClusterNamespace             = os.Getenv("TEST_CLUSTER_NAMESPACE")
 	TestClusterNamespaceDefaultValue = "e2e-test-cluster"
-
-	// TestClusterForceLockRelease when set to "true" or "True" (only for alwaysUseExisting) forces release of an
-	// existing cluster lock before acquiring. Use when a previous run left the lock (e.g. crash, Ctrl+C).
-	// Do not use if another test might be using the cluster.
-	TestClusterForceLockRelease = os.Getenv("TEST_CLUSTER_FORCE_LOCK_RELEASE")
 
 	// TestClusterResume when set to "true" or "True" (only for alwaysCreateNew) tries to continue from a previous
 	// failed run: if state was saved after step 6 (VMs created, IPs gathered), connects to the first master and

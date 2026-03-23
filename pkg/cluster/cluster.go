@@ -851,10 +851,6 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 	logger.StepComplete(1, "Connected to existing cluster successfully")
 
 	logger.Step(2, "Acquiring cluster lock")
-	// Optionally force-release existing lock (e.g. previous run left it)
-	if config.TestClusterForceLockRelease == "true" || config.TestClusterForceLockRelease == "True" {
-		_ = ForceReleaseClusterLock(ctx, clusterResources.Kubeconfig)
-	}
 	// Acquire cluster lock to ensure exclusive access
 	// Use a descriptive test name from environment or generate one
 	testName := config.TestClusterNamespace
@@ -989,9 +985,6 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 			}
 			clusterResources.SSHClient.Close()
 			return nil, fmt.Errorf("failed to build base cluster rest config: %w", buildErr)
-		}
-		if config.KubeInsecureSkipTLSVerify == "true" || config.KubeInsecureSkipTLSVerify == "True" {
-			baseKubeconfig.TLSClientConfig.Insecure = true
 		}
 		configureExtendedTimeouts(baseKubeconfig)
 		clusterResources.BaseClusterClient = baseSSHClient
@@ -2190,9 +2183,6 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 		tunnelInfo.StopFunc()
 		sshClient.Close()
 		return nil, fmt.Errorf("failed to rebuild kubeconfig from file: %w", err)
-	}
-	if config.KubeInsecureSkipTLSVerify == "true" || config.KubeInsecureSkipTLSVerify == "True" {
-		kubeconfig.TLSClientConfig.Insecure = true
 	}
 
 	// Configure extended timeouts for tunnel-based connections
