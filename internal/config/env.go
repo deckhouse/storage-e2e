@@ -69,6 +69,8 @@ var (
 	// SSH credentials to deploy to VM
 	VMSSHUser             = os.Getenv("SSH_VM_USER")
 	VMSSHUserDefaultValue = "cloud"
+	// VMSSHPassword when set is used to SSH from jump host to VMs (cloud@vmIP) via sshpass. Leave empty for key-based auth.
+	VMSSHPassword = os.Getenv("SSH_VM_PASSWORD")
 
 	// KubeConfigPath is the path to a kubeconfig file. If SSH retrieval fails (e.g., sudo requires password),
 	// this path will be used as a fallback. If not set and SSH fails, the user will be notified to download
@@ -86,6 +88,11 @@ var (
 	// TestClusterNamespace specifies the namespace for DKP cluster deployment
 	TestClusterNamespace             = os.Getenv("TEST_CLUSTER_NAMESPACE")
 	TestClusterNamespaceDefaultValue = "e2e-test-cluster"
+
+	// TestClusterResume when set to "true" or "True" (only for alwaysCreateNew) tries to continue from a previous
+	// failed run: if state was saved after step 6 (VMs created, IPs gathered), connects to the first master and
+	// runs remaining steps (add nodes, enable modules). Set to "true" and re-run the test after a mid-deploy failure.
+	TestClusterResume = os.Getenv("TEST_CLUSTER_RESUME")
 
 	// TestClusterStorageClass specifies the storage class for DKP cluster deployment
 	TestClusterStorageClass = os.Getenv("TEST_CLUSTER_STORAGE_CLASS")

@@ -95,6 +95,91 @@ type TestClusterResources struct {
 	SetupSSHClient     ssh.SSHClient   // Setup node SSH client (for cleanup)
 }
 
+// resumeState is saved after step 6 (VMs created, IPs gathered) so a failed run can be continued with TEST_CLUSTER_RESUME=true.
+type resumeState struct {
+	FirstMasterIP   string   `json:"first_master_ip"`
+	Namespace       string   `json:"namespace"`
+	VMNames         []string `json:"vm_names"`
+	SetupVMName     string   `json:"setup_vm_name"`
+	MasterHostnames []string `json:"master_hostnames"`
+	WorkerHostnames []string `json:"worker_hostnames"`
+}
+
+// getClusterStatePath returns temp/<test-file-name-without-ext>/cluster-state.json
+// (same dir as PrepareBootstrapConfig and cluster-state.json; used for both save and resume).
+func getClusterStatePath(testFilePath string) (string, error) {
+	callerDir := filepath.Dir(testFilePath)
+	repoRoot, err := filepath.Abs(filepath.Join(callerDir, "..", ".."))
+	if err != nil {
+		return "", err
+	}
+	testFileName := strings.TrimSuffix(filepath.Base(testFilePath), filepath.Ext(testFilePath))
+	return filepath.Join(repoRoot, "temp", testFileName, "cluster-state.json"), nil
+}
+
+// getTestTempDirFromStack returns temp/<test-file-name-without-ext>/ by walking the call stack
+// until a path containing "/tests/" is found. Used when testFilePath is not available (e.g. UseExistingCluster).
+func getTestTempDirFromStack() (string, error) {
+	for i := 1; i <= 20; i++ {
+		_, file, _, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+		if !strings.Contains(filepath.ToSlash(file), "/tests/") {
+			continue
+		}
+		dir := filepath.Dir(file)
+		for filepath.Base(dir) != "tests" {
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+		if filepath.Base(dir) != "tests" {
+			continue
+		}
+		repoRoot := filepath.Dir(dir)
+		testFileName := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
+		return filepath.Join(repoRoot, "temp", testFileName), nil
+	}
+	return "", fmt.Errorf("could not determine test temp dir from call stack")
+}
+
+func saveClusterState(testFilePath string, state *resumeState) error {
+	path, err := getClusterStatePath(testFilePath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+func loadClusterState(testFilePath string) (*resumeState, error) {
+	path, err := getClusterStatePath(testFilePath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var state resumeState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	if state.FirstMasterIP == "" || state.Namespace == "" || len(state.VMNames) == 0 {
+		return nil, fmt.Errorf("invalid cluster state: missing required fields")
+	}
+	return &state, nil
+}
+
 // loadClusterConfigFromPath loads and validates a cluster configuration from a specific file path
 func loadClusterConfigFromPath(configPath string) (*config.ClusterDefinition, error) {
 	// Read the YAML file
@@ -156,33 +241,62 @@ func CreateTestCluster(
 ) (*TestClusterResources, error) {
 	logger.Step(1, "Loading cluster configuration from %s", yamlConfigFilename)
 
-	// Get the test file's directory (the caller of CreateTestCluster, which is the test file)
-	// runtime.Caller(1) gets the immediate caller (the test file that called CreateTestCluster)
-	_, callerFile, _, ok := runtime.Caller(1)
-	if !ok {
-		return nil, fmt.Errorf("failed to determine test file path")
+	// Find the test package directory and test file path by walking the call stack.
+	// CreateTestCluster is called from CreateOrConnectToTestCluster in cluster.go, so Caller(1) is not the test file.
+	var testDir string
+	var testFilePath string
+	for skip := 1; skip <= 10; skip++ {
+		_, callerFile, _, ok := runtime.Caller(skip)
+		if !ok {
+			break
+		}
+		if strings.Contains(filepath.ToSlash(callerFile), "/tests/") {
+			testDir = filepath.Dir(callerFile)
+			testFilePath = callerFile
+			break
+		}
 	}
-	testDir := filepath.Dir(callerFile)
+	if testDir == "" {
+		return nil, fmt.Errorf("failed to determine test directory (no caller under tests/)")
+	}
 	yamlConfigPath := filepath.Join(testDir, yamlConfigFilename)
 
-	logger.Debug("Test file directory: %s", testDir)
+	logger.Debug("Test directory: %s", testDir)
 	logger.Debug("Config file path: %s", yamlConfigPath)
 
-	// Step 1: Load cluster configuration from YAML
-	// LoadClusterConfig uses runtime.Caller(1) which would get this function, not the test file
-	// So we need to load it directly from the path
+	// Step 1: Load cluster configuration from YAML (from test directory, e.g. tests/sds-node-configurator/cluster_config.yml)
 	clusterDefinition, err := loadClusterConfigFromPath(yamlConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load cluster configuration: %w", err)
 	}
 	logger.StepComplete(1, "Cluster configuration loaded successfully from %s", yamlConfigPath)
 
-	// Randomize hostnames to avoid SAN initiator collisions.
-	// SANs remember iSCSI initiator names keyed by hostname; reusing the same hostnames
-	// (master-1, worker-1, etc.) across cluster recreations causes stale initiator mappings.
-	// Each node gets its own unique suffix to minimize collision likelihood.
-	randomizeHostnames(clusterDefinition)
-	logger.Info("Cluster hostnames randomized: masters=%v, workers=%v",
+	var resumeMode bool
+	if config.TestClusterResume == "true" || config.TestClusterResume == "True" {
+		state, loadErr := loadClusterState(testFilePath)
+		if loadErr == nil {
+			resumeMode = true
+			logger.Info("Resume mode: restoring hostnames from saved state (first_master_ip=%s)", state.FirstMasterIP)
+			for i, h := range state.MasterHostnames {
+				if i < len(clusterDefinition.Masters) {
+					clusterDefinition.Masters[i].Hostname = h
+				}
+			}
+			for i, h := range state.WorkerHostnames {
+				if i < len(clusterDefinition.Workers) {
+					clusterDefinition.Workers[i].Hostname = h
+				}
+			}
+		} else {
+			statePath, _ := getClusterStatePath(testFilePath)
+			logger.Info("TEST_CLUSTER_RESUME is set but cluster state not found or invalid: %v (tried %s)", loadErr, statePath)
+		}
+	}
+	if !resumeMode {
+		// Randomize hostnames to avoid SAN initiator collisions.
+		randomizeHostnames(clusterDefinition)
+	}
+	logger.Info("Cluster hostnames: masters=%v, workers=%v",
 		func() []string {
 			names := make([]string, len(clusterDefinition.Masters))
 			for i, m := range clusterDefinition.Masters {
@@ -206,14 +320,36 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("failed to get SSH private key path: %w", err)
 	}
 
+	useJumpHost := config.SSHJumpHost != ""
+	var jumpUser, jumpHost, jumpKeyPath string
+	if useJumpHost {
+		jumpUser = config.SSHJumpUser
+		if jumpUser == "" {
+			jumpUser = sshUser
+		}
+		jumpHost = config.SSHJumpHost
+		jumpKeyPath = config.SSHJumpKeyPath
+		if jumpKeyPath == "" {
+			jumpKeyPath = sshKeyPath
+		}
+		logger.Info("Using jump host %s@%s to connect to base cluster %s@%s", jumpUser, jumpHost, sshUser, sshHost)
+	}
+
 	logger.Step(2, "Connecting to base cluster %s@%s", sshUser, sshHost)
-	// Step 2: Connect to base cluster
-	baseClusterResources, err := ConnectToCluster(ctx, ConnectClusterOptions{
-		SSHUser:     sshUser,
-		SSHHost:     sshHost,
-		SSHKeyPath:  sshKeyPath,
-		UseJumpHost: false,
-	})
+	// Step 2: Connect to base cluster (kubeconfig written to test temp dir to avoid temp/cluster)
+	var kubeconfigDir string
+	if path, pathErr := getClusterStatePath(testFilePath); pathErr == nil {
+		kubeconfigDir = filepath.Dir(path)
+	}
+	baseConnectOpts := ConnectClusterOptions{SSHUser: sshUser, SSHHost: sshHost, SSHKeyPath: sshKeyPath, UseJumpHost: useJumpHost, KubeconfigOutputDir: kubeconfigDir}
+	if useJumpHost {
+		baseConnectOpts = ConnectClusterOptions{
+			SSHUser: jumpUser, SSHHost: jumpHost, SSHKeyPath: jumpKeyPath,
+			UseJumpHost: true, TargetUser: sshUser, TargetHost: sshHost, TargetKeyPath: sshKeyPath,
+			KubeconfigOutputDir: kubeconfigDir,
+		}
+	}
+	baseClusterResources, err := ConnectToCluster(ctx, baseConnectOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to base cluster: %w", err)
 	}
@@ -248,6 +384,57 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("failed to create namespace: %w", err)
 	}
 	logger.StepComplete(4, "Test namespace created")
+
+	if resumeMode {
+		// Resume path: cluster is already fully created and ready. Only connect to it and return resources.
+		// No GatherVMInfo, NodeGroup, AddNodes, EnableModules — assume "should create test cluster" already completed.
+		state, _ := loadClusterState(testFilePath)
+		namespace = state.Namespace
+		baseKubeconfig := baseClusterResources.Kubeconfig
+		baseKubeconfigPath := baseClusterResources.KubeconfigPath
+		baseTunnelInfo := baseClusterResources.TunnelInfo
+		vmResources := &VMResources{VMNames: state.VMNames, SetupVMName: state.SetupVMName}
+
+		if len(clusterDefinition.Masters) > 0 {
+			clusterDefinition.Masters[0].IPAddress = state.FirstMasterIP
+		}
+		firstMasterIP := state.FirstMasterIP
+		if firstMasterIP == "" {
+			baseClusterResources.SSHClient.Close()
+			baseClusterResources.TunnelInfo.StopFunc()
+			return nil, fmt.Errorf("resume: first_master_ip missing in cluster state")
+		}
+
+		logger.Step(1, "Resume: connecting to existing test cluster master %s", firstMasterIP)
+		testConnectOpts := ConnectClusterOptions{
+			SSHUser: sshUser, SSHHost: sshHost, SSHKeyPath: sshKeyPath,
+			UseJumpHost: true, TargetUser: config.VMSSHUser, TargetHost: firstMasterIP, TargetKeyPath: sshKeyPath,
+			KubeconfigOutputDir: kubeconfigDir,
+		}
+		if useJumpHost {
+			testConnectOpts = ConnectClusterOptions{
+				SSHUser: jumpUser, SSHHost: jumpHost, SSHKeyPath: jumpKeyPath,
+				UseJumpHost: true, TargetUser: config.VMSSHUser, TargetHost: firstMasterIP, TargetKeyPath: sshKeyPath,
+				KubeconfigOutputDir: kubeconfigDir,
+			}
+		}
+		testClusterResources, err := ConnectToCluster(ctx, testConnectOpts)
+		if err != nil {
+			baseClusterResources.SSHClient.Close()
+			baseClusterResources.TunnelInfo.StopFunc()
+			return nil, fmt.Errorf("resume: connect to test cluster: %w", err)
+		}
+		logger.StepComplete(1, "Resume: connected to test cluster")
+
+		testClusterResources.ClusterDefinition = clusterDefinition
+		testClusterResources.VMResources = vmResources
+		testClusterResources.BaseClusterClient = baseClusterResources.SSHClient
+		testClusterResources.BaseKubeconfig = baseKubeconfig
+		testClusterResources.BaseKubeconfigPath = baseKubeconfigPath
+		testClusterResources.BaseTunnelInfo = baseTunnelInfo
+		testClusterResources.SetupSSHClient = nil
+		return testClusterResources, nil
+	}
 
 	logger.Step(5, "Creating virtual machines (this may take up to %v)", config.VMCreationTimeout)
 	// Step 5: Create virtualization client and virtual machines
@@ -328,7 +515,7 @@ func CreateTestCluster(
 	logger.Step(6, "Gathering VM information")
 	// Step 6: Gather VM information
 	gatherCtx, cancel := context.WithTimeout(ctx, config.VMInfoTimeout)
-	err = GatherVMInfo(gatherCtx, virtClient, namespace, clusterDefinition, vmResources)
+	err = GatherVMInfo(gatherCtx, virtClient, namespace, clusterDefinition, vmResources, nil)
 	cancel()
 	if err != nil {
 		baseClusterResources.SSHClient.Close()
@@ -336,6 +523,26 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("failed to gather VM information: %w", err)
 	}
 	logger.StepComplete(6, "VM information gathered")
+
+	// Save resume state so a failed run can be continued with TEST_CLUSTER_RESUME=true
+	masterHostnames := make([]string, len(clusterDefinition.Masters))
+	for i, m := range clusterDefinition.Masters {
+		masterHostnames[i] = m.Hostname
+	}
+	workerHostnames := make([]string, len(clusterDefinition.Workers))
+	for i, w := range clusterDefinition.Workers {
+		workerHostnames[i] = w.Hostname
+	}
+	if err := saveClusterState(testFilePath, &resumeState{
+		FirstMasterIP:   clusterDefinition.Masters[0].IPAddress,
+		Namespace:       namespace,
+		VMNames:         vmNames,
+		SetupVMName:     vmResources.SetupVMName,
+		MasterHostnames: masterHostnames,
+		WorkerHostnames: workerHostnames,
+	}); err != nil {
+		logger.Warn("Failed to save resume state: %v", err)
+	}
 
 	// Step 7: Get setup node IP and wait for SSH readiness
 	setupNode, err := GetSetupNode(clusterDefinition)
@@ -363,11 +570,12 @@ func CreateTestCluster(
 	logger.StepComplete(7, "SSH is ready on setup node %s", setupNodeIP)
 
 	logger.Step(8, "Establishing SSH connection to setup node")
-	// Step 8: Establish SSH connection to setup node
-	setupSSHClient, err := ssh.NewClientWithJumpHost(
-		sshUser, sshHost, sshKeyPath, // jump host
-		config.VMSSHUser, setupNodeIP, sshKeyPath, // target host
-	)
+	// Step 8: Establish SSH connection to setup node (first hop: jump host or base cluster)
+	hopUser, hopHost, hopKey := sshUser, sshHost, sshKeyPath
+	if useJumpHost {
+		hopUser, hopHost, hopKey = jumpUser, jumpHost, jumpKeyPath
+	}
+	setupSSHClient, err := ssh.NewClientWithJumpHost(hopUser, hopHost, hopKey, config.VMSSHUser, setupNodeIP, sshKeyPath)
 	if err != nil {
 		baseClusterResources.SSHClient.Close()
 		baseClusterResources.TunnelInfo.StopFunc()
@@ -439,16 +647,20 @@ func CreateTestCluster(
 	baseTunnelInfo := baseClusterResources.TunnelInfo
 
 	logger.Step(14, "Connecting to test cluster master %s", firstMasterIP)
-	// Step 14: Connect to test cluster
-	testClusterResources, err := ConnectToCluster(ctx, ConnectClusterOptions{
-		SSHUser:       sshUser,
-		SSHHost:       sshHost,
-		SSHKeyPath:    sshKeyPath,
-		UseJumpHost:   true,
-		TargetUser:    config.VMSSHUser,
-		TargetHost:    firstMasterIP,
-		TargetKeyPath: sshKeyPath,
-	})
+	// Step 14: Connect to test cluster (first hop: jump host or base cluster)
+	testConnectOpts := ConnectClusterOptions{
+		SSHUser: sshUser, SSHHost: sshHost, SSHKeyPath: sshKeyPath,
+		UseJumpHost: true, TargetUser: config.VMSSHUser, TargetHost: firstMasterIP, TargetKeyPath: sshKeyPath,
+		KubeconfigOutputDir: kubeconfigDir,
+	}
+	if useJumpHost {
+		testConnectOpts = ConnectClusterOptions{
+			SSHUser: jumpUser, SSHHost: jumpHost, SSHKeyPath: jumpKeyPath,
+			UseJumpHost: true, TargetUser: config.VMSSHUser, TargetHost: firstMasterIP, TargetKeyPath: sshKeyPath,
+			KubeconfigOutputDir: kubeconfigDir,
+		}
+	}
+	testClusterResources, err := ConnectToCluster(ctx, testConnectOpts)
 	if err != nil {
 		setupSSHClient.Close()
 		baseClusterResources.SSHClient.Close()
@@ -699,6 +911,88 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 		return nil, fmt.Errorf("cluster health check failed after %d attempts: %w", maxHealthRetries, healthErr)
 	}
 	logger.StepComplete(3, "Cluster is healthy")
+
+	// When using jump host, the jump host is the base cluster (with Deckhouse virtualization).
+	// Get its kubeconfig so tests can create VirtualDisks and attach to VMs.
+	if config.SSHJumpHost != "" {
+		logger.Step(4, "Getting base cluster kubeconfig from jump host (for VirtualDisk)")
+		jumpUser := config.SSHJumpUser
+		if jumpUser == "" {
+			jumpUser = sshUser
+		}
+		jumpKeyPath := config.SSHJumpKeyPath
+		if jumpKeyPath == "" {
+			jumpKeyPath = sshKeyPath
+		}
+		baseSSHClient, connErr := ssh.NewClient(jumpUser, config.SSHJumpHost, jumpKeyPath)
+		if connErr != nil {
+			_ = ReleaseClusterLock(ctx, clusterResources.Kubeconfig)
+			if clusterResources.TunnelInfo != nil && clusterResources.TunnelInfo.StopFunc != nil {
+				clusterResources.TunnelInfo.StopFunc()
+			}
+			clusterResources.SSHClient.Close()
+			return nil, fmt.Errorf("failed to connect to base cluster (jump host %s): %w", config.SSHJumpHost, connErr)
+		}
+		baseTunnel, tunnelErr := ssh.EstablishSSHTunnel(context.Background(), baseSSHClient, "6445")
+		if tunnelErr != nil {
+			baseSSHClient.Close()
+			_ = ReleaseClusterLock(ctx, clusterResources.Kubeconfig)
+			if clusterResources.TunnelInfo != nil && clusterResources.TunnelInfo.StopFunc != nil {
+				clusterResources.TunnelInfo.StopFunc()
+			}
+			clusterResources.SSHClient.Close()
+			return nil, fmt.Errorf("failed to establish base cluster tunnel: %w", tunnelErr)
+		}
+		kubeconfigDir, dirErr := getTestTempDirFromStack()
+		if dirErr != nil {
+			baseTunnel.StopFunc()
+			baseSSHClient.Close()
+			_ = ReleaseClusterLock(ctx, clusterResources.Kubeconfig)
+			if clusterResources.TunnelInfo != nil && clusterResources.TunnelInfo.StopFunc != nil {
+				clusterResources.TunnelInfo.StopFunc()
+			}
+			clusterResources.SSHClient.Close()
+			return nil, fmt.Errorf("failed to get test temp dir for kubeconfig: %w", dirErr)
+		}
+		_, baseKubeconfigPath, kubeErr := internalcluster.GetKubeconfig(ctx, config.SSHJumpHost, jumpUser, jumpKeyPath, baseSSHClient, kubeconfigDir)
+		if kubeErr != nil {
+			baseTunnel.StopFunc()
+			baseSSHClient.Close()
+			_ = ReleaseClusterLock(ctx, clusterResources.Kubeconfig)
+			if clusterResources.TunnelInfo != nil && clusterResources.TunnelInfo.StopFunc != nil {
+				clusterResources.TunnelInfo.StopFunc()
+			}
+			clusterResources.SSHClient.Close()
+			return nil, fmt.Errorf("failed to get base cluster kubeconfig from jump host: %w", kubeErr)
+		}
+		if updateErr := internalcluster.UpdateKubeconfigPort(baseKubeconfigPath, baseTunnel.LocalPort); updateErr != nil {
+			baseTunnel.StopFunc()
+			baseSSHClient.Close()
+			_ = ReleaseClusterLock(ctx, clusterResources.Kubeconfig)
+			if clusterResources.TunnelInfo != nil && clusterResources.TunnelInfo.StopFunc != nil {
+				clusterResources.TunnelInfo.StopFunc()
+			}
+			clusterResources.SSHClient.Close()
+			return nil, fmt.Errorf("failed to update base cluster kubeconfig port: %w", updateErr)
+		}
+		baseKubeconfig, buildErr := clientcmd.BuildConfigFromFlags("", baseKubeconfigPath)
+		if buildErr != nil {
+			baseTunnel.StopFunc()
+			baseSSHClient.Close()
+			_ = ReleaseClusterLock(ctx, clusterResources.Kubeconfig)
+			if clusterResources.TunnelInfo != nil && clusterResources.TunnelInfo.StopFunc != nil {
+				clusterResources.TunnelInfo.StopFunc()
+			}
+			clusterResources.SSHClient.Close()
+			return nil, fmt.Errorf("failed to build base cluster rest config: %w", buildErr)
+		}
+		configureExtendedTimeouts(baseKubeconfig)
+		clusterResources.BaseClusterClient = baseSSHClient
+		clusterResources.BaseKubeconfig = baseKubeconfig
+		clusterResources.BaseKubeconfigPath = baseKubeconfigPath
+		clusterResources.BaseTunnelInfo = baseTunnel
+		logger.StepComplete(4, "Base cluster kubeconfig ready (VirtualDisk operations)")
+	}
 
 	logger.Success("Existing cluster is ready for use")
 	return clusterResources, nil
@@ -1457,8 +1751,12 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 
 	logger.Step(6, "Stopping base cluster tunnel and closing SSH client")
 	// Step 6: Stop base cluster tunnel and close base cluster SSH client
-	if baseTunnel != nil && baseTunnel.StopFunc != nil {
-		if err := baseTunnel.StopFunc(); err != nil {
+	baseTunnelToStop := baseTunnel
+	if baseTunnelToStop == nil && resources.BaseTunnelInfo != nil {
+		baseTunnelToStop = resources.BaseTunnelInfo // e.g. from UseExistingCluster with SSH_JUMP_HOST
+	}
+	if baseTunnelToStop != nil && baseTunnelToStop.StopFunc != nil {
+		if err := baseTunnelToStop.StopFunc(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to stop base cluster SSH tunnel: %w", err))
 			logger.Error("Failed to stop base cluster SSH tunnel: %v", err)
 		} else {
@@ -1739,6 +2037,9 @@ type ConnectClusterOptions struct {
 	TargetUser      string // Required when UseJumpHost is true
 	TargetHost      string // Required when UseJumpHost is true (IP or hostname)
 	TargetKeyPath   string // Optional: defaults to SSHKeyPath if empty
+
+	// KubeconfigOutputDir if set saves kubeconfig to this dir instead of temp/<caller-file-name>/ (avoids temp/cluster)
+	KubeconfigOutputDir string
 }
 
 // ConnectToCluster establishes SSH connection to a cluster (base or test),
@@ -1862,7 +2163,7 @@ func ConnectToCluster(ctx context.Context, opts ConnectClusterOptions) (*TestClu
 	}
 
 	// Step 3: Get kubeconfig from cluster master
-	_, kubeconfigPath, err := internalcluster.GetKubeconfig(ctx, masterHost, masterUser, opts.SSHKeyPath, sshClient)
+	_, kubeconfigPath, err := internalcluster.GetKubeconfig(ctx, masterHost, masterUser, opts.SSHKeyPath, sshClient, opts.KubeconfigOutputDir)
 	if err != nil {
 		tunnelInfo.StopFunc()
 		sshClient.Close()

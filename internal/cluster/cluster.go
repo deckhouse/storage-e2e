@@ -183,7 +183,8 @@ func expandPath(path string) (string, error) {
 // and returns a rest.Config that can be used with Kubernetes clients, along with the path to the kubeconfig file.
 // If sshClient is provided, it will be used instead of creating a new connection.
 // If sshClient is nil, a new connection will be created and closed automatically.
-func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClient ssh.SSHClient) (*rest.Config, string, error) {
+// If kubeconfigOutputDir is non-empty, the kubeconfig file is written there; otherwise temp/<caller-file-name>/ is used.
+func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClient ssh.SSHClient, kubeconfigOutputDir string) (*rest.Config, string, error) {
 	// Create SSH client if not provided
 	shouldClose := false
 	if sshClient == nil {
@@ -198,23 +199,24 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 		defer sshClient.Close()
 	}
 
-	// Get the test file name from the caller
-	_, callerFile, _, ok := runtime.Caller(1)
-	if !ok {
-		return nil, "", fmt.Errorf("failed to get caller file information")
+	var tempDir string
+	if kubeconfigOutputDir != "" {
+		tempDir = kubeconfigOutputDir
+	} else {
+		// Get the test file name from the caller (creates temp/cluster when called from pkg/cluster)
+		_, callerFile, _, ok := runtime.Caller(1)
+		if !ok {
+			return nil, "", fmt.Errorf("failed to get caller file information")
+		}
+		testFileName := strings.TrimSuffix(filepath.Base(callerFile), filepath.Ext(callerFile))
+		callerDir := filepath.Dir(callerFile)
+		repoRootPath := filepath.Join(callerDir, "..", "..")
+		repoRoot, err := filepath.Abs(repoRootPath)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to resolve repo root path: %w", err)
+		}
+		tempDir = filepath.Join(repoRoot, "temp", testFileName)
 	}
-	testFileName := strings.TrimSuffix(filepath.Base(callerFile), filepath.Ext(callerFile))
-
-	// Determine the temp directory path in the repo root
-	// callerFile is in tests/{test-dir}/, so we go up two levels to reach repo root
-	callerDir := filepath.Dir(callerFile)
-	repoRootPath := filepath.Join(callerDir, "..", "..")
-	// Resolve the .. parts to get absolute path
-	repoRoot, err := filepath.Abs(repoRootPath)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to resolve repo root path: %w", err)
-	}
-	tempDir := filepath.Join(repoRoot, "temp", testFileName)
 
 	// Create temp directory if it doesn't exist
 	if err := os.MkdirAll(tempDir, 0755); err != nil {

@@ -178,3 +178,63 @@ func WaitForVirtualDiskAttached(ctx context.Context, kubeconfig *rest.Config, na
 		}
 	}
 }
+
+// ListVirtualMachineNames returns names of VirtualMachines in the given namespace.
+// Used to pick a VM when attaching a VirtualDisk (e.g. in alwaysUseExisting mode).
+func ListVirtualMachineNames(ctx context.Context, kubeconfig *rest.Config, namespace string) ([]string, error) {
+	virtClient, err := virtualization.NewClient(ctx, kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create virtualization client: %w", err)
+	}
+	list, err := virtClient.VirtualMachines().List(ctx, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list VirtualMachines in %s: %w", namespace, err)
+	}
+	names := make([]string, 0, len(list))
+	for i := range list {
+		names = append(names, list[i].Name)
+	}
+	return names, nil
+}
+
+// GetVMIPFromBaseCluster returns the IP address of a VirtualMachine in the base cluster (namespace).
+// Used to SSH to the VM (e.g. cloud@ip) from the jump host to run lsblk on nested nodes.
+func GetVMIPFromBaseCluster(ctx context.Context, baseKubeconfig *rest.Config, namespace, vmName string) (string, error) {
+	virtClient, err := virtualization.NewClient(ctx, baseKubeconfig)
+	if err != nil {
+		return "", fmt.Errorf("create virtualization client: %w", err)
+	}
+	vm, err := virtClient.VirtualMachines().Get(ctx, namespace, vmName)
+	if err != nil {
+		return "", fmt.Errorf("get VM %s/%s: %w", namespace, vmName, err)
+	}
+	if vm.Status.IPAddress == "" {
+		return "", fmt.Errorf("VM %s/%s has no IP in status yet", namespace, vmName)
+	}
+	return vm.Status.IPAddress, nil
+}
+
+// DetachAndDeleteVirtualDisk deletes the VirtualMachineBlockDeviceAttachment and then the VirtualDisk.
+// Use this for cleanup after a test. Errors are logged but not returned for "not found" (idempotent).
+func DetachAndDeleteVirtualDisk(ctx context.Context, kubeconfig *rest.Config, namespace, attachmentName, diskName string) error {
+	virtClient, err := virtualization.NewClient(ctx, kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create virtualization client: %w", err)
+	}
+
+	if attachmentName != "" {
+		if err := virtClient.VirtualMachineBlockDeviceAttachments().Delete(ctx, namespace, attachmentName); err != nil {
+			logger.Warn("Failed to delete VirtualMachineBlockDeviceAttachment %s/%s: %v", namespace, attachmentName, err)
+		} else {
+			logger.Success("VirtualMachineBlockDeviceAttachment %s/%s deleted", namespace, attachmentName)
+		}
+	}
+	if diskName != "" {
+		if err := virtClient.VirtualDisks().Delete(ctx, namespace, diskName); err != nil {
+			logger.Warn("Failed to delete VirtualDisk %s/%s: %v", namespace, diskName, err)
+		} else {
+			logger.Success("VirtualDisk %s/%s deleted", namespace, diskName)
+		}
+	}
+	return nil
+}
