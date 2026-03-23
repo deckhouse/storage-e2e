@@ -18,7 +18,6 @@ package cluster
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -170,7 +169,7 @@ fi
 
 // PrepareBootstrapConfig prepares the bootstrap configuration file from a template.
 // It takes cluster definition and extracts VM IP addresses to calculate the internal network CIDR.
-// The function generates a config file and saves it to the temp/ directory.
+// The function generates a config file and saves it to /tmp/e2e/.
 // Returns the path to the generated config file.
 // Note: clusterDef must have IPAddress fields filled in for all VM nodes (via GatherVMInfo)
 func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition) (string, error) {
@@ -244,47 +243,32 @@ func PrepareBootstrapConfig(clusterDef *config.ClusterDefinition) (string, error
 		DevBranch:            devBranch,
 	}
 
-	// Get the test file name from the caller
-	_, callerFile, _, ok := runtime.Caller(1)
+	// Resolve repo root from this source file's location to find the template
+	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
-		return "", fmt.Errorf("failed to get caller file information")
+		return "", fmt.Errorf("failed to determine source file path")
 	}
-	testFileName := strings.TrimSuffix(filepath.Base(callerFile), filepath.Ext(callerFile))
-
-	// Determine the temp directory path in the repo root
-	// callerFile is in tests/{test-dir}/, so we go up two levels to reach repo root
-	callerDir := filepath.Dir(callerFile)
-	repoRootPath := filepath.Join(callerDir, "..", "..")
-	// Resolve the .. parts to get absolute path
-	repoRoot, err := filepath.Abs(repoRootPath)
+	repoRoot, err := filepath.Abs(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve repo root path: %w", err)
 	}
 
-	// Template file path
 	templatePath := filepath.Join(repoRoot, "files", "bootstrap", "config.yml.tpl")
-
-	// Read template file
 	templateContent, err := os.ReadFile(templatePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read template file %s: %w", templatePath, err)
 	}
 
-	// Parse template
 	tmpl, err := template.New("bootstrap-config").Parse(string(templateContent))
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	// Determine temp directory path - same pattern as GetKubeconfig
-	tempDir := filepath.Join(repoRoot, "temp", testFileName)
-
-	// Create temp directory if it doesn't exist
+	tempDir := config.E2ETempDir
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create temp directory %s: %w", tempDir, err)
+		return "", fmt.Errorf("failed to create directory %s: %w", tempDir, err)
 	}
 
-	// Output file path
 	outputPath := filepath.Join(tempDir, "config.yml")
 
 	// Create output file
@@ -498,9 +482,7 @@ func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *
 		return fmt.Errorf("failed to login to Docker registry %s: %w\nOutput: %s", registryHostname, err, output)
 	}
 
-	// Determine log file path: configPath is in temp/<test-name>/config.yml, so log goes to temp/<test-name>/bootstrap.log
-	configDir := filepath.Dir(configPath)
-	logFilePath := filepath.Join(configDir, "bootstrap.log")
+	logFilePath := filepath.Join(config.E2ETempDir, fmt.Sprintf("bootstrap-%s.log", time.Now().Format("2006-01-02_15-04-05")))
 	remoteLogPath := fmt.Sprintf("/tmp/bootstrap-%d.log", os.Getpid())    // Use unique name to avoid conflicts
 	agentSocketPath := fmt.Sprintf("/tmp/ssh-agent-%d.sock", os.Getpid()) // Unique agent socket path
 
@@ -581,11 +563,8 @@ echo "%s"
 	// Use sudo cat since the log file was created with sudo
 	logContent, logErr := sshClient.Exec(ctx, fmt.Sprintf("sudo cat %s 2>/dev/null || echo ''", remoteLogPath))
 
-	// Save log file locally
 	if logErr == nil && logContent != "" {
-		// Create local log file directory if it doesn't exist
-		if mkdirErr := os.MkdirAll(configDir, 0755); mkdirErr == nil {
-			// Write log content to local file
+		if mkdirErr := os.MkdirAll(config.E2ETempDir, 0755); mkdirErr == nil {
 			_ = os.WriteFile(logFilePath, []byte(logContent), 0644)
 		}
 	}
@@ -910,66 +889,6 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 	return nil
 }
 
-// GetSSHPrivateKeyPath returns the path to the SSH private key file.
-// If SSHPrivateKey is a file path, it returns the expanded path.
-// If SSHPrivateKey is a base64-encoded string, it decodes it, writes to a temporary file in temp/<test-name>/,
-// and returns that path.
-func GetSSHPrivateKeyPath() (string, error) {
-	// Check if it looks like a file path (contains path separators or starts with ~)
-	looksLikePath := strings.Contains(config.SSHPrivateKey, "/") || strings.HasPrefix(config.SSHPrivateKey, "~") || strings.Contains(config.SSHPrivateKey, "\\")
-
-	if !looksLikePath {
-		// Doesn't look like a path, try base64 decoding
-		decoded, err := base64.StdEncoding.DecodeString(config.SSHPrivateKey)
-		if err == nil && len(decoded) > 0 {
-			// Successfully decoded, write to temp file in temp/<test-name>/
-			// Get the test file name from the caller (same pattern as PrepareBootstrapConfig)
-			_, callerFile, _, ok := runtime.Caller(1)
-			if !ok {
-				return "", fmt.Errorf("failed to get caller file information")
-			}
-			testFileName := strings.TrimSuffix(filepath.Base(callerFile), filepath.Ext(callerFile))
-
-			// Determine the temp directory path in the repo root
-			callerDir := filepath.Dir(callerFile)
-			repoRootPath := filepath.Join(callerDir, "..", "..")
-			repoRoot, err := filepath.Abs(repoRootPath)
-			if err != nil {
-				return "", fmt.Errorf("failed to resolve repo root path: %w", err)
-			}
-
-			// Create temp directory if it doesn't exist
-			tempDir := filepath.Join(repoRoot, "temp", testFileName)
-			if err := os.MkdirAll(tempDir, 0755); err != nil {
-				return "", fmt.Errorf("failed to create temp directory %s: %w", tempDir, err)
-			}
-
-			// Create temp file in temp/<test-name>/
-			tmpFile, err := os.CreateTemp(tempDir, "ssh_private_key_*")
-			if err != nil {
-				return "", fmt.Errorf("failed to create temp file for private key: %w", err)
-			}
-			defer tmpFile.Close()
-
-			if _, err := tmpFile.Write(decoded); err != nil {
-				os.Remove(tmpFile.Name())
-				return "", fmt.Errorf("failed to write decoded private key to temp file: %w", err)
-			}
-
-			// Set permissions to 0600
-			if err := os.Chmod(tmpFile.Name(), 0600); err != nil {
-				os.Remove(tmpFile.Name())
-				return "", fmt.Errorf("failed to set permissions on temp private key file: %w", err)
-			}
-
-			return tmpFile.Name(), nil
-		}
-		// If decoding failed, fall through to treat as path (might be a relative path without /)
-	}
-
-	// Treat as file path
-	return expandPath(config.SSHPrivateKey)
-}
 
 // GetSSHPublicKeyContent returns the SSH public key content as a string.
 // If SSHPublicKey is a file path, it reads and returns the file content.

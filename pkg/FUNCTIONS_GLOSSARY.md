@@ -85,7 +85,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `BootstrapCluster(ctx, sshClient, clusterDef, configPath)` — Bootstraps a Kubernetes cluster via `dhctl bootstrap` in a Docker container on the setup node.
 - `AddNodesToCluster(ctx, kubeconfig, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath)` — Adds nodes to the cluster by running bootstrap scripts from secrets on each node via SSH.
 - `WaitForAllNodesReady(ctx, kubeconfig, clusterDef, timeout)` — Waits for all expected nodes (masters + workers) to become Ready in parallel.
-- `GetSSHPrivateKeyPath()` — Returns path to SSH private key. If base64-encoded, decodes and writes to temp file.
+
 - `GetSSHPublicKeyContent()` — Returns SSH public key content as string. Reads from file path or returns inline content.
 
 ## Kubernetes Client

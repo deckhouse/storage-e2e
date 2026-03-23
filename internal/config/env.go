@@ -33,6 +33,9 @@ const (
 	LogLevelWarn = "warn"
 	// LogLevelError indicates error log level
 	LogLevelError = "error"
+
+	// E2ETempDir is the directory for temporary e2e artifacts (kubeconfig, cluster-state, bootstrap config/log)
+	E2ETempDir = "/tmp/e2e"
 )
 
 var (
@@ -49,7 +52,7 @@ var (
 	SSHUser = os.Getenv("SSH_USER")
 	//SSHUserDefaultValue = "a.yakubov"
 
-	// Private key. Can be either path for a file or a base64 encoded string.
+	// Private key. Path to the private key file.
 	SSHPrivateKey             = os.Getenv("SSH_PRIVATE_KEY")
 	SSHPrivateKeyDefaultValue = "~/.ssh/id_rsa"
 
