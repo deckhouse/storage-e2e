@@ -94,6 +94,9 @@ func (c *DefaultStorageClassConfig) applyDefaults() {
 	if c.VGName == "" {
 		c.VGName = "vg-local"
 	}
+	if c.ThinPoolName == "" {
+		c.ThinPoolName = "thinpool"
+	}
 	if c.DiskSize == "" {
 		c.DiskSize = "20Gi"
 	}
