@@ -58,6 +58,8 @@ var extraCommanderValues map[string]interface{}
 // commanderResources stores Commander cluster resources for cleanup
 var commanderResources *CommanderClusterResources
 
+var clusterStatePath = filepath.Join(config.E2ETempDir, "cluster-state.json")
+
 // SetExtraCommanderValues sets additional values to be passed when creating a cluster via Commander.
 // These values are merged with COMMANDER_VALUES env var (extra values take precedence over env, but prefix is always set).
 // Call this before UseCommanderCluster() to customize cluster creation parameters.
@@ -105,52 +107,8 @@ type resumeState struct {
 	WorkerHostnames []string `json:"worker_hostnames"`
 }
 
-// getClusterStatePath returns temp/<test-file-name-without-ext>/cluster-state.json
-// (same dir as PrepareBootstrapConfig and cluster-state.json; used for both save and resume).
-func getClusterStatePath(testFilePath string) (string, error) {
-	callerDir := filepath.Dir(testFilePath)
-	repoRoot, err := filepath.Abs(filepath.Join(callerDir, "..", ".."))
-	if err != nil {
-		return "", err
-	}
-	testFileName := strings.TrimSuffix(filepath.Base(testFilePath), filepath.Ext(testFilePath))
-	return filepath.Join(repoRoot, "temp", testFileName, "cluster-state.json"), nil
-}
-
-// getTestTempDirFromStack returns temp/<test-file-name-without-ext>/ by walking the call stack
-// until a path containing "/tests/" is found. Used when testFilePath is not available (e.g. UseExistingCluster).
-func getTestTempDirFromStack() (string, error) {
-	for i := 1; i <= 20; i++ {
-		_, file, _, ok := runtime.Caller(i)
-		if !ok {
-			break
-		}
-		if !strings.Contains(filepath.ToSlash(file), "/tests/") {
-			continue
-		}
-		dir := filepath.Dir(file)
-		for filepath.Base(dir) != "tests" {
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
-		if filepath.Base(dir) != "tests" {
-			continue
-		}
-		repoRoot := filepath.Dir(dir)
-		testFileName := strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))
-		return filepath.Join(repoRoot, "temp", testFileName), nil
-	}
-	return "", fmt.Errorf("could not determine test temp dir from call stack")
-}
-
-func saveClusterState(testFilePath string, state *resumeState) error {
-	path, err := getClusterStatePath(testFilePath)
-	if err != nil {
-		return err
-	}
+func saveClusterState(state *resumeState) error {
+	path := clusterStatePath
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -161,11 +119,8 @@ func saveClusterState(testFilePath string, state *resumeState) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-func loadClusterState(testFilePath string) (*resumeState, error) {
-	path, err := getClusterStatePath(testFilePath)
-	if err != nil {
-		return nil, err
-	}
+func loadClusterState() (*resumeState, error) {
+	path := clusterStatePath
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -241,10 +196,9 @@ func CreateTestCluster(
 ) (*TestClusterResources, error) {
 	logger.Step(1, "Loading cluster configuration from %s", yamlConfigFilename)
 
-	// Find the test package directory and test file path by walking the call stack.
+	// Find the test package directory by walking the call stack.
 	// CreateTestCluster is called from CreateOrConnectToTestCluster in cluster.go, so Caller(1) is not the test file.
 	var testDir string
-	var testFilePath string
 	for skip := 1; skip <= 10; skip++ {
 		_, callerFile, _, ok := runtime.Caller(skip)
 		if !ok {
@@ -252,7 +206,6 @@ func CreateTestCluster(
 		}
 		if strings.Contains(filepath.ToSlash(callerFile), "/tests/") {
 			testDir = filepath.Dir(callerFile)
-			testFilePath = callerFile
 			break
 		}
 	}
@@ -273,7 +226,7 @@ func CreateTestCluster(
 
 	var resumeMode bool
 	if config.TestClusterResume == "true" || config.TestClusterResume == "True" {
-		state, loadErr := loadClusterState(testFilePath)
+		state, loadErr := loadClusterState()
 		if loadErr == nil {
 			resumeMode = true
 			logger.Info("Resume mode: restoring hostnames from saved state (first_master_ip=%s)", state.FirstMasterIP)
@@ -288,8 +241,7 @@ func CreateTestCluster(
 				}
 			}
 		} else {
-			statePath, _ := getClusterStatePath(testFilePath)
-			logger.Info("TEST_CLUSTER_RESUME is set but cluster state not found or invalid: %v (tried %s)", loadErr, statePath)
+			logger.Info("TEST_CLUSTER_RESUME is set but cluster state not found or invalid: %v (tried %s)", loadErr, clusterStatePath)
 		}
 	}
 	if !resumeMode {
@@ -315,7 +267,7 @@ func CreateTestCluster(
 	// Get SSH credentials from environment variables
 	sshHost := config.SSHHost
 	sshUser := config.SSHUser
-	sshKeyPath, err := GetSSHPrivateKeyPath()
+	sshKeyPath, err := expandPath(config.SSHPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SSH private key path: %w", err)
 	}
@@ -336,17 +288,13 @@ func CreateTestCluster(
 	}
 
 	logger.Step(2, "Connecting to base cluster %s@%s", sshUser, sshHost)
-	// Step 2: Connect to base cluster (kubeconfig written to test temp dir to avoid temp/cluster)
-	var kubeconfigDir string
-	if path, pathErr := getClusterStatePath(testFilePath); pathErr == nil {
-		kubeconfigDir = filepath.Dir(path)
-	}
-	baseConnectOpts := ConnectClusterOptions{SSHUser: sshUser, SSHHost: sshHost, SSHKeyPath: sshKeyPath, UseJumpHost: useJumpHost, KubeconfigOutputDir: kubeconfigDir}
+	// Step 2: Connect to base cluster
+	baseConnectOpts := ConnectClusterOptions{SSHUser: sshUser, SSHHost: sshHost, SSHKeyPath: sshKeyPath, UseJumpHost: useJumpHost, KubeconfigOutputDir: config.E2ETempDir}
 	if useJumpHost {
 		baseConnectOpts = ConnectClusterOptions{
 			SSHUser: jumpUser, SSHHost: jumpHost, SSHKeyPath: jumpKeyPath,
 			UseJumpHost: true, TargetUser: sshUser, TargetHost: sshHost, TargetKeyPath: sshKeyPath,
-			KubeconfigOutputDir: kubeconfigDir,
+			KubeconfigOutputDir: config.E2ETempDir,
 		}
 	}
 	baseClusterResources, err := ConnectToCluster(ctx, baseConnectOpts)
@@ -388,7 +336,7 @@ func CreateTestCluster(
 	if resumeMode {
 		// Resume path: cluster is already fully created and ready. Only connect to it and return resources.
 		// No GatherVMInfo, NodeGroup, AddNodes, EnableModules — assume "should create test cluster" already completed.
-		state, _ := loadClusterState(testFilePath)
+		state, _ := loadClusterState()
 		namespace = state.Namespace
 		baseKubeconfig := baseClusterResources.Kubeconfig
 		baseKubeconfigPath := baseClusterResources.KubeconfigPath
@@ -409,13 +357,13 @@ func CreateTestCluster(
 		testConnectOpts := ConnectClusterOptions{
 			SSHUser: sshUser, SSHHost: sshHost, SSHKeyPath: sshKeyPath,
 			UseJumpHost: true, TargetUser: config.VMSSHUser, TargetHost: firstMasterIP, TargetKeyPath: sshKeyPath,
-			KubeconfigOutputDir: kubeconfigDir,
+			KubeconfigOutputDir: config.E2ETempDir,
 		}
 		if useJumpHost {
 			testConnectOpts = ConnectClusterOptions{
 				SSHUser: jumpUser, SSHHost: jumpHost, SSHKeyPath: jumpKeyPath,
 				UseJumpHost: true, TargetUser: config.VMSSHUser, TargetHost: firstMasterIP, TargetKeyPath: sshKeyPath,
-				KubeconfigOutputDir: kubeconfigDir,
+				KubeconfigOutputDir: config.E2ETempDir,
 			}
 		}
 		testClusterResources, err := ConnectToCluster(ctx, testConnectOpts)
@@ -533,7 +481,7 @@ func CreateTestCluster(
 	for i, w := range clusterDefinition.Workers {
 		workerHostnames[i] = w.Hostname
 	}
-	if err := saveClusterState(testFilePath, &resumeState{
+	if err := saveClusterState(&resumeState{
 		FirstMasterIP:   clusterDefinition.Masters[0].IPAddress,
 		Namespace:       namespace,
 		VMNames:         vmNames,
@@ -640,6 +588,7 @@ func CreateTestCluster(
 		return nil, fmt.Errorf("failed to bootstrap cluster: %w", err)
 	}
 	logger.StepComplete(12, "Cluster bootstrapped successfully")
+	os.Remove(bootstrapConfig)
 
 	// Store base cluster kubeconfig (tunnel stays open for later use)
 	baseKubeconfig := baseClusterResources.Kubeconfig
@@ -651,13 +600,13 @@ func CreateTestCluster(
 	testConnectOpts := ConnectClusterOptions{
 		SSHUser: sshUser, SSHHost: sshHost, SSHKeyPath: sshKeyPath,
 		UseJumpHost: true, TargetUser: config.VMSSHUser, TargetHost: firstMasterIP, TargetKeyPath: sshKeyPath,
-		KubeconfigOutputDir: kubeconfigDir,
+		KubeconfigOutputDir: config.E2ETempDir,
 	}
 	if useJumpHost {
 		testConnectOpts = ConnectClusterOptions{
 			SSHUser: jumpUser, SSHHost: jumpHost, SSHKeyPath: jumpKeyPath,
 			UseJumpHost: true, TargetUser: config.VMSSHUser, TargetHost: firstMasterIP, TargetKeyPath: sshKeyPath,
-			KubeconfigOutputDir: kubeconfigDir,
+			KubeconfigOutputDir: config.E2ETempDir,
 		}
 	}
 	testClusterResources, err := ConnectToCluster(ctx, testConnectOpts)
@@ -806,7 +755,7 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 	// Get SSH credentials from environment variables
 	sshHost := config.SSHHost
 	sshUser := config.SSHUser
-	sshKeyPath, err := GetSSHPrivateKeyPath()
+	sshKeyPath, err := expandPath(config.SSHPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SSH private key path: %w", err)
 	}
@@ -943,18 +892,7 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 			clusterResources.SSHClient.Close()
 			return nil, fmt.Errorf("failed to establish base cluster tunnel: %w", tunnelErr)
 		}
-		kubeconfigDir, dirErr := getTestTempDirFromStack()
-		if dirErr != nil {
-			baseTunnel.StopFunc()
-			baseSSHClient.Close()
-			_ = ReleaseClusterLock(ctx, clusterResources.Kubeconfig)
-			if clusterResources.TunnelInfo != nil && clusterResources.TunnelInfo.StopFunc != nil {
-				clusterResources.TunnelInfo.StopFunc()
-			}
-			clusterResources.SSHClient.Close()
-			return nil, fmt.Errorf("failed to get test temp dir for kubeconfig: %w", dirErr)
-		}
-		_, baseKubeconfigPath, kubeErr := internalcluster.GetKubeconfig(ctx, config.SSHJumpHost, jumpUser, jumpKeyPath, baseSSHClient, kubeconfigDir)
+		_, baseKubeconfigPath, kubeErr := internalcluster.GetKubeconfig(ctx, config.SSHJumpHost, jumpUser, jumpKeyPath, baseSSHClient, config.E2ETempDir)
 		if kubeErr != nil {
 			baseTunnel.StopFunc()
 			baseSSHClient.Close()
@@ -1184,7 +1122,7 @@ func UseCommanderCluster(ctx context.Context) (*CommanderClusterResources, error
 
 	// Get kubeconfig via SSH - use connection_hosts.masters for target and jump host from env
 	// Commander doesn't provide kubeconfig via API, we always get it via SSH using sudo
-	sshKeyPath, keyErr := GetSSHPrivateKeyPath()
+	sshKeyPath, keyErr := expandPath(config.SSHPrivateKey)
 	if keyErr != nil {
 		return nil, fmt.Errorf("SSH key not available: %w", keyErr)
 	}
@@ -1476,35 +1414,6 @@ func buildCommanderValues(clusterName string) (map[string]interface{}, error) {
 	return values, nil
 }
 
-// saveCommanderKubeconfig saves the kubeconfig content to a temporary file
-func saveCommanderKubeconfig(clusterName, kubeconfigContent string) (string, error) {
-	// Determine the temp directory path
-	_, callerFile, _, ok := runtime.Caller(2)
-	if !ok {
-		return "", fmt.Errorf("failed to get caller file information")
-	}
-	testFileName := strings.TrimSuffix(filepath.Base(callerFile), filepath.Ext(callerFile))
-
-	callerDir := filepath.Dir(callerFile)
-	repoRootPath := filepath.Join(callerDir, "..", "..")
-	repoRoot, err := filepath.Abs(repoRootPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve repo root path: %w", err)
-	}
-
-	tempDir := filepath.Join(repoRoot, "temp", testFileName)
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create temp directory: %w", err)
-	}
-
-	kubeconfigPath := filepath.Join(tempDir, fmt.Sprintf("kubeconfig-%s.yaml", clusterName))
-	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfigContent), 0600); err != nil {
-		return "", fmt.Errorf("failed to write kubeconfig: %w", err)
-	}
-
-	return kubeconfigPath, nil
-}
-
 // CleanupCommanderCluster releases resources and optionally deletes the cluster from Commander.
 // If the cluster was created by us (CreatedByUs is true) and TEST_CLUSTER_CLEANUP is enabled,
 // the cluster will be deleted from Commander.
@@ -1773,6 +1682,14 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 		}
 	}
 
+	// Step 7: Clean up kubeconfig files from /tmp/e2e/
+	if resources.KubeconfigPath != "" {
+		os.Remove(resources.KubeconfigPath)
+	}
+	if resources.BaseKubeconfigPath != "" {
+		os.Remove(resources.BaseKubeconfigPath)
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("cleanup errors: %v", errs)
 	}
@@ -2038,7 +1955,7 @@ type ConnectClusterOptions struct {
 	TargetHost      string // Required when UseJumpHost is true (IP or hostname)
 	TargetKeyPath   string // Optional: defaults to SSHKeyPath if empty
 
-	// KubeconfigOutputDir if set saves kubeconfig to this dir instead of temp/<caller-file-name>/ (avoids temp/cluster)
+	// KubeconfigOutputDir if set saves kubeconfig to this dir instead of /tmp/e2e/
 	KubeconfigOutputDir string
 }
 
@@ -2314,13 +2231,9 @@ func OutputEnvironmentVariables() {
 		GinkgoWriter.Printf("      SSH_USER: %s\n", config.SSHUser)
 	}
 
-	// SSH_PRIVATE_KEY - show path (not content, could be base64)
+	// SSH_PRIVATE_KEY - show path
 	if config.SSHPrivateKey != "" {
-		if strings.Contains(config.SSHPrivateKey, "/") || strings.HasPrefix(config.SSHPrivateKey, "~") {
-			GinkgoWriter.Printf("      SSH_PRIVATE_KEY: %s\n", config.SSHPrivateKey)
-		} else {
-			GinkgoWriter.Printf("      SSH_PRIVATE_KEY: <base64 content>\n")
-		}
+		GinkgoWriter.Printf("      SSH_PRIVATE_KEY: %s\n", config.SSHPrivateKey)
 	} else {
 		GinkgoWriter.Printf("      SSH_PRIVATE_KEY: %s (default)\n", config.SSHPrivateKeyDefaultValue)
 	}

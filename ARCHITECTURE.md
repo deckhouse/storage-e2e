@@ -99,9 +99,6 @@ storage-e2e/
 │   ├── testkit_v2/
 │   └── images/
 │
-├── temp/                          # Temporary files (gitignored)
-│   └── cluster/                  # Cluster artifacts
-│
 ├── go.mod
 ├── go.sum
 ├── README.md                      # Main documentation

@@ -1,8 +1,6 @@
 module github.com/deckhouse/storage-e2e
 
-go 1.24.9
-
-toolchain go1.24.11
+go 1.26.0
 
 require (
 	github.com/deckhouse/deckhouse v1.74.0

@@ -27,7 +27,7 @@ Use this mode to run tests against a cluster that is already running (faster ite
    go test -timeout=240m -v ./tests/<your-test-name> -count=1
    ```
 
-Kubeconfig is written to `temp/<test-name>/` (e.g. `temp/sds_node_configurator_test/kubeconfig-<master-ip>.yml`). The framework acquires a cluster lock so only one test run uses the cluster at a time. If a previous run left the lock (crash, Ctrl+C), set `TEST_CLUSTER_FORCE_LOCK_RELEASE=true` for the next run (do not use if another test might be using the cluster).
+Kubeconfig is written to `/tmp/e2e/` (e.g. `/tmp/e2e/kubeconfig-<master-ip>.yml`). The framework acquires a cluster lock so only one test run uses the cluster at a time. If a previous run left the lock (crash, Ctrl+C), set `TEST_CLUSTER_FORCE_LOCK_RELEASE=true` for the next run (do not use if another test might be using the cluster).
 
 The `-count=1` flag prevents Go from using cached test results.
 Timeout `240m` is a global timeout for entire testkit. Adjust it on your needs.
@@ -85,7 +85,7 @@ See [pkg/FUNCTIONS_GLOSSARY.md](pkg/FUNCTIONS_GLOSSARY.md) for a full list of al
 
 ### SSH Configuration
 
-- `SSH_PRIVATE_KEY` -- Path to SSH private key file, or base64-encoded key content. Default: `~/.ssh/id_rsa`. If `SSH_AUTH_SOCK` is set, SSH agent keys are also tried as fallback
+- `SSH_PRIVATE_KEY` -- Path to SSH private key file. Default: `~/.ssh/id_rsa`. If `SSH_AUTH_SOCK` is set, SSH agent keys are also tried as fallback
 - `SSH_PUBLIC_KEY` -- Path to SSH public key file, or plain-text key content. Default: `~/.ssh/id_rsa.pub`
 - `SSH_PASSPHRASE` -- Passphrase for the SSH private key. Required for non-interactive mode with encrypted keys
 - `SSH_VM_USER` -- SSH user for connecting to VMs deployed inside the test cluster. Default: `cloud`
@@ -98,7 +98,7 @@ See [pkg/FUNCTIONS_GLOSSARY.md](pkg/FUNCTIONS_GLOSSARY.md) for a full list of al
 
 - `YAML_CONFIG_FILENAME` -- Filename of the cluster definition YAML. Default: `cluster_config.yml`
 - `TEST_CLUSTER_CLEANUP` -- Set to `true` to remove the test cluster after tests complete. Default: `false`
-- `TEST_CLUSTER_RESUME` -- Set to `true` to continue from a previous failed run (only for `alwaysCreateNew`). If the test failed in the middle of cluster creation, re-run with `TEST_CLUSTER_RESUME=true`; the framework will load saved state from `temp/<test-name>/cluster-state.json` (written after step 6), restore VM hostnames, and run the remaining steps (connect to first master, add nodes, enable modules). Requires that step 6 (VMs created, VM info gathered) completed before the failure.
+- `TEST_CLUSTER_RESUME` -- Set to `true` to continue from a previous failed run (only for `alwaysCreateNew`). If the test failed in the middle of cluster creation, re-run with `TEST_CLUSTER_RESUME=true`; the framework will load saved state from `/tmp/e2e/cluster-state.json` (written after step 6), restore VM hostnames, and run the remaining steps (connect to first master, add nodes, enable modules). Requires that step 6 (VMs created, VM info gathered) completed before the failure.
 - `TEST_CLUSTER_NAMESPACE` -- Namespace for DKP cluster deployment. Default: `e2e-test-cluster`
 - `KUBE_CONFIG_PATH` -- Path to a kubeconfig file. Used as fallback if SSH-based kubeconfig retrieval fails
 - `KUBE_INSECURE_SKIP_TLS_VERIFY` -- Set to `true` to skip TLS certificate verification for the Kubernetes API (e.g. self-signed certs or tunnel to 127.0.0.1). Default: not set (verify TLS)

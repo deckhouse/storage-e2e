@@ -1,0 +1,784 @@
+main: Pulling from sys/deckhouse-oss/install
+4f4fb700ef54: Pulling fs layer
+37760dd2b802: Pulling fs layer
+1c15fac9bd53: Pulling fs layer
+8d38caeb584c: Pulling fs layer
+95b25a5559c2: Pulling fs layer
+1fd05b2b0b82: Pulling fs layer
+f86ee2fceb92: Pulling fs layer
+d28685a42cbe: Pulling fs layer
+8d38caeb584c: Waiting
+95b25a5559c2: Waiting
+1fd05b2b0b82: Waiting
+f86ee2fceb92: Waiting
+d28685a42cbe: Waiting
+4f4fb700ef54: Verifying Checksum
+4f4fb700ef54: Download complete
+1c15fac9bd53: Verifying Checksum
+1c15fac9bd53: Download complete
+4f4fb700ef54: Pull complete
+37760dd2b802: Verifying Checksum
+37760dd2b802: Download complete
+95b25a5559c2: Verifying Checksum
+95b25a5559c2: Download complete
+37760dd2b802: Pull complete
+f86ee2fceb92: Verifying Checksum
+f86ee2fceb92: Download complete
+1c15fac9bd53: Pull complete
+d28685a42cbe: Download complete
+8d38caeb584c: Verifying Checksum
+8d38caeb584c: Download complete
+8d38caeb584c: Pull complete
+95b25a5559c2: Pull complete
+1fd05b2b0b82: Verifying Checksum
+1fd05b2b0b82: Download complete
+1fd05b2b0b82: Pull complete
+f86ee2fceb92: Pull complete
+d28685a42cbe: Pull complete
+Digest: sha256:47e49debdf7c78ec818f82c87b2e70d4c3a9e27b86861e0e1701a59e4f9c9836
+Status: Downloaded newer image for dev-registry.deckhouse.io/sys/deckhouse-oss/install:main
+Debug log file: /tmp/dhctl/bootstrap-20260217072007.log
+┌ Get SSH client
+│ 🎉 Succeeded!
+└ Get SSH client (0.04 seconds)
+
+State cache directory: /tmp/dhctl/3a04ff27424225d5cb94565816be0989785d21017e93b098c81974947d36c334
+========================================================================================
+ _____             _     _                                ______                _ _____
+(____ \           | |   | |                              / _____)              | (_____)
+ _   \ \ ____ ____| |  _| | _   ___  _   _  ___  ____   | /      ____ ____   _ | |  _
+| |   | / _  ) ___) | / ) || \ / _ \| | | |/___)/ _  )  | |     / _  |  _ \ / || | | |
+| |__/ ( (/ ( (___| |< (| | | | |_| | |_| |___ ( (/ /   | \____( ( | | | | ( (_| |_| |_
+|_____/ \____)____)_| \_)_| |_|\___/ \____(___/ \____)   \______)_||_|_| |_|\____(_____)
+========================================================================================
+┌ ⛵ ~ Bootstrap: Cluster UUID
+│ Generated cluster UUID: 7181a43b-a730-4233-b9fe-1f0c7e0881e1
+└ ⛵ ~ Bootstrap: Cluster UUID (0.00 seconds)
+
+┌ 🎈 ~ Common: Global preflight checks
+│ ┌ Checking PublicDomainTemplate is correctly
+│ │ 🎉 Succeeded!
+│ └ Checking PublicDomainTemplate is correctly (0.00 seconds)
+│ 
+│ ┌ Checking registry credentials are correct
+│ │ 🎉 Succeeded!
+│ └ Checking registry credentials are correct (0.10 seconds)
+│ 
+│ ┌ Checking dhctl edition is the same
+│ │ 🎉 Succeeded!
+│ └ Checking dhctl edition is the same (0.08 seconds)
+│ 
+│ ┌ Checking CIDRs are not intersects
+│ │ 🎉 Succeeded!
+│ └ Checking CIDRs are not intersects (0.00 seconds)
+└ 🎈 ~ Common: Global preflight checks (0.18 seconds)
+
+┌ 🎈 ~ Common: Preflight checks for static-cluster
+│ ┌ Checking IP of StaticInstances are unique
+│ │ 🎉 Succeeded!
+│ └ Checking IP of StaticInstances are unique (0.00 seconds)
+│ 
+│ ┌ Checking only one --ssh-host parameter used
+│ │ 🎉 Succeeded!
+│ └ Checking only one --ssh-host parameter used (0.00 seconds)
+│ 
+│ ┌ Checking ssh credential is correctly
+│ │ Try to connect to 10.211.1.25 host
+│ │ 🎉 Succeeded!
+│ └ Checking ssh credential is correctly (0.41 seconds)
+│ 
+│ ┌ Checking ssh tunnel between installer and node is possible
+│ │ 🎉 Succeeded!
+│ └ Checking ssh tunnel between installer and node is possible (0.14 seconds)
+│ 
+│ ┌ Checking SSHCredentials for StaticInstances are correct.
+│ │ 🎉 Succeeded!
+│ └ Checking SSHCredentials for StaticInstances are correct. (0.00 seconds)
+│ 
+│ ┌ Checking deckhouse user and group aren't present on node
+│ │ 🎉 Succeeded!
+│ └ Checking deckhouse user and group aren't present on node (0.02 seconds)
+│ 
+│ ┌ Checking that node meets system requirements
+│ │ 🎉 Succeeded!
+│ └ Checking that node meets system requirements (0.01 seconds)
+│ 
+│ ┌ Checking python and required modules are installed
+│ │ Module "urllib.request" is installed
+│ │ Module "urllib.error" is installed
+│ │ Module "configparser" is installed
+│ │ Module "http.server" is installed
+│ │ Module "http.server" is installed
+│ │ 🎉 Succeeded!
+│ └ Checking python and required modules are installed (0.19 seconds)
+│ 
+│ ┌ Checking registry access through proxy
+│ │ 🎉 Succeeded!
+│ └ Checking registry access through proxy (0.00 seconds)
+│ 
+│ ┌ Checking required ports availability
+│ │ 🎉 Succeeded!
+│ └ Checking required ports availability (0.64 seconds)
+│ 
+│ ┌ Checking resolve the localhost domain
+│ │ 🎉 Succeeded!
+│ └ Checking resolve the localhost domain (0.02 seconds)
+│ 
+│ ┌ Checking sudo is allowed for user
+│ │ 🎉 Succeeded!
+│ └ Checking sudo is allowed for user (0.02 seconds)
+│ 
+│ ┌ Checking server time drift has a acceptable value
+│ │ 🎉 Succeeded!
+│ └ Checking server time drift has a acceptable value (0.00 seconds)
+│ 
+│ ┌ Checking CIDRs are not intersects
+│ │ 🎉 Succeeded!
+│ └ Checking CIDRs are not intersects (0.00 seconds)
+└ 🎈 ~ Common: Preflight checks for static-cluster (1.45 seconds)
+
+┌ ⛵ ~ Bootstrap: Wait for SSH on Master become Ready
+│ ┌ Connection string
+│ │ ssh cloud@10.211.1.25
+│ └ Connection string (0.00 seconds)
+│ 
+│ ┌ Waiting for SSH connection
+│ │ Try to connect to host: 10.211.1.25
+│ │ Successfully connected to host: 10.211.1.25
+│ │ 🎉 Succeeded!
+│ └ Waiting for SSH connection (0.00 seconds)
+└ ⛵ ~ Bootstrap: Wait for SSH on Master become Ready (1.01 seconds)
+
+┌ ⛵ ~ Bootstrap: Check user's shell
+└ ⛵ ~ Bootstrap: Check user's shell (0.00 seconds)
+
+┌ ⛵ ~ Bootstrap: Check DHCTL Dependencies
+│ Checking 'sudo' dependency
+│ 🎉 Dependency 'sudo' is available
+│ Checking 'rm' dependency
+│ 🎉 Dependency 'rm' is available
+│ Checking 'tar' dependency
+│ 🎉 Dependency 'tar' is available
+│ Checking 'mount' dependency
+│ 🎉 Dependency 'mount' is available
+│ Checking 'awk' dependency
+│ 🎉 Dependency 'awk' is available
+│ Checking 'grep' dependency
+│ 🎉 Dependency 'grep' is available
+│ Checking 'cut' dependency
+│ 🎉 Dependency 'cut' is available
+│ Checking 'sed' dependency
+│ 🎉 Dependency 'sed' is available
+│ Checking 'mkdir' dependency
+│ 🎉 Dependency 'mkdir' is available
+│ Checking 'cp' dependency
+│ 🎉 Dependency 'cp' is available
+│ Checking 'join' dependency
+│ 🎉 Dependency 'join' is available
+│ Checking 'cat' dependency
+│ 🎉 Dependency 'cat' is available
+│ Checking 'ps' dependency
+│ 🎉 Dependency 'ps' is available
+│ Checking 'kill' dependency
+│ 🎉 Dependency 'kill' is available
+│ All dependencies are present.
+└ ⛵ ~ Bootstrap: Check DHCTL Dependencies (0.01 seconds)
+
+┌ ⛵ ~ Bootstrap: Preparing bootstrap
+│ ┌ Render bootstrap templates
+│ │ From "/deckhouse/candi/bashible/bootstrap" to "/bootstrap"
+│ │ From "/deckhouse/candi/cloud-providers/bashible/common-steps" to "/bootstrap"
+│ │ Templates directory "/deckhouse/candi/cloud-providers/bashible/common-steps" does not exist. Skipping...
+│ └ Render bootstrap templates (0.00 seconds)
+│ 
+│ ┌ Prepare /opt/deckhouse
+│ │ 🎉 Succeeded!
+│ └ Prepare /opt/deckhouse (0.02 seconds)
+│ 
+│ ┌ Prepare /opt/deckhouse/tmp
+│ │ 🎉 Succeeded!
+│ └ Prepare /opt/deckhouse/tmp (0.02 seconds)
+│ 
+│ ┌ Prepare /opt/deckhouse/first-control-plane-bashible-ran
+│ │ 🎉 Succeeded!
+│ └ Prepare /opt/deckhouse/first-control-plane-bashible-ran (0.02 seconds)
+└ ⛵ ~ Bootstrap: Preparing bootstrap (0.06 seconds)
+
+┌ Checking bashible already ran
+│ ┌ ⛵ ~ Bootstrap: Checking bashible is ready
+│ └ ⛵ ~ Bootstrap: Checking bashible is ready (0.02 seconds)
+│ 
+│ 🎉 Succeeded!
+└ Checking bashible already ran (0.02 seconds)
+
+┌ ⛵ ~ Bootstrap: Prepare Bashible
+│ Templates directory "/deckhouse/candi/cloud-providers/bashible/common-steps/all" does not exist. Skipping...
+│ Templates directory "/deckhouse/candi/cloud-providers/bashible/common-steps/cluster-bootstrap" does not exist. Skipping...
+│ Create "/tmp/candi-bundle-2013706232/var/lib/bashible/kubernetes_data_device_path"
+│ From "/deckhouse/candi/control-plane-kubeadm/v1beta4" to "/var/lib/bashible/kubeadm/v1beta4"
+│ From "/deckhouse/candi/control-plane-kubeadm/v1beta4/patches" to "/var/lib/bashible/kubeadm/v1beta4/patches"
+└ ⛵ ~ Bootstrap: Prepare Bashible (0.02 seconds)
+
+┌ ⛵ ~ Bootstrap: Initial bootstrap
+│ ┌ Execute 01-network-scripts.sh
+│ │ 🎉 Succeeded!
+│ └ Execute 01-network-scripts.sh (0.03 seconds)
+│ 
+│ ┌ Execute 02-base-pkgs.sh
+│ │ Received request with digest "sha256:d8036ef190730bdbb3976540d2e8a0a2d3f75f6d62761bdbcdfddb8bb4712c35" for repo __default__ from       ↵
+│ │ client 127.0.0.1:44334
+│ │ Digest "sha256:d8036ef190730bdbb3976540d2e8a0a2d3f75f6d62761bdbcdfddb8bb4712c35" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:d8036ef190730bdbb3976540d2e8a0a2d3f75f6d62761bdbcdfddb8bb4712c35" sent successfully
+│ │ Received request with digest "sha256:638e42d817ef78f861aa0c5ae36fed31041062f5c477f4f3e2ccfa1c1bc706b1" for repo __default__ from       ↵
+│ │ client 127.0.0.1:44348
+│ │ Digest "sha256:638e42d817ef78f861aa0c5ae36fed31041062f5c477f4f3e2ccfa1c1bc706b1" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:638e42d817ef78f861aa0c5ae36fed31041062f5c477f4f3e2ccfa1c1bc706b1" sent successfully
+│ │ Received request with digest "sha256:7f78f672f23be9425ae3298d251b04fdada91e1bfe35c9b54b13954fe79bcfa9" for repo __default__ from       ↵
+│ │ client 127.0.0.1:44362
+│ │ Digest "sha256:7f78f672f23be9425ae3298d251b04fdada91e1bfe35c9b54b13954fe79bcfa9" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:7f78f672f23be9425ae3298d251b04fdada91e1bfe35c9b54b13954fe79bcfa9" sent successfully
+│ │ 🎉 Succeeded!
+│ └ Execute 02-base-pkgs.sh (0.77 seconds)
+└ ⛵ ~ Bootstrap: Initial bootstrap (0.81 seconds)
+
+┌ Execute bundle
+│ ┌ ⛵ ~ Bootstrap: Cleanup previous bashible run if need
+│ │ Bashible instance not found. Start it!
+│ └ ⛵ ~ Bootstrap: Cleanup previous bashible run if need (0.03 seconds)
+│ 
+│ ┌ Run step 000_add_node_users.sh
+│ └ Run step 000_add_node_users.sh (0.04 seconds)
+│ 
+│ ┌ Run step 000_check_containerd_v2_support.sh
+│ └ Run step 000_check_containerd_v2_support.sh (0.05 seconds)
+│ 
+│ ┌ Run step 000_discover_node_ip.sh
+│ └ Run step 000_discover_node_ip.sh (0.04 seconds)
+│ 
+│ ┌ Run step 000_fix_hostpath_mountpoints.sh
+│ └ Run step 000_fix_hostpath_mountpoints.sh (0.03 seconds)
+│ 
+│ ┌ Run step 000_fix_udev_xgrp_error.sh
+│ └ Run step 000_fix_udev_xgrp_error.sh (0.03 seconds)
+│ 
+│ ┌ Run step 000_preflight_checks.sh
+│ └ Run step 000_preflight_checks.sh (0.03 seconds)
+│ 
+│ ┌ Run step 000_set_flag_rolling_update.sh
+│ └ Run step 000_set_flag_rolling_update.sh (0.03 seconds)
+│ 
+│ ┌ Run step 001_configure_kubernetes_api_proxy.sh
+│ └ Run step 001_configure_kubernetes_api_proxy.sh (0.05 seconds)
+│ 
+│ ┌ Run step 001_waiting_approval_annotations.sh
+│ └ Run step 001_waiting_approval_annotations.sh (0.03 seconds)
+│ 
+│ ┌ Run step 003_add_system_proxy.sh
+│ └ Run step 003_add_system_proxy.sh (0.03 seconds)
+│ 
+│ ┌ Run step 003_apt_timeout.sh
+│ └ Run step 003_apt_timeout.sh (0.03 seconds)
+│ 
+│ ┌ Run step 003_create_static_node_cleanup_script.sh
+│ └ Run step 003_create_static_node_cleanup_script.sh (0.04 seconds)
+│ 
+│ ┌ Run step 003_disable_unattended_upgrades.sh
+│ └ Run step 003_disable_unattended_upgrades.sh (3.87 seconds)
+│ 
+│ ┌ Run step 003_install_ca_certificates.sh
+│ │ Received request with digest "sha256:bc2cc634bfa2fdede81d2ec797f7d7fd861a4dd5fd6ee8b5f01992d6aabb10ee" for repo __default__ from       ↵
+│ │ client 127.0.0.1:44374
+│ │ Digest "sha256:bc2cc634bfa2fdede81d2ec797f7d7fd861a4dd5fd6ee8b5f01992d6aabb10ee" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:bc2cc634bfa2fdede81d2ec797f7d7fd861a4dd5fd6ee8b5f01992d6aabb10ee" sent successfully
+│ └ Run step 003_install_ca_certificates.sh (1.61 seconds)
+│ 
+│ ┌ Run step 003_install_ms_ca_certificates.sh
+│ └ Run step 003_install_ms_ca_certificates.sh (0.04 seconds)
+│ 
+│ ┌ Run step 003_migrate_containerd_to_cgroupfs.sh
+│ └ Run step 003_migrate_containerd_to_cgroupfs.sh (0.03 seconds)
+│ 
+│ ┌ Run step 004_add_deckhouse_paths.sh
+│ └ Run step 004_add_deckhouse_paths.sh (0.06 seconds)
+│ 
+│ ┌ Run step 004_configure_swap.sh
+│ └ Run step 004_configure_swap.sh (0.04 seconds)
+│ 
+│ ┌ Run step 004_create_deckhouse_user.sh
+│ └ Run step 004_create_deckhouse_user.sh (0.06 seconds)
+│ 
+│ ┌ Run step 004_disable_rp_filter.sh
+│ └ Run step 004_disable_rp_filter.sh (0.07 seconds)
+│ 
+│ ┌ Run step 004_install_mandatory_packages.sh
+│ │ Received request with digest "sha256:46ad1ee38bf1dc6c175a0e632999b504b4a8433362cf31e4676a27a2f5ec7bc0" for repo __default__ from       ↵
+│ │ client 127.0.0.1:44376
+│ │ Digest "sha256:46ad1ee38bf1dc6c175a0e632999b504b4a8433362cf31e4676a27a2f5ec7bc0" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:46ad1ee38bf1dc6c175a0e632999b504b4a8433362cf31e4676a27a2f5ec7bc0" sent successfully
+│ │ Received request with digest "sha256:6757ef15a0ede37e316002f31ab80633b4c16cb7e657b36d332fde631f37487d" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54306
+│ │ Digest "sha256:6757ef15a0ede37e316002f31ab80633b4c16cb7e657b36d332fde631f37487d" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:6757ef15a0ede37e316002f31ab80633b4c16cb7e657b36d332fde631f37487d" sent successfully
+│ │ Received request with digest "sha256:aa666ea6794cedfc82565ef3cc467963229467282217627448768c34e08b1a86" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54310
+│ │ Digest "sha256:aa666ea6794cedfc82565ef3cc467963229467282217627448768c34e08b1a86" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:aa666ea6794cedfc82565ef3cc467963229467282217627448768c34e08b1a86" sent successfully
+│ │ Received request with digest "sha256:905f3c8e13d0f3c85bf9fba5a1b82c8a771bf6dbf9cfdcf42c4d5d94837951a5" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54324
+│ │ Digest "sha256:905f3c8e13d0f3c85bf9fba5a1b82c8a771bf6dbf9cfdcf42c4d5d94837951a5" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:905f3c8e13d0f3c85bf9fba5a1b82c8a771bf6dbf9cfdcf42c4d5d94837951a5" sent successfully
+│ │ Received request with digest "sha256:905ee1c3a2a9e7ed55d93414edbd5979825f9cabdef5133d4a0e17bff9cdd38f" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54328
+│ │ Digest "sha256:905ee1c3a2a9e7ed55d93414edbd5979825f9cabdef5133d4a0e17bff9cdd38f" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:905ee1c3a2a9e7ed55d93414edbd5979825f9cabdef5133d4a0e17bff9cdd38f" sent successfully
+│ │ Received request with digest "sha256:70e688056526984c2d89d34330fb5f7dd87f5c49ebc486b424a9f18f3d11c52d" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54330
+│ │ Digest "sha256:70e688056526984c2d89d34330fb5f7dd87f5c49ebc486b424a9f18f3d11c52d" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:70e688056526984c2d89d34330fb5f7dd87f5c49ebc486b424a9f18f3d11c52d" sent successfully
+│ │ Received request with digest "sha256:f44b07601ba39e7d6cb7ac56b22d1bc07b949a5ff08a269db07a6198bfafd44d" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54340
+│ │ Digest "sha256:f44b07601ba39e7d6cb7ac56b22d1bc07b949a5ff08a269db07a6198bfafd44d" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:f44b07601ba39e7d6cb7ac56b22d1bc07b949a5ff08a269db07a6198bfafd44d" sent successfully
+│ │ Received request with digest "sha256:1af81dbef4474b3e1ffba180912f8a42c155475f6629704263ae12327d781017" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54344
+│ │ Digest "sha256:1af81dbef4474b3e1ffba180912f8a42c155475f6629704263ae12327d781017" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:1af81dbef4474b3e1ffba180912f8a42c155475f6629704263ae12327d781017" sent successfully
+│ │ Received request with digest "sha256:e0ca003c2d39a464e43e578746e790e6be2d365f75501b29ae7db0bf9b098207" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54354
+│ │ Digest "sha256:e0ca003c2d39a464e43e578746e790e6be2d365f75501b29ae7db0bf9b098207" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:e0ca003c2d39a464e43e578746e790e6be2d365f75501b29ae7db0bf9b098207" sent successfully
+│ └ Run step 004_install_mandatory_packages.sh (3.18 seconds)
+│ 
+│ ┌ Run step 005_check_hostname.sh
+│ └ Run step 005_check_hostname.sh (0.03 seconds)
+│ 
+│ ┌ Run step 005_check_xfstype.sh
+│ └ Run step 005_check_xfstype.sh (0.03 seconds)
+│ 
+│ ┌ Run step 005_disable_firewalld.sh
+│ └ Run step 005_disable_firewalld.sh (0.03 seconds)
+│ 
+│ ┌ Run step 005_install_mandatory_selinux_policies.sh
+│ └ Run step 005_install_mandatory_selinux_policies.sh (0.03 seconds)
+│ 
+│ ┌ Run step 005_integrate_kubernetes_data_device.sh
+│ └ Run step 005_integrate_kubernetes_data_device.sh (0.03 seconds)
+│ 
+│ ┌ Run step 005_load_mandatory_modules.sh
+│ └ Run step 005_load_mandatory_modules.sh (0.07 seconds)
+│ 
+│ ┌ Run step 005_resize_partitions.sh
+│ └ Run step 005_resize_partitions.sh (0.03 seconds)
+│ 
+│ ┌ Run step 006_check_gpu.sh
+│ └ Run step 006_check_gpu.sh (0.03 seconds)
+│ 
+│ ┌ Run step 006_disable_manage_iprules.sh
+│ └ Run step 006_disable_manage_iprules.sh (0.12 seconds)
+│ 
+│ ┌ Run step 007_fetch_registry_packages.sh
+│ │ Received request with digest "sha256:4e8319ce2680263b55a8a818fcbbc914f2b0f033e1f0236289e95f78a773083c" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54366
+│ │ Digest "sha256:4e8319ce2680263b55a8a818fcbbc914f2b0f033e1f0236289e95f78a773083c" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:4e8319ce2680263b55a8a818fcbbc914f2b0f033e1f0236289e95f78a773083c" sent successfully
+│ │ Received request with digest "sha256:a7218942a2bd5e2a5ac2b6869af60220c9be9f26592f863d6a8789b8dbd21205" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54368
+│ │ Digest "sha256:a7218942a2bd5e2a5ac2b6869af60220c9be9f26592f863d6a8789b8dbd21205" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:a7218942a2bd5e2a5ac2b6869af60220c9be9f26592f863d6a8789b8dbd21205" sent successfully
+│ │ Received request with digest "sha256:d31667a7ef80d27782dfc2422462fc039c58870dd3aba58ef1a63140901f5ecc" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54384
+│ │ Digest "sha256:d31667a7ef80d27782dfc2422462fc039c58870dd3aba58ef1a63140901f5ecc" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:d31667a7ef80d27782dfc2422462fc039c58870dd3aba58ef1a63140901f5ecc" sent successfully
+│ │ Received request with digest "sha256:5e97a03655aa82ddf0f082c83074f1b07e0b9475e23bad570be9a3a51a4024cc" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54388
+│ │ Digest "sha256:5e97a03655aa82ddf0f082c83074f1b07e0b9475e23bad570be9a3a51a4024cc" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:5e97a03655aa82ddf0f082c83074f1b07e0b9475e23bad570be9a3a51a4024cc" sent successfully
+│ │ Received request with digest "sha256:14ac3242cf90ea9c4a1fc91052aba4319db713842d26de20e560d15378a22279" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54392
+│ │ Digest "sha256:14ac3242cf90ea9c4a1fc91052aba4319db713842d26de20e560d15378a22279" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:14ac3242cf90ea9c4a1fc91052aba4319db713842d26de20e560d15378a22279" sent successfully
+│ │ Received request with digest "sha256:00d66344b871b756b33c55b4eac82e31e90ac8c504b52a0f5e074c24a53eb98d" for repo __default__ from       ↵
+│ │ client 127.0.0.1:54402
+│ │ Digest "sha256:00d66344b871b756b33c55b4eac82e31e90ac8c504b52a0f5e074c24a53eb98d" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:00d66344b871b756b33c55b4eac82e31e90ac8c504b52a0f5e074c24a53eb98d" sent successfully
+│ │ Received request with digest "sha256:ae592ef0f89e6b805fd4edbb6f2587f25c43450a41fd3cff9df4b9487ca66716" for repo __default__ from       ↵
+│ │ client 127.0.0.1:60096
+│ │ Digest "sha256:ae592ef0f89e6b805fd4edbb6f2587f25c43450a41fd3cff9df4b9487ca66716" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:ae592ef0f89e6b805fd4edbb6f2587f25c43450a41fd3cff9df4b9487ca66716" sent successfully
+│ │ Received request with digest "sha256:5c4ce455aac11dce0e9849a8e8dd55de22b0c4db53f4be0facab29fa1f0e0f71" for repo __default__ from       ↵
+│ │ client 127.0.0.1:60102
+│ │ Digest "sha256:5c4ce455aac11dce0e9849a8e8dd55de22b0c4db53f4be0facab29fa1f0e0f71" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:5c4ce455aac11dce0e9849a8e8dd55de22b0c4db53f4be0facab29fa1f0e0f71" sent successfully
+│ │ Received request with digest "sha256:49624ecbb8a2b6ef510f7456796c418956c649903201790edd6c0322bcd5ca86" for repo __default__ from       ↵
+│ │ client 127.0.0.1:60110
+│ │ Digest "sha256:49624ecbb8a2b6ef510f7456796c418956c649903201790edd6c0322bcd5ca86" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:49624ecbb8a2b6ef510f7456796c418956c649903201790edd6c0322bcd5ca86" sent successfully
+│ └ Run step 007_fetch_registry_packages.sh (8.31 seconds)
+│ 
+│ ┌ Run step 011_disable_floppy_drive.sh
+│ └ Run step 011_disable_floppy_drive.sh (0.04 seconds)
+│ 
+│ ┌ Run step 012_security.sh
+│ └ Run step 012_security.sh (0.04 seconds)
+│ 
+│ ┌ Run step 015_remove_kubeadm.sh
+│ └ Run step 015_remove_kubeadm.sh (0.03 seconds)
+│ 
+│ ┌ Run step 030_configure_containerd_registry.sh
+│ └ Run step 030_configure_containerd_registry.sh (0.05 seconds)
+│ 
+│ ┌ Run step 031_install_containerd.sh
+│ └ Run step 031_install_containerd.sh (2.22 seconds)
+│ 
+│ ┌ Run step 032_configure_containerd.sh
+│ └ Run step 032_configure_containerd.sh (0.09 seconds)
+│ 
+│ ┌ Run step 033_restart_containerd_if_needed.sh
+│ └ Run step 033_restart_containerd_if_needed.sh (0.21 seconds)
+│ 
+│ ┌ Run step 034_ctr_import_local_images.sh
+│ └ Run step 034_ctr_import_local_images.sh (1.07 seconds)
+│ 
+│ ┌ Run step 035_install_kubeadm.sh
+│ │ Received request with digest "sha256:d4116d9c504f4fed982c8e4af17ba51e88ae81d6c747147fecb1227fb63559ec" for repo __default__ from       ↵
+│ │ client 127.0.0.1:60124
+│ │ Digest "sha256:d4116d9c504f4fed982c8e4af17ba51e88ae81d6c747147fecb1227fb63559ec" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:d4116d9c504f4fed982c8e4af17ba51e88ae81d6c747147fecb1227fb63559ec" sent successfully
+│ └ Run step 035_install_kubeadm.sh (4.11 seconds)
+│ 
+│ ┌ Run step 041_configure_sysctl_tuner.sh
+│ └ Run step 041_configure_sysctl_tuner.sh (0.50 seconds)
+│ 
+│ ┌ Run step 050_reset_control_plane_on_configuration_change.sh
+│ └ Run step 050_reset_control_plane_on_configuration_change.sh (0.04 seconds)
+│ 
+│ ┌ Run step 051_pull_and_configure_kubernetes_api_proxy.sh
+│ └ Run step 051_pull_and_configure_kubernetes_api_proxy.sh (0.04 seconds)
+│ 
+│ ┌ Run step 059_create_kubernetes_dirs.sh
+│ └ Run step 059_create_kubernetes_dirs.sh (0.04 seconds)
+│ 
+│ ┌ Run step 060_bootstrap_kubernetes_pki.sh
+│ └ Run step 060_bootstrap_kubernetes_pki.sh (0.27 seconds)
+│ 
+│ ┌ Run step 060_install_kubernetes_ca.sh
+│ └ Run step 060_install_kubernetes_ca.sh (0.04 seconds)
+│ 
+│ ┌ Run step 061_generate_bootstrap_kubeconfig_for_kubelet.sh
+│ └ Run step 061_generate_bootstrap_kubeconfig_for_kubelet.sh (0.03 seconds)
+│ 
+│ ┌ Run step 062_generate_kubeconfig_for_kubelet.sh
+│ └ Run step 062_generate_kubeconfig_for_kubelet.sh (0.11 seconds)
+│ 
+│ ┌ Run step 062_install_kubelet_and_his_friends.sh
+│ └ Run step 062_install_kubelet_and_his_friends.sh (2.80 seconds)
+│ 
+│ ┌ Run step 063_install_kubelet_forker.sh
+│ └ Run step 063_install_kubelet_forker.sh (0.05 seconds)
+│ 
+│ ┌ Run step 063_make_cni_plugins_executable_from_all_users.sh
+│ └ Run step 063_make_cni_plugins_executable_from_all_users.sh (0.03 seconds)
+│ 
+│ ┌ Run step 064_configure_kubelet.sh
+│ └ Run step 064_configure_kubelet.sh (0.15 seconds)
+│ 
+│ ┌ Run step 065_configure_kubelet_conf_to_api_proxy.sh
+│ └ Run step 065_configure_kubelet_conf_to_api_proxy.sh (0.03 seconds)
+│ 
+│ ┌ Run step 066_fix_permission_on_cni_files.sh
+│ └ Run step 066_fix_permission_on_cni_files.sh (0.03 seconds)
+│ 
+│ ┌ Run step 068_configure_kubelet_systemd_unit.sh
+│ └ Run step 068_configure_kubelet_systemd_unit.sh (0.47 seconds)
+│ 
+│ ┌ Run step 069_check_hostname_uniqueness.sh
+│ └ Run step 069_check_hostname_uniqueness.sh (0.04 seconds)
+│ 
+│ ┌ Run step 069_start_kubelet.sh
+│ └ Run step 069_start_kubelet.sh (1.47 seconds)
+│ 
+│ ┌ Run step 070_install_control_plane.sh
+│ └ Run step 070_install_control_plane.sh (22.02 seconds)
+│ 
+│ ┌ Run step 070_start_sysctl_tuner.sh
+│ └ Run step 070_start_sysctl_tuner.sh (0.04 seconds)
+│ 
+│ ┌ Run step 071_init_registry_secrets.sh
+│ └ Run step 071_init_registry_secrets.sh (0.30 seconds)
+│ 
+│ ┌ Run step 075_install_systemctl_power_commands_wrapper.sh
+│ │ Received request with digest "sha256:c327c2599ac5d5a40e6b5e8a6d5cb6f19484e9f4ec174199ab5020eb3f6282cd" for repo __default__ from       ↵
+│ │ client 127.0.0.1:42514
+│ │ Digest "sha256:c327c2599ac5d5a40e6b5e8a6d5cb6f19484e9f4ec174199ab5020eb3f6282cd" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:c327c2599ac5d5a40e6b5e8a6d5cb6f19484e9f4ec174199ab5020eb3f6282cd" sent successfully
+│ └ Run step 075_install_systemctl_power_commands_wrapper.sh (0.37 seconds)
+│ 
+│ ┌ Run step 076_install_d8_shutdown_inhibitor.sh
+│ │ Received request with digest "sha256:fb9a5fdcff0512a00126f18b7b13891795eef2369702aa32f36d8f22520999cb" for repo __default__ from       ↵
+│ │ client 127.0.0.1:42522
+│ │ Digest "sha256:fb9a5fdcff0512a00126f18b7b13891795eef2369702aa32f36d8f22520999cb" not found in local cache, trying to fetch package     ↵
+│ │ from registry
+│ │ Package for digest "sha256:fb9a5fdcff0512a00126f18b7b13891795eef2369702aa32f36d8f22520999cb" sent successfully
+│ └ Run step 076_install_d8_shutdown_inhibitor.sh (2.05 seconds)
+│ 
+│ ┌ Run step 080_setup_timer_to_run_bashible.sh
+│ └ Run step 080_setup_timer_to_run_bashible.sh (0.58 seconds)
+│ 
+│ ┌ Run step 083_disable_rsyslog_for_kubelet.sh
+│ └ Run step 083_disable_rsyslog_for_kubelet.sh (0.07 seconds)
+│ 
+│ ┌ Run step 089_manually_unmount_old_csi_mounts_after_kubernetes_1_24.sh
+│ └ Run step 089_manually_unmount_old_csi_mounts_after_kubernetes_1_24.sh (0.04 seconds)
+│ 
+│ ┌ Run step 091_check_containerd_conf.d.sh
+│ └ Run step 091_check_containerd_conf.d.sh (0.03 seconds)
+│ 
+│ ┌ Run step 091_set_virtualization_nesting_level_label.sh
+│ └ Run step 091_set_virtualization_nesting_level_label.sh (0.03 seconds)
+│ 
+│ ┌ Run step 091_set_virtualization_type.sh
+│ └ Run step 091_set_virtualization_type.sh (0.03 seconds)
+│ 
+│ ┌ Run step 092_set_cgroup_type.sh
+│ └ Run step 092_set_cgroup_type.sh (0.04 seconds)
+│ 
+│ ┌ Run step 095_check_reboot_annotation.sh
+│ └ Run step 095_check_reboot_annotation.sh (0.11 seconds)
+│ 
+│ ┌ Run step 098_cleanup.sh
+│ └ Run step 098_cleanup.sh (0.06 seconds)
+│ 
+│ ┌ Run step 098_cleanup_after_cluster_bootstrap.sh
+│ └ Run step 098_cleanup_after_cluster_bootstrap.sh (0.06 seconds)
+│ 
+│ ┌ Run step 098_configure_auditd.sh
+│ └ Run step 098_configure_auditd.sh (0.05 seconds)
+│ 
+│ ┌ Run step 098_set_permissions.sh
+│ └ Run step 098_set_permissions.sh (0.09 seconds)
+│ 
+│ ┌ Run step 098_upd_tfadm.sh
+│ └ Run step 098_upd_tfadm.sh (0.03 seconds)
+│ 
+│ ┌ Run step 098_update_node_annotations.sh
+│ └ Run step 098_update_node_annotations.sh (0.17 seconds)
+│ 
+│ ┌ Run step 098_update_node_labels.sh
+│ └ Run step 098_update_node_labels.sh (0.23 seconds)
+│ 
+│ ┌ Run step 099_reboot.sh
+│ └ Run step 099_reboot.sh (0.11 seconds)
+│ 
+│ 🎉 Succeeded!
+└ Execute bundle (58.70 seconds)
+
+┌ 🎈 ~ Common: Connect to Kubernetes API
+│ ┌ Waiting for SSH connection
+│ │ Try to connect to host: 10.211.1.25
+│ │ Successfully connected to host: 10.211.1.25
+│ │ 🎉 Succeeded!
+│ └ Waiting for SSH connection (0.00 seconds)
+│ 
+│ ┌ Get Kubernetes API client
+│ │ ┌ Starting kube proxy
+│ │ │ Using host 10.211.1.25
+│ │ │ 🎉 Succeeded!
+│ │ └ Starting kube proxy (0.06 seconds)
+│ │ 
+│ │ Proxy started on port 22322
+│ │ 🎉 Succeeded!
+│ └ Get Kubernetes API client (0.06 seconds)
+│ 
+│ ┌ Waiting for Kubernetes API to become Ready
+│ │ 🎉 Succeeded!
+│ └ Waiting for Kubernetes API to become Ready (0.01 seconds)
+└ 🎈 ~ Common: Connect to Kubernetes API (1.13 seconds)
+
+┌ ⛵ ~ Bootstrap: Install Deckhouse
+│ ┌ Get deckhouse manifest
+│ │ 🎉 Succeeded!
+│ └ Get deckhouse manifest (0.00 seconds)
+│ 
+│ ┌ Create Manifests
+│ │ Manifest for Namespace "d8-system"
+│ │ Already exists. Skip!
+│ │ Manifest for Admin ClusterRole "cluster-admin"
+│ │ Already exists. Skip!
+│ │ Manifest for ClusterRoleBinding "deckhouse"
+│ │ Manifest for ServiceAccount "deckhouse"
+│ │ Manifest for ConfigMap "install-data"
+│ │ Manifest for Secret "deckhouse-registry"
+│ │ Manifest for Secret "d8-cluster-configuration"
+│ │ Manifest for Secret "d8-static-cluster-configuration"
+│ │ Manifest for ConfigMap "d8-cluster-uuid"
+│ │ Manifest for Service "kube-dns"
+│ │ Manifest for ConfigMap "deckhouse-bootstrap-lock"
+│ │ Manifest for Deployment "deckhouse"
+│ │ Manifest for ModuleConfig "deckhouse"
+│ │ Waiting for creating ModuleConfig CRD...
+│ │ Manifest for ModuleConfig "deckhouse"
+│ │ Waiting for creating ModuleConfig CRD...
+│ │ Manifest for ModuleConfig "deckhouse"
+│ │ Waiting for creating ModuleConfig CRD...
+│ │ Manifest for ModuleConfig "deckhouse"
+│ │ Waiting for creating ModuleConfig CRD...
+│ │ Manifest for ModuleConfig "deckhouse"
+│ │ Waiting for creating ModuleConfig CRD...
+│ │ Manifest for ModuleConfig "deckhouse"
+│ │ Waiting for creating ModuleConfig CRD...
+│ │ Manifest for ModuleConfig "deckhouse"
+│ │ Waiting for creating ModuleConfig CRD...
+│ │ Manifest for ModuleConfig "deckhouse"
+│ │ Waiting for creating ModuleConfig CRD...
+│ │ Manifest for ModuleConfig "deckhouse"
+│ │ Waiting for creating ModuleConfig CRD...
+│ │ Manifest for ModuleConfig "global"
+│ │ Manifest for ModuleConfig "user-authn"
+│ │ Manifest for ModuleConfig "cni-cilium"
+│ └ Create Manifests (40.23 seconds)
+│ 
+│ ┌ Unlock Deckhouse controller queue
+│ │ 🎉 Succeeded!
+│ └ Unlock Deckhouse controller queue (0.00 seconds)
+│ 
+│ ┌ Waiting for Deckhouse to become Ready
+│ │ Deckhouse pod found: deckhouse-cf9746876-t42br (Running)
+│ │ Running pod found! Checking logs...
+│ │ Request failed. Probably pod was restarted during installation.
+│ │ Deckhouse pod found: deckhouse-7f8466798f-8q6fh (Running)
+│ │ Running pod found! Checking logs...
+│ │ 	Module "cni-cilium" run successfully
+│ │ 	Module "local-path-provisioner" run successfully
+│ │ 	Module "registry" run successfully
+│ │ 	Module "control-plane-manager" run successfully
+│ │ 	Module "kube-dns" run successfully
+│ │ 	Module "deckhouse" run successfully
+│ │ 	Module "registry" run successfully
+│ │ 🎉 Deckhouse pod is Ready!
+│ └ Waiting for Deckhouse to become Ready (154.02 seconds)
+│ 
+│ ┌ Waiting for Registry to become Ready
+│ │ 🎉 Succeeded!
+│ └ Waiting for Registry to become Ready (0.01 seconds)
+└ ⛵ ~ Bootstrap: Install Deckhouse (194.27 seconds)
+
+┌ Waiting for Node master-1-0geqa to become Ready
+│ 🎉 Succeeded!
+└ Waiting for Node master-1-0geqa to become Ready (0.00 seconds)
+
+┌ Control-plane manager pods readiness
+│ ️⛱️️ Attempt #1 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ ️⛱️️ Attempt #2 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ ️⛱️️ Attempt #3 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ ️⛱️️ Attempt #4 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ ️⛱️️ Attempt #5 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Control plane is not ready
+│ 
+│ 
+│ ️⛱️️ Attempt #6 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Control plane is not ready
+│ 
+│ 
+│ ️⛱️️ Attempt #7 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Control plane is not ready
+│ 
+│ 
+│ ️⛱️️ Attempt #8 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Control plane is not ready
+│ 
+│ 
+│ ️⛱️️ Attempt #9 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ ️⛱️️ Attempt #10 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ ️⛱️️ Attempt #11 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ ️⛱️️ Attempt #12 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ ️⛱️️ Attempt #13 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ ️⛱️️ Attempt #14 of 50 |
+│ 	Control-plane manager pods readiness check attempt, retry in 10s"
+│ 	Status: Pods Ready 0 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | NotReady
+│ 
+│ Pods Ready 1 of 1
+│ * d8-control-plane-manager-qgjhs (master-1-0geqa) | Ready
+│ 
+│ 🎉 Succeeded!
+└ Control-plane manager pods readiness (204.66 seconds)
+
+❗ ~ 
+The installation has completed successfully.
+To finalize bootstraping please add at least one non-master node or remove taints from your master node (if a single node installation).
+
+┌ ⛵ ~ Bootstrap: Run post bootstrap actions
+│ ┌ Set release channel to deckhouse module config
+│ │ 🎉 Succeeded!
+│ └ Set release channel to deckhouse module config (0.04 seconds)
+└ ⛵ ~ Bootstrap: Run post bootstrap actions (0.04 seconds)
+
+┌ ⛵ ~ Bootstrap: Clear cache
+│ ❗ ~ Next run of "dhctl bootstrap" will create a new Kubernetes cluster.
+└ ⛵ ~ Bootstrap: Clear cache (0.00 seconds)
+
+🎉 Deckhouse cluster was created successfully!
