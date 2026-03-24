@@ -289,6 +289,43 @@ func CreateDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 		return "", fmt.Errorf("StorageClass %s did not appear: %w", cfg.StorageClassName, err)
 	}
 
-	logger.Success("Default StorageClass %s created via LocalStorageClass with VG %s on %d nodes", cfg.StorageClassName, cfg.VGName, len(nodes))
+	logger.Success("StorageClass %s created via LocalStorageClass with VG %s on %d nodes", cfg.StorageClassName, cfg.VGName, len(nodes))
 	return cfg.StorageClassName, nil
+}
+
+// EnsureDefaultStorageClass is an idempotent wrapper around CreateDefaultStorageClass.
+// It first checks whether the requested StorageClass already exists. If it does,
+// it skips creation. In either case it configures the StorageClass as the cluster
+// default via the "global" ModuleConfig (spec.settings.storageClass).
+//
+// Returns the StorageClass name and any error encountered.
+func EnsureDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg DefaultStorageClassConfig) (string, error) {
+	cfg.applyDefaults()
+
+	if cfg.StorageClassName == "" {
+		return "", fmt.Errorf("StorageClassName is required")
+	}
+
+	exists, err := kubernetes.StorageClassExists(ctx, kubeconfig, cfg.StorageClassName)
+	if err != nil {
+		return "", fmt.Errorf("failed to check StorageClass %s: %w", cfg.StorageClassName, err)
+	}
+
+	var scName string
+	if exists {
+		logger.Info("StorageClass %s already exists, skipping creation", cfg.StorageClassName)
+		scName = cfg.StorageClassName
+	} else {
+		scName, err = CreateDefaultStorageClass(ctx, kubeconfig, cfg)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	if err := kubernetes.SetGlobalDefaultStorageClass(ctx, kubeconfig, scName); err != nil {
+		return "", fmt.Errorf("failed to set %s as default in global ModuleConfig: %w", scName, err)
+	}
+	logger.Success("StorageClass %s is set as the cluster default", scName)
+
+	return scName, nil
 }
