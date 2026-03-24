@@ -33,7 +33,7 @@ type DefaultStorageClassConfig struct {
 	// StorageClassName is the name for the created LocalStorageClass (and the resulting StorageClass).
 	StorageClassName string
 
-	// LVMType is "Thick" or "Thin" (default: "Thick").
+	// LVMType is "Thick" or "Thin" (default: "Thin").
 	LVMType string
 
 	// ThinPoolName is required when LVMType is "Thin".
@@ -89,7 +89,7 @@ type DefaultStorageClassConfig struct {
 
 func (c *DefaultStorageClassConfig) applyDefaults() {
 	if c.LVMType == "" {
-		c.LVMType = "Thick"
+		c.LVMType = "Thin"
 	}
 	if c.VGName == "" {
 		c.VGName = "vg-local"
