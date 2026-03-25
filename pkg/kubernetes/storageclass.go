@@ -106,7 +106,7 @@ func GetDefaultStorageClassName(ctx context.Context, kubeconfig *rest.Config) (s
 	return "", nil
 }
 
-// GetStorageClass returns the StorageClass with the given name, or nil if it does not exist.
+// GetStorageClass returns the StorageClass with the given name, or (nil, nil) if it does not exist.
 func GetStorageClass(ctx context.Context, kubeconfig *rest.Config, name string) (*storagev1.StorageClass, error) {
 	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -116,7 +116,7 @@ func GetStorageClass(ctx context.Context, kubeconfig *rest.Config, name string) 
 	sc, err := clientset.StorageV1().StorageClasses().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("StorageClass %s not found", name)
+			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get StorageClass %s: %w", name, err)
 	}
