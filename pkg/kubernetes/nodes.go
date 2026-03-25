@@ -31,8 +31,8 @@ import (
 
 const nodeLabelPollInterval = 10 * time.Second
 
-// GetAllNodeNames returns the names of all nodes in the cluster.
-func GetAllNodeNames(ctx context.Context, kubeconfig *rest.Config) ([]string, error) {
+// GetNodes returns the names of all nodes in the cluster.
+func GetNodes(ctx context.Context, kubeconfig *rest.Config) ([]corev1.Node, error) {
 	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create clientset: %w", err)
@@ -43,37 +43,27 @@ func GetAllNodeNames(ctx context.Context, kubeconfig *rest.Config) ([]string, er
 		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	names := make([]string, 0, len(nodeList.Items))
-	for _, node := range nodeList.Items {
-		names = append(names, node.Name)
-	}
-
-	logger.Debug("Found %d nodes", len(names))
-	return names, nil
+	logger.Debug("Found %d nodes", len(nodeList.Items))
+	return nodeList.Items, nil
 }
 
-// GetWorkerNodeNames returns the names of all worker nodes in the cluster.
+// GetWorkerNodes returns all worker nodes in the cluster.
 // A worker node is any node that does NOT have the "node-role.kubernetes.io/control-plane" label.
-func GetWorkerNodeNames(ctx context.Context, kubeconfig *rest.Config) ([]string, error) {
-	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
+func GetWorkerNodes(ctx context.Context, kubeconfig *rest.Config) ([]corev1.Node, error) {
+	allNodes, err := GetNodes(ctx, kubeconfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset: %w", err)
+		return nil, err
 	}
 
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list nodes: %w", err)
-	}
-
-	var workers []string
-	for _, node := range nodes.Items {
+	var workers []corev1.Node
+	for _, node := range allNodes {
 		if _, isMaster := node.Labels["node-role.kubernetes.io/control-plane"]; isMaster {
 			continue
 		}
 		if _, isMaster := node.Labels["node-role.kubernetes.io/master"]; isMaster {
 			continue
 		}
-		workers = append(workers, node.Name)
+		workers = append(workers, node)
 	}
 
 	logger.Debug("Found %d worker nodes", len(workers))
@@ -136,20 +126,30 @@ func LabelNodes(ctx context.Context, kubeconfig *rest.Config, nodeNames []string
 	return nil
 }
 
-// NodeHasUnschedulableTaint checks whether a node has NoSchedule or NoExecute taints
-// that would prevent DaemonSet pods from scheduling.
-func NodeHasUnschedulableTaint(ctx context.Context, kubeconfig *rest.Config, nodeName string) (bool, error) {
+// GetNodeTaints returns the taints of the named node.
+func GetNodeTaints(ctx context.Context, kubeconfig *rest.Config, nodeName string) ([]corev1.Taint, error) {
 	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
-		return false, fmt.Errorf("failed to create clientset: %w", err)
+		return nil, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
 	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
-		return false, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
 	}
 
-	for _, taint := range node.Spec.Taints {
+	return node.Spec.Taints, nil
+}
+
+// IsNodeCordoned checks whether a node has NoSchedule or NoExecute taints
+// that would prevent DaemonSet pods from scheduling.
+func IsNodeCordoned(ctx context.Context, kubeconfig *rest.Config, nodeName string) (bool, error) {
+	taints, err := GetNodeTaints(ctx, kubeconfig, nodeName)
+	if err != nil {
+		return false, err
+	}
+
+	for _, taint := range taints {
 		if taint.Effect == corev1.TaintEffectNoSchedule || taint.Effect == corev1.TaintEffectNoExecute {
 			logger.Debug("Node %s has taint %s=%s:%s", nodeName, taint.Key, taint.Value, taint.Effect)
 			return true, nil

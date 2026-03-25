@@ -124,15 +124,13 @@ func WaitForLocalStorageClassCreated(ctx context.Context, kubeconfig *rest.Confi
 		return fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	deadline := time.Now().Add(timeout)
-	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for LocalStorageClass %s to be Created", name)
-		}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
 		obj, err := dynamicClient.Resource(LocalStorageClassGVR).Get(ctx, name, metav1.GetOptions{})
 		if err == nil {
 			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
@@ -143,6 +141,10 @@ func WaitForLocalStorageClassCreated(ctx context.Context, kubeconfig *rest.Confi
 			logger.Debug("LocalStorageClass %s phase: %s, waiting...", name, phase)
 		}
 
-		time.Sleep(5 * time.Second)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for LocalStorageClass %s to be Created: %w", name, ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }

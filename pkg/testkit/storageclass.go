@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 
@@ -84,7 +85,6 @@ type DefaultStorageClassConfig struct {
 
 	// StorageClassWaitTimeout is how long to wait for the resulting StorageClass to appear (default: 2m).
 	StorageClassWaitTimeout time.Duration
-
 }
 
 func (c *DefaultStorageClassConfig) applyDefaults() {
@@ -139,17 +139,21 @@ func CreateDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 	// 1. Resolve node list.
 	nodes := cfg.NodeNames
 	if len(nodes) == 0 {
+		var nodeObjs []corev1.Node
 		var err error
 		if cfg.IncludeMasters {
-			nodes, err = kubernetes.GetAllNodeNames(ctx, kubeconfig)
+			nodeObjs, err = kubernetes.GetNodes(ctx, kubeconfig)
 			if err != nil {
 				return "", fmt.Errorf("failed to get all nodes: %w", err)
 			}
 		} else {
-			nodes, err = kubernetes.GetWorkerNodeNames(ctx, kubeconfig)
+			nodeObjs, err = kubernetes.GetWorkerNodes(ctx, kubeconfig)
 			if err != nil {
 				return "", fmt.Errorf("failed to get worker nodes: %w", err)
 			}
+		}
+		for _, n := range nodeObjs {
+			nodes = append(nodes, n.Name)
 		}
 	}
 	if len(nodes) == 0 {
@@ -220,10 +224,10 @@ func CreateDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 	var lvgNames []string
 	for _, nodeName := range nodes {
 		if cfg.IncludeMasters {
-			tainted, err := kubernetes.NodeHasUnschedulableTaint(ctx, kubeconfig, nodeName)
+			cordoned, err := kubernetes.IsNodeCordoned(ctx, kubeconfig, nodeName)
 			if err != nil {
 				logger.Warn("Could not check taints for node %s: %v, attempting LVG setup anyway", nodeName, err)
-			} else if tainted {
+			} else if cordoned {
 				logger.Warn("Skipping LVG setup on node %s: has NoSchedule/NoExecute taint (agent DaemonSet won't schedule)", nodeName)
 				continue
 			}
@@ -306,19 +310,19 @@ func EnsureDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 		return "", fmt.Errorf("StorageClassName is required")
 	}
 
-	exists, err := kubernetes.StorageClassExists(ctx, kubeconfig, cfg.StorageClassName)
+	existingSC, err := kubernetes.GetStorageClass(ctx, kubeconfig, cfg.StorageClassName)
 	if err != nil {
 		return "", fmt.Errorf("failed to check StorageClass %s: %w", cfg.StorageClassName, err)
 	}
 
 	var scName string
-	if exists {
+	if existingSC != nil {
 		logger.Info("StorageClass %s already exists, skipping creation", cfg.StorageClassName)
 		scName = cfg.StorageClassName
 	} else {
 		scName, err = CreateDefaultStorageClass(ctx, kubeconfig, cfg)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to create StorageClass %s: %w", cfg.StorageClassName, err)
 		}
 	}
 

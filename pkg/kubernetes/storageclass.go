@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
@@ -58,33 +59,29 @@ func WaitForStorageClasses(ctx context.Context, kubeconfig *rest.Config, storage
 func WaitForStorageClass(ctx context.Context, kubeconfig *rest.Config, storageClassName string, timeout time.Duration) error {
 	logger.Debug("Waiting for StorageClass %s to become available (timeout: %v)", storageClassName, timeout)
 
-	// Create clientset from kubeconfig with retry for transient network errors
 	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}
 
-	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		// Check if context is done
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		// Check if timeout reached
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for StorageClass %s", storageClassName)
-		}
-
-		// Try to get the storage class
 		_, err := clientset.StorageV1().StorageClasses().Get(ctx, storageClassName, metav1.GetOptions{})
 		if err == nil {
 			logger.Success("StorageClass %s is available", storageClassName)
 			return nil
 		}
 
-		// Wait a bit before retrying
-		time.Sleep(5 * time.Second)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for StorageClass %s: %w", storageClassName, ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -109,21 +106,21 @@ func GetDefaultStorageClassName(ctx context.Context, kubeconfig *rest.Config) (s
 	return "", nil
 }
 
-// StorageClassExists returns true if a StorageClass with the given name exists.
-func StorageClassExists(ctx context.Context, kubeconfig *rest.Config, name string) (bool, error) {
+// GetStorageClass returns the StorageClass with the given name, or nil if it does not exist.
+func GetStorageClass(ctx context.Context, kubeconfig *rest.Config, name string) (*storagev1.StorageClass, error) {
 	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
-		return false, fmt.Errorf("failed to create clientset: %w", err)
+		return nil, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
-	_, err = clientset.StorageV1().StorageClasses().Get(ctx, name, metav1.GetOptions{})
+	sc, err := clientset.StorageV1().StorageClasses().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, nil
+			return nil, fmt.Errorf("StorageClass %s not found", name)
 		}
-		return false, fmt.Errorf("failed to get StorageClass %s: %w", name, err)
+		return nil, fmt.Errorf("failed to get StorageClass %s: %w", name, err)
 	}
-	return true, nil
+	return sc, nil
 }
 
 // SetGlobalDefaultStorageClass updates the "global" ModuleConfig to set
@@ -159,39 +156,4 @@ func SetGlobalDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, 
 		enabled = *mc.Spec.Enabled
 	}
 	return deckhouse.UpdateModuleConfig(ctx, kubeconfig, moduleName, mc.Spec.Version, enabled, existingSettings)
-}
-
-// WaitForStorageClassDeletion waits for a storage class to be deleted
-func WaitForStorageClassDeletion(ctx context.Context, kubeconfig *rest.Config, storageClassName string, timeout time.Duration) error {
-	logger.Debug("Waiting for StorageClass %s to be deleted (timeout: %v)", storageClassName, timeout)
-
-	// Create clientset from kubeconfig with retry for transient network errors
-	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to create clientset: %w", err)
-	}
-
-	deadline := time.Now().Add(timeout)
-	for {
-		// Check if context is done
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-
-		// Check if timeout reached
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for StorageClass %s to be deleted", storageClassName)
-		}
-
-		// Try to get the storage class
-		_, err := clientset.StorageV1().StorageClasses().Get(ctx, storageClassName, metav1.GetOptions{})
-		if err != nil {
-			// Assume deleted if we can't get it
-			logger.Success("StorageClass %s is deleted", storageClassName)
-			return nil
-		}
-
-		// Wait a bit before retrying
-		time.Sleep(2 * time.Second)
-	}
 }
