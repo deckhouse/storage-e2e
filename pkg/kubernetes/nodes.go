@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 
@@ -28,6 +30,133 @@ import (
 )
 
 const nodeLabelPollInterval = 10 * time.Second
+
+// GetNodes returns the names of all nodes in the cluster.
+func GetNodes(ctx context.Context, kubeconfig *rest.Config) ([]corev1.Node, error) {
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	logger.Debug("Found %d nodes", len(nodeList.Items))
+	return nodeList.Items, nil
+}
+
+// GetWorkerNodes returns all worker nodes in the cluster.
+// A worker node is any node that does NOT have the "node-role.kubernetes.io/control-plane" label.
+func GetWorkerNodes(ctx context.Context, kubeconfig *rest.Config) ([]corev1.Node, error) {
+	allNodes, err := GetNodes(ctx, kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+
+	var workers []corev1.Node
+	for _, node := range allNodes {
+		if _, isMaster := node.Labels["node-role.kubernetes.io/control-plane"]; isMaster {
+			continue
+		}
+		if _, isMaster := node.Labels["node-role.kubernetes.io/master"]; isMaster {
+			continue
+		}
+		workers = append(workers, node)
+	}
+
+	logger.Debug("Found %d worker nodes", len(workers))
+	return workers, nil
+}
+
+// LabelNodes adds a label to each of the specified nodes.
+// If a node already has the label with the desired value, it is skipped.
+// Uses retry with re-fetch to handle optimistic concurrency conflicts.
+func LabelNodes(ctx context.Context, kubeconfig *rest.Config, nodeNames []string, labelKey, labelValue string) error {
+	if len(nodeNames) == 0 {
+		return nil
+	}
+
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	const maxRetries = 5
+
+	for _, name := range nodeNames {
+		var lastErr error
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			node, err := clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to get node %s: %w", name, err)
+			}
+
+			if node.Labels != nil {
+				if v, ok := node.Labels[labelKey]; ok && v == labelValue {
+					logger.Debug("Node %s already has label %s=%s", name, labelKey, labelValue)
+					lastErr = nil
+					break
+				}
+			}
+
+			if node.Labels == nil {
+				node.Labels = make(map[string]string)
+			}
+			node.Labels[labelKey] = labelValue
+
+			_, lastErr = clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+			if lastErr == nil {
+				logger.Info("Labeled node %s with %s=%s", name, labelKey, labelValue)
+				break
+			}
+
+			if apierrors.IsConflict(lastErr) {
+				logger.Debug("Conflict labeling node %s (attempt %d/%d), retrying...", name, attempt+1, maxRetries)
+				continue
+			}
+			return fmt.Errorf("failed to label node %s: %w", name, lastErr)
+		}
+		if lastErr != nil {
+			return fmt.Errorf("failed to label node %s after %d attempts: %w", name, maxRetries, lastErr)
+		}
+	}
+
+	return nil
+}
+
+// GetNodeTaints returns the taints of the named node.
+func GetNodeTaints(ctx context.Context, kubeconfig *rest.Config, nodeName string) ([]corev1.Taint, error) {
+	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	node, err := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+
+	return node.Spec.Taints, nil
+}
+
+// IsNodeCordoned checks whether a node has NoSchedule or NoExecute taints
+// that would prevent DaemonSet pods from scheduling.
+func IsNodeCordoned(ctx context.Context, kubeconfig *rest.Config, nodeName string) (bool, error) {
+	taints, err := GetNodeTaints(ctx, kubeconfig, nodeName)
+	if err != nil {
+		return false, err
+	}
+
+	for _, taint := range taints {
+		if taint.Effect == corev1.TaintEffectNoSchedule || taint.Effect == corev1.TaintEffectNoExecute {
+			logger.Debug("Node %s has taint %s=%s:%s", nodeName, taint.Key, taint.Value, taint.Effect)
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // WaitForNodesLabeled waits for all specified nodes to have the given label with the expected value.
 // It polls each node in parallel every 10 seconds until all nodes have the label or the context times out.

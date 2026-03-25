@@ -46,3 +46,25 @@ func GetConsumableBlockDevices(ctx context.Context, kubeconfig *rest.Config) ([]
 	logger.Debug("Found %d consumable BlockDevices", len(blockDevices))
 	return blockDevices, nil
 }
+
+// GetConsumableBlockDevicesByNode returns consumable BlockDevices for a specific node.
+func GetConsumableBlockDevicesByNode(ctx context.Context, kubeconfig *rest.Config, nodeName string) ([]BlockDevice, error) {
+	if nodeName == "" {
+		return nil, fmt.Errorf("nodeName is required")
+	}
+
+	logger.Debug("Getting consumable BlockDevices from node %s", nodeName)
+
+	bdClient, err := storage.NewBlockDeviceClient(ctx, kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create BlockDevice client: %w", err)
+	}
+
+	blockDevices, err := bdClient.ListConsumableByNode(ctx, nodeName)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Debug("Found %d consumable BlockDevices on node %s", len(blockDevices), nodeName)
+	return blockDevices, nil
+}
