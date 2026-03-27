@@ -144,6 +144,9 @@ func CreateDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 	if cfg.StorageClassName == "" {
 		return "", fmt.Errorf("StorageClassName is required")
 	}
+	if cfg.LVMType != "Thin" && cfg.LVMType != "Thick" {
+		return "", fmt.Errorf("invalid LVMType: %s (must be Thin or Thick)", cfg.LVMType)
+	}
 	if cfg.LVMType == "Thin" && cfg.ThinPoolName == "" {
 		return "", fmt.Errorf("ThinPoolName is required for Thin LVM type")
 	}
@@ -285,8 +288,6 @@ func CreateDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 			})
 		case "Thick":
 			err = kubernetes.CreateLVMVolumeGroup(ctx, kubeconfig, lvgName, nodeName, []string{bds[0].Name}, cfg.VGName)
-		default:
-			return "", fmt.Errorf("invalid LVMType: %s", cfg.LVMType)
 		}
 		if err != nil && !apierrors.IsAlreadyExists(err) {
 			return "", fmt.Errorf("failed to create LVG %s: %w", lvgName, err)

@@ -16,12 +16,17 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [Pod](#pod)
 - [PVC (PersistentVolumeClaim)](#pvc-persistentvolumeclaim)
 - [StorageClass](#storageclass)
+- [StorageClass Management](#storageclass-management)
 - [BlockDevice](#blockdevice)
 - [LVMVolumeGroup](#lvmvolumegroup)
+- [LocalStorageClass](#localstoragecclass)
+- [VolumeSnapshotClass](#volumesnapshotclass)
 - [VirtualDisk](#virtualdisk)
+- [VM Pod](#vm-pod)
 - [Secrets](#secrets)
 - [Modules](#modules)
 - [Retry](#retry)
+- [Default StorageClass (Testkit)](#default-storageclass-testkit)
 - [Stress Tests (Testkit)](#stress-tests-testkit)
 
 ---
@@ -69,7 +74,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `RemoveVM(ctx, virtClient, namespace, vmName)` — Removes a single VM and its associated VirtualDisks and ClusterVirtualImage (if unused).
 - `GetSetupNode(clusterDef)` — Returns the setup (bootstrap) VM node from ClusterDefinition.
 - `GetVMIPAddress(ctx, virtClient, namespace, vmName)` — Gets IP address of a VM by querying its status. **Deprecated:** use `GatherVMInfo` instead.
-- `GatherVMInfo(ctx, virtClient, namespace, clusterDef, vmResources)` — Gathers IP addresses for all VMs and fills them into ClusterDefinition in-place.
+- `GatherVMInfo(ctx, virtClient, namespace, clusterDef, vmResources, opts)` — Gathers IP addresses for all VMs and fills them into ClusterDefinition in-place.
 - `GetNodeIPAddress(clusterDef, hostname)` — Gets IP address for a node by hostname from ClusterDefinition.
 - `CleanupSetupVM(ctx, resources)` — Deletes the setup VM and its resources. **Deprecated:** use `RemoveVM` instead.
 
@@ -85,7 +90,6 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `BootstrapCluster(ctx, sshClient, clusterDef, configPath)` — Bootstraps a Kubernetes cluster via `dhctl bootstrap` in a Docker container on the setup node.
 - `AddNodesToCluster(ctx, kubeconfig, clusterDef, baseSSHUser, baseSSHHost, sshKeyPath)` — Adds nodes to the cluster by running bootstrap scripts from secrets on each node via SSH.
 - `WaitForAllNodesReady(ctx, kubeconfig, clusterDef, timeout)` — Waits for all expected nodes (masters + workers) to become Ready in parallel.
-
 - `GetSSHPublicKeyContent()` — Returns SSH public key content as string. Reads from file path or returns inline content.
 
 ## Kubernetes Client
@@ -115,6 +119,11 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 `pkg/kubernetes/nodes.go`
 
+- `GetNodes(ctx, kubeconfig)` — Returns all nodes in the cluster as `[]corev1.Node`.
+- `GetWorkerNodes(ctx, kubeconfig)` — Returns all worker nodes (excludes nodes with `node-role.kubernetes.io/control-plane` or `master` labels).
+- `LabelNodes(ctx, kubeconfig, nodeNames, labelKey, labelValue)` — Adds a label to each of the specified nodes. Retries on optimistic concurrency conflicts.
+- `GetNodeTaints(ctx, kubeconfig, nodeName)` — Returns the taints of the named node.
+- `IsNodeCordoned(ctx, kubeconfig, nodeName)` — Checks whether a node has NoSchedule or NoExecute taints that would prevent DaemonSet pods from scheduling.
 - `WaitForNodesLabeled(ctx, kubeconfig, nodeNames, labelKey, labelValue)` — Waits for all specified nodes to have a given label with the expected value. Polls in parallel every 10 seconds.
 
 ## NodeGroup
@@ -144,13 +153,22 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 - `WaitForStorageClasses(ctx, kubeconfig, storageClassNames, timeout)` — Waits for multiple storage classes to become available in parallel. Returns map of names to errors.
 - `WaitForStorageClass(ctx, kubeconfig, storageClassName, timeout)` — Waits for a single storage class to become available.
-- `WaitForStorageClassDeletion(ctx, kubeconfig, storageClassName, timeout)` — Waits for a storage class to be deleted.
+- `GetDefaultStorageClassName(ctx, kubeconfig)` — Returns the name of the current default StorageClass (annotated with `storageclass.kubernetes.io/is-default-class=true`), or `""` if none exists.
+- `GetStorageClass(ctx, kubeconfig, name)` — Returns the StorageClass with the given name, or `(nil, nil)` if it does not exist.
+- `SetGlobalDefaultStorageClass(ctx, kubeconfig, storageClassName)` — Updates the "global" ModuleConfig to set `spec.settings.storageClass` to the given name, making it the cluster default.
+
+## StorageClass Management
+
+`pkg/kubernetes/storageclass_manage.go`
+
+- `CreateStorageClass(ctx, kubeconfig, cfg)` — Creates a StorageClass from `StorageClassCreateConfig` (provisioner, parameters, binding mode, reclaim policy, allow expansion, default annotation, labels). Idempotent if already exists.
 
 ## BlockDevice
 
 `pkg/kubernetes/blockdevice.go`
 
 - `GetConsumableBlockDevices(ctx, kubeconfig)` — Returns all consumable BlockDevices from the cluster.
+- `GetConsumableBlockDevicesByNode(ctx, kubeconfig, nodeName)` — Returns consumable BlockDevices for a specific node.
 
 ## LVMVolumeGroup
 
@@ -162,12 +180,35 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `DeleteLVMVolumeGroup(ctx, kubeconfig, name)` — Deletes an LVMVolumeGroup resource by name.
 - `WaitForLVMVolumeGroupDeletion(ctx, kubeconfig, name, timeout)` — Waits for an LVMVolumeGroup to be deleted.
 
+## LocalStorageClass
+
+`pkg/kubernetes/localstorageclass.go`
+
+- `CreateLocalStorageClass(ctx, kubeconfig, cfg)` — Creates a LocalStorageClass CR from `LocalStorageClassConfig` (name, LVM volume groups, LVM type Thick/Thin, thin pool name, reclaim policy, volume binding mode). Idempotent if already exists.
+- `WaitForLocalStorageClassCreated(ctx, kubeconfig, name, timeout)` — Waits for the LocalStorageClass CR status phase to reach `Created` (controller has created the corresponding StorageClass).
+
+## VolumeSnapshotClass
+
+`pkg/kubernetes/volumesnapshotclass.go`
+
+- `CreateVolumeSnapshotClass(ctx, kubeconfig, cfg)` — Creates a VolumeSnapshotClass from `VolumeSnapshotClassConfig` (name, driver, deletion policy, parameters, default flag). Idempotent if already exists.
+- `WaitForVolumeSnapshotClass(ctx, kubeconfig, name, timeout)` — Waits for a VolumeSnapshotClass to exist in the cluster.
+
 ## VirtualDisk
 
 `pkg/kubernetes/virtualdisk.go`
 
 - `AttachVirtualDiskToVM(ctx, kubeconfig, config)` — Creates a blank VirtualDisk and attaches it to a VM using VirtualMachineBlockDeviceAttachment. Returns created resource names.
 - `WaitForVirtualDiskAttached(ctx, kubeconfig, namespace, attachmentName, pollInterval)` — Waits for a VirtualMachineBlockDeviceAttachment to reach the Attached phase.
+- `ListVirtualMachineNames(ctx, kubeconfig, namespace)` — Lists VM names in a namespace.
+- `GetVMIPFromBaseCluster(ctx, baseKubeconfig, namespace, vmName)` — Returns VM IP address from status (for SSH connections).
+- `DetachAndDeleteVirtualDisk(ctx, kubeconfig, namespace, attachmentName, diskName)` — Deletes attachment then disk (cleanup helper; logs errors).
+
+## VM Pod
+
+`pkg/kubernetes/vmpod.go`
+
+- `GetVMPodNodeAndContainerID(ctx, baseConfig, namespace, vmName)` — Finds the virt-launcher pod for a VM and returns node name and first container ID.
 
 ## Secrets
 
@@ -196,6 +237,13 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `IsRetryable(err)` — Checks if an error is transient (network, K8s API, SSH, webhook errors) and should be retried.
 - `IsSSHConnectionError(err)` — Checks if an error specifically indicates SSH connection failure requiring reconnection.
 - `WithRetryAfter(cfg, err)` — Returns a modified retry config that respects `RetryAfterSeconds` hints from Kubernetes API errors.
+
+## Default StorageClass (Testkit)
+
+`pkg/testkit/storageclass.go`
+
+- `CreateDefaultStorageClass(ctx, kubeconfig, cfg)` — High-level helper: discovers nodes, enables sds-node-configurator/sds-local-volume modules, labels nodes, optionally attaches VirtualDisks, creates LVMVolumeGroups (Thick or Thin with thin pool), creates LocalStorageClass, waits for StorageClass. Configured via `DefaultStorageClassConfig`.
+- `EnsureDefaultStorageClass(ctx, kubeconfig, cfg)` — Idempotent wrapper around `CreateDefaultStorageClass`. Checks if StorageClass already exists, skips creation if so, then sets it as the cluster default via "global" ModuleConfig.
 
 ## Stress Tests (Testkit)
 
