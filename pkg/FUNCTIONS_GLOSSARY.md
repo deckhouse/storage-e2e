@@ -19,7 +19,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [StorageClass Management](#storageclass-management)
 - [BlockDevice](#blockdevice)
 - [LVMVolumeGroup](#lvmvolumegroup)
-- [LocalStorageClass](#localstoragecclass)
+- [LocalStorageClass](#localstorageclass)
 - [VolumeSnapshotClass](#volumesnapshotclass)
 - [VirtualDisk](#virtualdisk)
 - [VM Pod](#vm-pod)
