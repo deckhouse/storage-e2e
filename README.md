@@ -20,7 +20,7 @@ Use this mode to run tests against a cluster that is already running (faster ite
    export TEST_CLUSTER_CREATE_MODE=alwaysUseExisting
    ```
 2. Point SSH to the **test cluster** (the Kubernetes API master you want to run tests on):
-   - **Direct access:** `SSH_HOST` = IP/hostname of the cluster master, `SSH_USER` = user that can run `sudo cat /etc/kubernetes/admin.conf` on that host.
+   - **Direct access:** `SSH_HOST` = IP/hostname of the cluster master, `SSH_USER` = user that can read kubeconfig on that host (prefers `sudo cat /etc/kubernetes/super-admin.conf` if that file exists, otherwise `sudo cat /etc/kubernetes/admin.conf`).
    - **Via jump host:** set `SSH_JUMP_HOST`, `SSH_JUMP_USER`, `SSH_JUMP_KEY_PATH` (optional); `SSH_HOST`/`SSH_USER` are the target cluster master.
 3. Source the rest of your test env (e.g. `source tests/<your-test-name>/test_exports`), then run:
    ```bash

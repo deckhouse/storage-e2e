@@ -179,8 +179,14 @@ func expandPath(path string) (string, error) {
 	return resolvedPath, nil
 }
 
-// GetKubeconfig connects to the master node via SSH, retrieves kubeconfig from /etc/kubernetes/admin.conf,
-// and returns a rest.Config that can be used with Kubernetes clients, along with the path to the kubeconfig file.
+// getKubeconfigRemoteShell prints kubeconfig for use with client-go. It prefers
+// /etc/kubernetes/super-admin.conf (Kubernetes 1.29+ unified kubeconfig) when the file
+// exists, and falls back to /etc/kubernetes/admin.conf otherwise.
+const getKubeconfigRemoteShell = "sudo -n sh -c 'if [ -f /etc/kubernetes/super-admin.conf ]; then cat /etc/kubernetes/super-admin.conf; else cat /etc/kubernetes/admin.conf; fi'"
+
+// GetKubeconfig connects to the master node via SSH, retrieves kubeconfig (preferring
+// super-admin.conf over admin.conf when available), and returns a rest.Config that can
+// be used with Kubernetes clients, along with the path to the kubeconfig file.
 // If sshClient is provided, it will be used instead of creating a new connection.
 // If sshClient is nil, a new connection will be created and closed automatically.
 // If kubeconfigOutputDir is non-empty, the kubeconfig file is written there; otherwise /tmp/e2e/ is used.
@@ -212,8 +218,8 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 
 	var kubeconfigContent []byte
 
-	// Try to read kubeconfig from /etc/kubernetes/admin.conf via SSH
-	kubeconfigContentStr, err := sshClient.Exec(ctx, "sudo -n cat /etc/kubernetes/admin.conf")
+	// Read kubeconfig via SSH: prefer super-admin.conf when present (see getKubeconfigRemoteShell).
+	kubeconfigContentStr, err := sshClient.Exec(ctx, getKubeconfigRemoteShell)
 	if err != nil {
 		// SSH retrieval failed (likely due to sudo password requirement)
 		// Try to use KUBE_CONFIG_PATH if set, otherwise notify user
