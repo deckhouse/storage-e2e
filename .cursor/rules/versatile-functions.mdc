@@ -23,6 +23,11 @@ Functions in `pkg/` are shared across multiple repos. Every new function must be
 
 4. **Accept interfaces, return structs.** Where practical, accept broad types (context, rest.Config) and return concrete Kubernetes objects so callers have full access to the data.
 
+5. **No empty wrappers.** Do not add functions that merely call another function and reformat or filter its output without adding meaningful logic. If the caller can achieve the same result with a one-liner on the original function's return value, do not create a wrapper.
+   - Bad: `GetWorkerNodeNames(ctx, cfg)` that just calls `GetWorkerNodes` and extracts `.Name` from each element — the caller can do that itself.
+   - Bad: `GetFirstNode(ctx, cfg)` that just calls `GetNodes` and returns `[0]`.
+   - Acceptable: a wrapper that adds retry logic, caching, or non-trivial filtering/transformation.
+
 ## When reviewing a new function
 
 Ask yourself: "Could a different test or a different repo use this function as-is?" If the answer is no, redesign it to be more general before adding it.

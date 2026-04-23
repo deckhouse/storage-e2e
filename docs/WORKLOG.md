@@ -24,4 +24,4 @@ All notable changes to this repository are documented here. New entries are appe
 - **Add** `.cursor/rules/architecture.mdc`: rule to keep architecture docs in sync with structural changes
 - **Add** `.cursor/rules/todo-command.mdc`: `/todo` command for managing `docs/TODO.md`
 - **Add** `.cursor/rules/backward-compatibility.mdc`: rule to guard backward compatibility of exported `pkg/` API — ask before breaking changes, mark worklog with `[Possible compatibility break]`
-- **Add** `.cursor/rules/versatile-functions.mdc`: rule to ensure new functions are general-purpose and reusable — return data not decisions, no hardcoded names, compose from existing functions
+- **Add** `.cursor/rules/versatile-functions.mdc`: rule to ensure new functions are general-purpose and reusable — return data not decisions, no hardcoded names, compose from existing functions, no empty wrappers
