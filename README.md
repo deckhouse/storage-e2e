@@ -69,7 +69,7 @@ Run the test: `go test -timeout=120m -v ./tests/csi-all-stress-tests -count=1`
 
 ## Functions Glossary (exportable only)
 
-See [pkg/FUNCTIONS_GLOSSARY.md](pkg/FUNCTIONS_GLOSSARY.md) for a full list of all exported functions in the `pkg/` directory, grouped by resource (cluster, VM, PVC, LVMVolumeGroup, etc.).
+See [docs/FUNCTIONS_GLOSSARY.md](docs/FUNCTIONS_GLOSSARY.md) for a full list of all exported functions in the `pkg/` directory, grouped by resource (cluster, VM, PVC, LVMVolumeGroup, etc.).
 
 
 ## Environment Variables

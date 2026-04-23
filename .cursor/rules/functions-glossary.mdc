@@ -1,0 +1,24 @@
+---
+description: Check function glossary before adding new exported functions
+globs:
+  - "pkg/**/*.go"
+alwaysApply: true
+---
+
+# Functions Glossary Guard
+
+Before adding any new exported function in the `pkg/` directory, you MUST check `docs/FUNCTIONS_GLOSSARY.md` for similar existing functions.
+
+## Workflow
+
+1. **Before creating a new exported function**, search `docs/FUNCTIONS_GLOSSARY.md` for functions with similar names or purposes.
+2. **If a similar function already exists**, suggest it to the user: "Function `ExistingFunc` in `pkg/path/file.go` already does something similar. Would you like to use or extend it instead?"
+3. **If the user declines and wants a new function anyway**, add the new function to `docs/FUNCTIONS_GLOSSARY.md` in the appropriate section with the comment `<!-- duplicates func ExistingFuncName -->` appended to the entry line.
+4. **If no similar function exists**, add the new function to `docs/FUNCTIONS_GLOSSARY.md` in the appropriate section (matching the file it belongs to).
+5. **When renaming or removing exported functions**, update the corresponding entries in `docs/FUNCTIONS_GLOSSARY.md`.
+
+## Entry format
+
+```markdown
+- `FuncName(param1, param2)` — Brief description of what the function does.
+```

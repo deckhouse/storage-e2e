@@ -1,0 +1,32 @@
+---
+description: Maintain the work log on any code changes
+globs:
+  - "**/*.go"
+  - "**/*.yml"
+  - "**/*.yaml"
+  - "**/*.tpl"
+  - "**/*.sh"
+alwaysApply: true
+---
+
+# Work Log Maintenance
+
+After making any code changes (new features, refactors, renames, bug fixes, deletions), append a brief entry to `docs/WORKLOG.md`.
+
+## Format
+
+Each entry is a single line under today's date heading (`## YYYY-MM-DD`):
+
+```
+- **Type** description of what was changed and why
+```
+
+Where **Type** is one of: `Add`, `Remove`, `Rename`, `Refactor`, `Bugfix`, `Update`, `Move`.
+
+## Rules
+
+1. If today's date heading does not exist yet, add it at the bottom of the file before your entries.
+2. Append new entries under the current date heading — never prepend or reorder.
+3. If changes are rolled back in the same session, remove only today's corresponding entries. **Never touch entries from previous days.**
+4. Keep entries concise (one line each). Reference the file path and function/type name when relevant.
+5. Group related changes into a single entry when they form one logical unit (e.g. a rename + caller updates = one entry).

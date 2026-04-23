@@ -1,0 +1,34 @@
+---
+description: Keep architecture docs in sync with structural changes
+globs:
+  - "pkg/**/*.go"
+  - "internal/**/*.go"
+  - "tests/**/*.go"
+alwaysApply: true
+---
+
+# Architecture Documentation
+
+When making architectural changes, update `docs/ARCHITECTURE.md` to keep it in sync.
+
+## What counts as an architectural change
+
+- Adding, removing, or renaming a package (directory under `pkg/`, `internal/`, or `tests/`)
+- Adding or removing a file in the package tree shown in Section 1.1
+- Changing the layer a component belongs to (e.g. moving code from `internal/` to `pkg/`)
+- Adding a new cluster creation mode or major workflow
+- Changing core interfaces or types (e.g. `TestClusterResources`, `ClusterDefinition`)
+
+## What to update
+
+1. **Section 1.1 (Package Structure)** — the directory tree listing.
+2. **Section 3.x (Module Details)** — the file listing and description for the affected module.
+3. **Section 3.6 (Public API)** — the `pkg/` tree if public packages changed.
+4. **Section 7 (Environment Variables)** — if new env vars were introduced.
+5. **Section 9 (Future Improvements)** — mark items as done or add new ones.
+
+## Rules
+
+- Only update sections that are directly affected by the change.
+- Keep descriptions concise and factual.
+- Do not rewrite unrelated sections.
