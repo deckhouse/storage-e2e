@@ -1,0 +1,33 @@
+---
+description: Ensure new functions are general-purpose and reusable
+globs:
+  - "pkg/**/*.go"
+alwaysApply: true
+---
+
+# Versatile Function Design
+
+Functions in `pkg/` are shared across multiple repos. Every new function must be general-purpose and reusable.
+
+## Principles
+
+1. **Return data, not decisions.** Prefer functions that return rich objects (structs, slices) over functions that return booleans for a specific check. Let the caller decide what to inspect.
+   - Good: `GetWorkerNodes(ctx, kubeconfig) ([]corev1.Node, error)` — caller can check length, filter by name, inspect labels, etc.
+   - Bad: `EnsureNode2IsWorker(ctx, kubeconfig) error` — single-purpose, not reusable.
+
+2. **No hardcoded names or indices.** Never bake specific resource names, node indices, or counts into a function. Accept them as parameters instead.
+   - Good: `IsNodeCordoned(ctx, kubeconfig, nodeName) (bool, error)`
+   - Bad: `IsFirstMasterCordoned(ctx, kubeconfig) (bool, error)`
+
+3. **Compose from existing functions.** Before writing new logic, check if the task can be achieved by combining existing functions from `docs/FUNCTIONS_GLOSSARY.md`. If a small wrapper is needed, make sure it is still generic.
+
+4. **Accept interfaces, return structs.** Where practical, accept broad types (context, rest.Config) and return concrete Kubernetes objects so callers have full access to the data.
+
+5. **No empty wrappers.** Do not add functions that merely call another function and reformat or filter its output without adding meaningful logic. If the caller can achieve the same result with a one-liner on the original function's return value, do not create a wrapper.
+   - Bad: `GetWorkerNodeNames(ctx, cfg)` that just calls `GetWorkerNodes` and extracts `.Name` from each element — the caller can do that itself.
+   - Bad: `GetFirstNode(ctx, cfg)` that just calls `GetNodes` and returns `[0]`.
+   - Acceptable: a wrapper that adds retry logic, caching, or non-trivial filtering/transformation.
+
+## When reviewing a new function
+
+Ask yourself: "Could a different test or a different repo use this function as-is?" If the answer is no, redesign it to be more general before adding it.
