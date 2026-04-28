@@ -78,7 +78,10 @@ storage-e2e/
 │   │   └── secrets.go            # Secret operations
 │   │
 │   └── testkit/                  # Test framework utilities
-│       └── stress-tests.go       # Stress test helpers
+│       ├── stress-tests.go       # Stress test helpers
+│       ├── storageclass.go       # EnsureDefaultStorageClass (sds-local-volume)
+│       ├── ceph.go               # EnsureCephStorageClass (Rook + csi-ceph)
+│       └── ceph_cluster.go       # EnsureCephCluster (Rook only, no csi-ceph)
 │
 ├── tests/                         # Test suites
 │   ├── test-template/            # Template for creating new tests
@@ -452,16 +455,33 @@ pkg/
 │   ├── vms.go          # VM lifecycle management
 │   └── TODO.md         # Development notes
 ├── kubernetes/
-│   ├── apply.go        # YAML manifest application
-│   ├── modules.go      # Module configuration with dependency handling
-│   ├── namespace.go    # Namespace utilities
-│   ├── nodegroup.go    # NodeGroup operations
-│   ├── pod.go          # Pod operations
-│   ├── pvc.go          # PVC operations
-│   ├── resources.go    # Resource utilities
-│   └── secrets.go      # Secret operations
+│   ├── apply.go                 # YAML manifest application
+│   ├── modules.go               # Module configuration with dependency handling
+│   ├── namespace.go             # Namespace utilities
+│   ├── nodegroup.go             # NodeGroup operations
+│   ├── pod.go                   # Pod operations
+│   ├── pvc.go                   # PVC operations
+│   ├── resources.go             # Resource utilities
+│   ├── secrets.go               # Secret operations
+│   ├── storageclass.go          # Core StorageClass helpers
+│   ├── storageclass_manage.go   # Global default-SC management via ModuleConfig
+│   ├── localstorageclass.go     # sds-local-volume LocalStorageClass CR
+│   ├── lvmvolumegroup.go        # sds-node-configurator LVMVolumeGroup CR
+│   ├── blockdevice.go           # sds-node-configurator BlockDevice CR
+│   ├── virtualdisk.go           # DKP VirtualDisk CR
+│   ├── vmpod.go                 # Helpers to exec inside VM-hosted pods
+│   ├── volumesnapshotclass.go   # VolumeSnapshotClass helpers
+│   ├── rookconfigoverride.go    # Rook global ceph.conf via rook-config-override CM
+│   ├── cephcredentials.go       # Read fsid/mons/admin-key from Rook secrets
+│   ├── cephcluster.go           # Rook CephCluster CRUD + wait (unstructured)
+│   ├── cephblockpool.go         # Rook CephBlockPool CRUD + wait (unstructured)
+│   ├── cephclusterconnection.go # csi-ceph CephClusterConnection/Auth CRs
+│   └── cephstorageclass.go      # csi-ceph CephStorageClass CR
 └── testkit/
-    └── stress-tests.go # Stress test helpers
+    ├── stress-tests.go  # Stress test helpers
+    ├── storageclass.go  # EnsureDefaultStorageClass (sds-local-volume)
+    ├── ceph.go          # EnsureCephStorageClass / EnsureDefaultCephStorageClass
+    └── ceph_cluster.go  # EnsureCephCluster (Rook-only, no csi-ceph)
 ```
 
 **Responsibilities**:

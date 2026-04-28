@@ -43,7 +43,7 @@ const (
 	DefaultCephClusterName     = "ceph-cluster"
 	DefaultCephImage           = "quay.io/ceph/ceph:v18.2.7"
 	DefaultDataDirHostPath     = "/var/lib/rook"
-	DefaultOSDStorageClassSize = "20Gi"
+	DefaultOSDStorageClassSize = "10Gi"
 )
 
 // CephClusterConfig describes a Rook-managed Ceph cluster suitable for e2e
