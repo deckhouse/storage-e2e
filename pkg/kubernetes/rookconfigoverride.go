@@ -66,7 +66,7 @@ func SetRookConfigOverride(ctx context.Context, kubeconfig *rest.Config, namespa
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}
 
-	cfg := renderCephGlobalConfig(globals)
+	cfg := RenderCephGlobalConfig(globals)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -120,10 +120,10 @@ func DeleteRookConfigOverride(ctx context.Context, kubeconfig *rest.Config, name
 	return nil
 }
 
-// renderCephGlobalConfig renders a `[global]` section for ceph.conf from the
+// RenderCephGlobalConfig renders a `[global]` section for ceph.conf from the
 // provided key/value pairs. Keys are sorted so the rendered output is stable
 // across calls with logically-equivalent maps (avoids unnecessary CM updates).
-func renderCephGlobalConfig(globals map[string]string) string {
+func RenderCephGlobalConfig(globals map[string]string) string {
 	var b strings.Builder
 	b.WriteString("[global]\n")
 

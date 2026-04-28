@@ -367,6 +367,38 @@ func EnsureCephStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg Ce
 	return cfg.StorageClassName, nil
 }
 
+// TeardownCephStorageClass removes the csi-ceph wiring + Rook CephCluster +
+// pool + rook-config-override produced by EnsureCephStorageClass. Safe to
+// call on partial state (missing resources are skipped — the first error is
+// returned but subsequent deletions are still attempted).
+//
+// It deliberately does NOT disable the Deckhouse modules: they may be owned
+// by the cluster admin, and re-bootstrapping is cheaper than a full
+// module-disable → module-enable cycle.
+func TeardownCephStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg CephStorageClassConfig) error {
+	cfg.applyDefaults()
+
+	var firstErr error
+	note := func(err error, what string) {
+		if err == nil {
+			return
+		}
+		logger.Warn("teardown: %s: %v", what, err)
+		if firstErr == nil {
+			firstErr = fmt.Errorf("%s: %w", what, err)
+		}
+	}
+
+	logger.Info("Tearing down csi-ceph StorageClass %q", cfg.StorageClassName)
+	note(kubernetes.DeleteCephStorageClass(ctx, kubeconfig, cfg.StorageClassName), "delete CephStorageClass")
+	note(kubernetes.DeleteCephClusterConnection(ctx, kubeconfig, cfg.ClusterConnectionName), "delete CephClusterConnection")
+	note(kubernetes.DeleteCephClusterAuthentication(ctx, kubeconfig, cfg.ClusterAuthenticationName), "delete CephClusterAuthentication")
+	note(kubernetes.DeleteCephBlockPool(ctx, kubeconfig, cfg.Namespace, cfg.PoolName), "delete CephBlockPool")
+	note(kubernetes.DeleteCephCluster(ctx, kubeconfig, cfg.Namespace, cfg.CephClusterName), "delete CephCluster")
+	note(kubernetes.DeleteRookConfigOverride(ctx, kubeconfig, cfg.Namespace), "delete rook-config-override")
+	return firstErr
+}
+
 // EnsureDefaultCephStorageClass is EnsureCephStorageClass + SetGlobalDefaultStorageClass.
 // After this call new PVCs without an explicit storageClassName will use the
 // freshly-provisioned Ceph RBD class.
