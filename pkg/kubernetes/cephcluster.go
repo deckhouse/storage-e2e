@@ -100,7 +100,7 @@ type CephClusterConfig struct {
 	// OSDCount is the number of OSDs to provision (default: 1).
 	OSDCount int
 
-	// OSDSize is the size of each OSD PVC (default: "20Gi").
+	// OSDSize is the size of each OSD PVC (default: "10Gi").
 	OSDSize string
 
 	// OSDDeviceSetName is the `storageClassDeviceSets[].name` (default:
@@ -213,8 +213,8 @@ func buildCephClusterSpec(cfg CephClusterConfig) map[string]interface{} {
 			"image":            cfg.CephImage,
 			"allowUnsupported": *cfg.AllowUnsupportedCephVersion,
 		},
-		"dataDirHostPath": cfg.DataDirHostPath,
-		"skipUpgradeChecks": false,
+		"dataDirHostPath":                            cfg.DataDirHostPath,
+		"skipUpgradeChecks":                          false,
 		"continueUpgradeAfterChecksEvenIfNotHealthy": false,
 		"mon": map[string]interface{}{
 			"count":                int64(cfg.MonCount),
@@ -257,10 +257,10 @@ func buildCephClusterSpec(cfg CephClusterConfig) map[string]interface{} {
 			"useAllDevices": false,
 			"storageClassDeviceSets": []interface{}{
 				map[string]interface{}{
-					"name":             cfg.OSDDeviceSetName,
-					"count":            int64(cfg.OSDCount),
-					"portable":         false,
-					"tuneDeviceClass":  true,
+					"name":            cfg.OSDDeviceSetName,
+					"count":           int64(cfg.OSDCount),
+					"portable":        false,
+					"tuneDeviceClass": true,
 					"volumeClaimTemplates": []interface{}{
 						map[string]interface{}{
 							"metadata": map[string]interface{}{
@@ -287,9 +287,9 @@ func buildCephClusterSpec(cfg CephClusterConfig) map[string]interface{} {
 		network := map[string]interface{}{
 			"provider": cfg.NetworkProvider,
 			"connections": map[string]interface{}{
-				"encryption":    map[string]interface{}{"enabled": false},
-				"compression":   map[string]interface{}{"enabled": false},
-				"requireMsgr2":  false,
+				"encryption":   map[string]interface{}{"enabled": false},
+				"compression":  map[string]interface{}{"enabled": false},
+				"requireMsgr2": false,
 			},
 		}
 

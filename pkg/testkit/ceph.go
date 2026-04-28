@@ -90,7 +90,7 @@ type CephStorageClassConfig struct {
 	// OSDCount is the number of OSDs. Default: 1.
 	OSDCount int
 
-	// OSDSize is the size of each OSD PVC. Default: "20Gi".
+	// OSDSize is the size of each OSD PVC. Default: "10Gi".
 	OSDSize string
 
 	// --- Fallback SC provisioning via sds-local-volume (when OSDStorageClass is empty) ---
