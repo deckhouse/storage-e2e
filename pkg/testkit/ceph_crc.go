@@ -71,7 +71,7 @@ func ResetServerCRCToDefault(ctx context.Context, kubeconfig *rest.Config, names
 //
 // Prefer EnableServerCRC / DisableServerCRC / ResetServerCRCToDefault at
 // call sites for readability; this lower-level primitive exists so a
-// boolean test parameter (e.g. the 2×2 matrix) doesn't have to branch.
+// boolean test parameter (e.g. a CRC compatibility matrix) doesn't have to branch.
 func SetMsCrcDataOnServer(ctx context.Context, kubeconfig *rest.Config, namespace string, enabled *bool) error {
 	if namespace == "" {
 		namespace = kubernetes.DefaultRookNamespace
