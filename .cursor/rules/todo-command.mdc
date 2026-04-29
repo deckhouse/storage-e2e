@@ -1,0 +1,37 @@
+---
+description: Handle /todo command for managing TODO.md
+globs: []
+alwaysApply: true
+---
+
+# /todo Command
+
+When the user types a message starting with `/todo`, manage records in `docs/TODO.md`.
+
+## Syntax
+
+- `/todo Add <description>` — Append a new TODO item.
+- `/todo Remove <description>` — Remove a matching TODO item (fuzzy match on description text).
+- `/todo Check` or `/todo List` — Read and display all current TODO items.
+- `/todo Done <description>` — Mark a TODO item as done by striking it through (`~~text~~`).
+
+## Format in TODO.md
+
+Each TODO item is a markdown list entry under a category heading:
+
+```markdown
+## Category Name
+
+- [ ] Description of the task
+- [x] ~~Completed task~~
+```
+
+If no category is specified, add items under a `## General` heading.
+
+## Rules
+
+1. Read `docs/TODO.md` before making changes to avoid duplicates.
+2. When adding, append to the end of the appropriate section.
+3. When removing, delete the entire line. If the section becomes empty (no items), remove the section heading too.
+4. After any change, confirm to the user what was done (e.g. "Added TODO: ..." or "Removed TODO: ...").
+5. Also append a worklog entry to `docs/WORKLOG.md` describing the TODO change.

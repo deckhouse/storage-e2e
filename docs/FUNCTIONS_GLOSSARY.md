@@ -16,11 +16,9 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [Pod](#pod)
 - [PVC (PersistentVolumeClaim)](#pvc-persistentvolumeclaim)
 - [StorageClass](#storageclass)
-- [StorageClass Management](#storageclass-management)
 - [BlockDevice](#blockdevice)
 - [LVMVolumeGroup](#lvmvolumegroup)
 - [LocalStorageClass](#localstorageclass)
-- [VolumeSnapshotClass](#volumesnapshotclass)
 - [VirtualDisk](#virtualdisk)
 - [VM Pod](#vm-pod)
 - [Secrets](#secrets)
@@ -127,10 +125,10 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 `pkg/kubernetes/nodes.go`
 
 - `GetNodes(ctx, kubeconfig)` — Returns all nodes in the cluster as `[]corev1.Node`.
-- `GetWorkerNodes(ctx, kubeconfig)` — Returns all worker nodes (excludes nodes with `node-role.kubernetes.io/control-plane` or `master` labels).
+- `GetWorkerNodes(ctx, kubeconfig)` — Returns all worker nodes as `[]corev1.Node` (excludes nodes with `node-role.kubernetes.io/control-plane` or `master` labels). Uses `GetNodes` internally.
 - `LabelNodes(ctx, kubeconfig, nodeNames, labelKey, labelValue)` — Adds a label to each of the specified nodes. Retries on optimistic concurrency conflicts.
-- `GetNodeTaints(ctx, kubeconfig, nodeName)` — Returns the taints of the named node.
-- `IsNodeCordoned(ctx, kubeconfig, nodeName)` — Checks whether a node has NoSchedule or NoExecute taints that would prevent DaemonSet pods from scheduling.
+- `GetNodeTaints(ctx, kubeconfig, nodeName)` — Returns the taints (`[]corev1.Taint`) of the named node.
+- `IsNodeCordoned(ctx, kubeconfig, nodeName)` — Checks whether a node has NoSchedule or NoExecute taints that would prevent DaemonSet pods from scheduling. Uses `GetNodeTaints` internally.
 - `WaitForNodesLabeled(ctx, kubeconfig, nodeNames, labelKey, labelValue)` — Waits for all specified nodes to have a given label with the expected value. Polls in parallel every 10 seconds.
 
 ## NodeGroup
@@ -161,14 +159,8 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `WaitForStorageClasses(ctx, kubeconfig, storageClassNames, timeout)` — Waits for multiple storage classes to become available in parallel. Returns map of names to errors.
 - `WaitForStorageClass(ctx, kubeconfig, storageClassName, timeout)` — Waits for a single storage class to become available.
 - `GetDefaultStorageClassName(ctx, kubeconfig)` — Returns the name of the current default StorageClass (annotated with `storageclass.kubernetes.io/is-default-class=true`), or `""` if none exists.
-- `GetStorageClass(ctx, kubeconfig, name)` — Returns the StorageClass with the given name, or `(nil, nil)` if it does not exist.
+- `GetStorageClass(ctx, kubeconfig, name)` — Returns the `*storagev1.StorageClass` with the given name, or `(nil, nil)` if it does not exist.
 - `SetGlobalDefaultStorageClass(ctx, kubeconfig, storageClassName)` — Updates the "global" ModuleConfig to set `spec.settings.storageClass` to the given name, making it the cluster default.
-
-## StorageClass Management
-
-`pkg/kubernetes/storageclass_manage.go`
-
-- `CreateStorageClass(ctx, kubeconfig, cfg)` — Creates a StorageClass from `StorageClassCreateConfig` (provisioner, parameters, binding mode, reclaim policy, allow expansion, default annotation, labels). Idempotent if already exists.
 
 ## BlockDevice
 
@@ -193,13 +185,6 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 - `CreateLocalStorageClass(ctx, kubeconfig, cfg)` — Creates a LocalStorageClass CR from `LocalStorageClassConfig` (name, LVM volume groups, LVM type Thick/Thin, thin pool name, reclaim policy, volume binding mode). Idempotent if already exists.
 - `WaitForLocalStorageClassCreated(ctx, kubeconfig, name, timeout)` — Waits for the LocalStorageClass CR status phase to reach `Created` (controller has created the corresponding StorageClass).
-
-## VolumeSnapshotClass
-
-`pkg/kubernetes/volumesnapshotclass.go`
-
-- `CreateVolumeSnapshotClass(ctx, kubeconfig, cfg)` — Creates a VolumeSnapshotClass from `VolumeSnapshotClassConfig` (name, driver, deletion policy, parameters, default flag). Idempotent if already exists.
-- `WaitForVolumeSnapshotClass(ctx, kubeconfig, name, timeout)` — Waits for a VolumeSnapshotClass to exist in the cluster.
 
 ## VirtualDisk
 

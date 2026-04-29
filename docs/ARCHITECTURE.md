@@ -27,21 +27,28 @@ storage-e2e/
 │   │   └── images.go             # OS image definitions
 │   │
 │   ├── cluster/                   # Cluster lifecycle management
-│   │   └── cluster.go            # Core cluster operations
+│   │   └── cluster.go            # Core cluster operations (kubeconfig, port patching)
 │   │
 │   ├── kubernetes/                # Kubernetes API operations
-│   │   ├── virtualization/       # Virtualization resources
+│   │   ├── commander/            # Deckhouse Commander HTTP API client
 │   │   │   ├── client.go
-│   │   │   ├── virtual_machine.go
-│   │   │   ├── virtual_disk.go
-│   │   │   ├── virtual_image.go
-│   │   │   ├── cluster_virtual_image.go
-│   │   │   └── vm_block_device.go
-│   │   └── deckhouse/            # Deckhouse-specific resources
+│   │   │   ├── errors.go
+│   │   │   └── types.go
+│   │   ├── deckhouse/            # Deckhouse CRDs (Module, ModuleConfig, etc.)
+│   │   │   ├── client.go
+│   │   │   ├── modules.go
+│   │   │   ├── nodegroups.go
+│   │   │   └── types.go
+│   │   ├── storage/              # SDS node-configurator CRDs
+│   │   │   ├── blockdevice.go
+│   │   │   └── lvmvolumegroup.go
+│   │   └── virtualization/       # Virtualization resources
 │   │       ├── client.go
-│   │       ├── modules.go
-│   │       ├── nodegroups.go
-│   │       └── types.go
+│   │       ├── virtual_machine.go
+│   │       ├── virtual_disk.go
+│   │       ├── virtual_image.go
+│   │       ├── cluster_virtual_image.go
+│   │       └── vm_block_device.go
 │   │
 │   ├── infrastructure/            # Infrastructure layer
 │   │   └── ssh/                  # SSH operations
@@ -61,51 +68,72 @@ storage-e2e/
 ├── pkg/                           # Public API (importable by external packages)
 │   ├── cluster/                  # Public cluster management API
 │   │   ├── cluster.go            # Main cluster creation/management
-│   │   ├── setup.go              # Cluster setup operations
-│   │   ├── modules.go            # Module management
-│   │   ├── nodegroup.go          # NodeGroup operations
-│   │   ├── secrets.go            # Secret management
+│   │   ├── setup.go              # Cluster setup and bootstrap operations
+│   │   ├── lock.go               # Cluster locking (ConfigMap-based)
 │   │   └── vms.go                # VM lifecycle management
 │   │
 │   ├── kubernetes/               # Public Kubernetes utilities
 │   │   ├── apply.go              # YAML manifest application
+│   │   ├── blockdevice.go        # BlockDevice operations
+│   │   ├── cephblockpool.go      # Rook CephBlockPool operations
+│   │   ├── cephcluster.go        # Rook CephCluster operations
+│   │   ├── cephclusterconnection.go # csi-ceph connection/auth CRs
+│   │   ├── cephcredentials.go    # Rook Ceph credential discovery
+│   │   ├── cephstorageclass.go   # csi-ceph CephStorageClass CR
+│   │   ├── client.go             # Clientset/dynamic client with retry
+│   │   ├── localstorageclass.go  # LocalStorageClass CR operations
+│   │   ├── lvmvolumegroup.go     # LVMVolumeGroup operations
 │   │   ├── modules.go            # Module configuration and readiness
 │   │   ├── namespace.go          # Namespace utilities
 │   │   ├── nodegroup.go          # NodeGroup operations
+│   │   ├── nodes.go              # Node listing, taints, labels
 │   │   ├── pod.go                # Pod operations
 │   │   ├── pvc.go                # PVC operations
-│   │   ├── resources.go          # Resource utilities
-│   │   └── secrets.go            # Secret operations
+│   │   ├── rookconfigoverride.go # Rook ceph.conf override ConfigMap
+│   │   ├── secrets.go            # Secret operations
+│   │   ├── storageclass.go       # StorageClass get/wait/default
+│   │   ├── storageclass_manage.go # Global default StorageClass management
+│   │   ├── virtualdisk.go        # VirtualDisk attach/detach
+│   │   ├── vmpod.go              # VM pod lookup
+│   │   └── volumesnapshotclass.go # VolumeSnapshotClass helpers
+│   │
+│   ├── retry/                    # Generic retry with exponential backoff
+│   │   └── retry.go
 │   │
 │   └── testkit/                  # Test framework utilities
-│       ├── stress-tests.go       # Stress test helpers
-│       ├── storageclass.go       # EnsureDefaultStorageClass (sds-local-volume)
 │       ├── ceph.go               # EnsureCephStorageClass (Rook + csi-ceph)
-│       └── ceph_cluster.go       # EnsureCephCluster (Rook only, no csi-ceph)
+│       ├── ceph_cluster.go       # EnsureCephCluster (Rook only, no csi-ceph)
+│       ├── ceph_crc.go           # Ceph CRC tuning helpers
+│       ├── storageclass.go       # EnsureDefaultStorageClass (sds-local-volume)
+│       └── stress-tests.go       # Stress test runner
 │
 ├── tests/                         # Test suites
 │   ├── test-template/            # Template for creating new tests
 │   │   ├── template_suite_test.go
 │   │   ├── template_test.go
-│   │   ├── cluster_config.yml
-│   │   └── test_exports          # Environment variables template
+│   │   └── cluster_config.yml
 │   │
-│   ├── create-test.sh            # Script to create new tests from template
-│   └── README.md                 # Test creation guide
+│   ├── csi-all-stress-tests/     # CSI stress tests
+│   │   ├── csi_all_stress_tests_suite_test.go
+│   │   ├── csi_all_stress_tests_test.go
+│   │   ├── cluster_config.yml
+│   │   └── files/                # CSI CR YAML files and scripts
+│   │
+│   └── create-test.sh            # Script to create new tests from template
+│
+├── docs/                          # Documentation
+│   ├── ARCHITECTURE.md           # This file
+│   ├── FUNCTIONS_GLOSSARY.md     # Exported functions reference
+│   ├── TODO.md                   # Global TODO
+│   └── WORKLOG.md                # Change log
 │
 ├── files/                         # Static files and templates
 │   └── bootstrap/
 │       └── config.yml.tpl        # Bootstrap configuration template
 │
-├── legacy/                        # Legacy code (being phased out)
-│   ├── testkit/
-│   ├── testkit_v2/
-│   └── images/
-│
 ├── go.mod
 ├── go.sum
 ├── README.md                      # Main documentation
-├── ARCHITECTURE.md                # This file
 └── LICENSE
 ```
 
@@ -331,9 +359,7 @@ config/
 pkg/cluster/
 ├── cluster.go          # Main cluster lifecycle functions
 ├── setup.go            # Cluster setup and bootstrap
-├── modules.go          # Module management
-├── nodegroup.go        # NodeGroup operations
-├── secrets.go          # Secret management
+├── lock.go             # Cluster locking (ConfigMap-based)
 └── vms.go              # VM lifecycle management
 
 internal/cluster/
@@ -359,27 +385,41 @@ CleanupTestCluster(ctx, resources) error
 ```
 pkg/kubernetes/                    # Public Kubernetes utilities
 ├── apply.go                       # YAML manifest application (ApplyYAML, CreateYAML)
+├── blockdevice.go                 # BlockDevice operations
+├── client.go                      # Clientset/dynamic client with retry
+├── localstorageclass.go           # LocalStorageClass CR operations
+├── lvmvolumegroup.go              # LVMVolumeGroup operations
 ├── modules.go                     # Module configuration and readiness checking
 ├── namespace.go                   # Namespace utilities
 ├── nodegroup.go                   # NodeGroup operations
+├── nodes.go                       # Node listing, taints, labels
 ├── pod.go                         # Pod operations (WaitForPodsStatus)
 ├── pvc.go                         # PVC operations (WaitForPVCsBound, WaitForPVCsResized, ResizeList)
-├── resources.go                   # Resource utilities (StorageClass, YAML file operations)
-└── secrets.go                     # Secret operations
+├── secrets.go                     # Secret operations
+├── storageclass.go                # StorageClass get/wait/default
+├── virtualdisk.go                 # VirtualDisk attach/detach
+└── vmpod.go                       # VM pod lookup
 
 internal/kubernetes/               # Internal Kubernetes clients
-├── virtualization/                # Virtualization resources
-│   ├── client.go                  # Virtualization client
-│   ├── virtual_machine.go         # VirtualMachine CRUD
-│   ├── virtual_disk.go            # VirtualDisk operations
-│   ├── virtual_image.go           # VirtualImage management
-│   ├── cluster_virtual_image.go   # ClusterVirtualImage ops
-│   └── vm_block_device.go         # VMBlockDevice operations
-└── deckhouse/                     # Deckhouse-specific resources
-    ├── client.go                  # Deckhouse client (controller-runtime based)
-    ├── modules.go                 # Module operations (GetModule, CreateModuleConfig, etc.)
-    ├── nodegroups.go              # NodeGroup management
-    └── types.go                   # Deckhouse type definitions
+├── commander/                     # Deckhouse Commander HTTP API client
+│   ├── client.go                  # Commander client (clusters, templates, kubeconfig)
+│   ├── errors.go                  # Error types
+│   └── types.go                   # API DTOs
+├── deckhouse/                     # Deckhouse-specific resources
+│   ├── client.go                  # Deckhouse client (controller-runtime based)
+│   ├── modules.go                 # Module operations (GetModule, CreateModuleConfig, etc.)
+│   ├── nodegroups.go              # NodeGroup management
+│   └── types.go                   # Deckhouse type definitions
+├── storage/                       # SDS node-configurator CRDs
+│   ├── blockdevice.go             # BlockDevice client
+│   └── lvmvolumegroup.go          # LVMVolumeGroup client
+└── virtualization/                # Virtualization resources
+    ├── client.go                  # Virtualization client
+    ├── virtual_machine.go         # VirtualMachine CRUD
+    ├── virtual_disk.go            # VirtualDisk operations
+    ├── virtual_image.go           # VirtualImage management
+    ├── cluster_virtual_image.go   # ClusterVirtualImage ops
+    └── vm_block_device.go         # VMBlockDevice operations
 ```
 
 **Responsibilities**:
@@ -452,36 +492,40 @@ pkg/
 ├── cluster/
 │   ├── cluster.go      # Main cluster lifecycle (CreateTestCluster, CleanupTestCluster)
 │   ├── setup.go        # Cluster setup and bootstrap operations
-│   ├── vms.go          # VM lifecycle management
-│   └── TODO.md         # Development notes
+│   ├── lock.go         # Cluster locking (ConfigMap-based)
+│   └── vms.go          # VM lifecycle management
 ├── kubernetes/
-│   ├── apply.go                 # YAML manifest application
-│   ├── modules.go               # Module configuration with dependency handling
-│   ├── namespace.go             # Namespace utilities
-│   ├── nodegroup.go             # NodeGroup operations
-│   ├── pod.go                   # Pod operations
-│   ├── pvc.go                   # PVC operations
-│   ├── resources.go             # Resource utilities
-│   ├── secrets.go               # Secret operations
-│   ├── storageclass.go          # Core StorageClass helpers
-│   ├── storageclass_manage.go   # Global default-SC management via ModuleConfig
-│   ├── localstorageclass.go     # sds-local-volume LocalStorageClass CR
-│   ├── lvmvolumegroup.go        # sds-node-configurator LVMVolumeGroup CR
-│   ├── blockdevice.go           # sds-node-configurator BlockDevice CR
-│   ├── virtualdisk.go           # DKP VirtualDisk CR
-│   ├── vmpod.go                 # Helpers to exec inside VM-hosted pods
-│   ├── volumesnapshotclass.go   # VolumeSnapshotClass helpers
-│   ├── rookconfigoverride.go    # Rook global ceph.conf via rook-config-override CM
-│   ├── cephcredentials.go       # Read fsid/mons/admin-key from Rook secrets
-│   ├── cephcluster.go           # Rook CephCluster CRUD + wait (unstructured)
-│   ├── cephblockpool.go         # Rook CephBlockPool CRUD + wait (unstructured)
+│   ├── apply.go        # YAML manifest application
+│   ├── blockdevice.go  # BlockDevice operations
+│   ├── cephblockpool.go         # Rook CephBlockPool CRUD + wait
+│   ├── cephcluster.go           # Rook CephCluster CRUD + wait
 │   ├── cephclusterconnection.go # csi-ceph CephClusterConnection/Auth CRs
-│   └── cephstorageclass.go      # csi-ceph CephStorageClass CR
+│   ├── cephcredentials.go       # Read fsid/mons/admin-key from Rook secrets
+│   ├── cephstorageclass.go      # csi-ceph CephStorageClass CR
+│   ├── client.go       # Clientset/dynamic client with retry
+│   ├── localstorageclass.go  # LocalStorageClass CR operations
+│   ├── lvmvolumegroup.go     # LVMVolumeGroup operations
+│   ├── modules.go      # Module configuration with dependency handling
+│   ├── namespace.go    # Namespace utilities
+│   ├── nodegroup.go    # NodeGroup operations
+│   ├── nodes.go        # Node listing, taints, labels
+│   ├── pod.go          # Pod operations
+│   ├── pvc.go          # PVC operations
+│   ├── rookconfigoverride.go    # Rook global ceph.conf override
+│   ├── secrets.go      # Secret operations
+│   ├── storageclass.go # StorageClass get/wait/default
+│   ├── storageclass_manage.go   # Global default-SC management
+│   ├── virtualdisk.go  # VirtualDisk attach/detach
+│   ├── vmpod.go        # VM pod lookup
+│   └── volumesnapshotclass.go   # VolumeSnapshotClass helpers
+├── retry/
+│   └── retry.go        # Generic retry with exponential backoff
 └── testkit/
-    ├── stress-tests.go  # Stress test helpers
-    ├── storageclass.go  # EnsureDefaultStorageClass (sds-local-volume)
     ├── ceph.go          # EnsureCephStorageClass / EnsureDefaultCephStorageClass
-    └── ceph_cluster.go  # EnsureCephCluster (Rook-only, no csi-ceph)
+    ├── ceph_cluster.go  # EnsureCephCluster (Rook-only, no csi-ceph)
+    ├── ceph_crc.go      # Ceph CRC tuning helpers
+    ├── storageclass.go  # EnsureDefaultStorageClass (sds-local-volume)
+    └── stress-tests.go  # Stress test runner
 ```
 
 **Responsibilities**:
@@ -689,7 +733,7 @@ logger.Error("Failed to create resource: %v", err)
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `TEST_CLUSTER_CREATE_MODE` | Cluster creation mode: `alwaysCreateNew` (creates VMs) or `alwaysUseExisting` (uses existing cluster with lock) | `alwaysCreateNew` |
+| `TEST_CLUSTER_CREATE_MODE` | Cluster creation mode: `alwaysCreateNew` (creates VMs), `alwaysUseExisting` (uses existing cluster with lock), or `commander` (uses Deckhouse Commander) | `alwaysCreateNew` |
 | `DKP_LICENSE_KEY` | Deckhouse license key | `X7Yig...` |
 | `REGISTRY_DOCKER_CFG` | Docker registry credentials | `eyJhd...` |
 | `SSH_USER` | SSH username for base/target cluster | `tfadm` |
@@ -708,6 +752,20 @@ logger.Error("Failed to create resource: %v", err)
 | `TEST_CLUSTER_CLEANUP` | `false` | Cleanup cluster after tests |
 | `LOG_LEVEL` | `debug` | Log level (debug/info/warn/error) |
 | `KUBE_CONFIG_PATH` | - | Fallback kubeconfig path |
+
+### Commander Variables (only when `TEST_CLUSTER_CREATE_MODE=commander`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COMMANDER_URL` | (required) | URL of the Deckhouse Commander API |
+| `COMMANDER_TOKEN` | (required) | API token for Commander authentication |
+| `COMMANDER_CLUSTER_NAME` | `e2e-test-cluster` | Name of the cluster in Commander |
+| `COMMANDER_TEMPLATE_NAME` | - | Template name for creating a new cluster |
+| `COMMANDER_TEMPLATE_VERSION` | latest | Template version to use |
+| `COMMANDER_CREATE_IF_NOT_EXISTS` | `false` | Create cluster if it doesn't exist |
+| `COMMANDER_WAIT_TIMEOUT` | `30m` | Timeout for waiting for cluster readiness |
+| `COMMANDER_AUTH_METHOD` | `x-auth-token` | Auth method (`x-auth-token`, `bearer`, `basic`, etc.) |
+| `COMMANDER_API_PREFIX` | `/api/v1` | API path prefix |
 
 ---
 
@@ -756,7 +814,8 @@ logger.Error("Failed to create resource: %v", err)
 
 ### 9.1 Potential Enhancements
 
-- [ ] Support for existing cluster reuse (`alwaysUseExisting` mode) - partialy implemented
+- [x] Support for existing cluster reuse (`alwaysUseExisting` mode)
+- [x] Deckhouse Commander integration (`commander` mode)
 - [ ] Parallel test execution support
 - [ ] Test result reporting and metrics
 - [ ] Integration with CI/CD systems
@@ -766,7 +825,6 @@ logger.Error("Failed to create resource: %v", err)
 
 ### 9.2 Technical Debt
 
-- Legacy code in `legacy/` directory (to be removed)
 - Some global state in configuration (being phased out)
 - Limited unit test coverage (focus on E2E currently)
 
