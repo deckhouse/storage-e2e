@@ -75,6 +75,11 @@ storage-e2e/
 │   ├── kubernetes/               # Public Kubernetes utilities
 │   │   ├── apply.go              # YAML manifest application
 │   │   ├── blockdevice.go        # BlockDevice operations
+│   │   ├── cephblockpool.go      # Rook CephBlockPool operations
+│   │   ├── cephcluster.go        # Rook CephCluster operations
+│   │   ├── cephclusterconnection.go # csi-ceph connection/auth CRs
+│   │   ├── cephcredentials.go    # Rook Ceph credential discovery
+│   │   ├── cephstorageclass.go   # csi-ceph CephStorageClass CR
 │   │   ├── client.go             # Clientset/dynamic client with retry
 │   │   ├── localstorageclass.go  # LocalStorageClass CR operations
 │   │   ├── lvmvolumegroup.go     # LVMVolumeGroup operations
@@ -84,16 +89,22 @@ storage-e2e/
 │   │   ├── nodes.go              # Node listing, taints, labels
 │   │   ├── pod.go                # Pod operations
 │   │   ├── pvc.go                # PVC operations
+│   │   ├── rookconfigoverride.go # Rook ceph.conf override ConfigMap
 │   │   ├── secrets.go            # Secret operations
 │   │   ├── storageclass.go       # StorageClass get/wait/default
+│   │   ├── storageclass_manage.go # Global default StorageClass management
 │   │   ├── virtualdisk.go        # VirtualDisk attach/detach
-│   │   └── vmpod.go              # VM pod lookup
+│   │   ├── vmpod.go              # VM pod lookup
+│   │   └── volumesnapshotclass.go # VolumeSnapshotClass helpers
 │   │
 │   ├── retry/                    # Generic retry with exponential backoff
 │   │   └── retry.go
 │   │
 │   └── testkit/                  # Test framework utilities
-│       ├── storageclass.go       # Default StorageClass provisioning
+│       ├── ceph.go               # EnsureCephStorageClass (Rook + csi-ceph)
+│       ├── ceph_cluster.go       # EnsureCephCluster (Rook only, no csi-ceph)
+│       ├── ceph_crc.go           # Ceph CRC tuning helpers
+│       ├── storageclass.go       # EnsureDefaultStorageClass (sds-local-volume)
 │       └── stress-tests.go       # Stress test runner
 │
 ├── tests/                         # Test suites
@@ -486,6 +497,11 @@ pkg/
 ├── kubernetes/
 │   ├── apply.go        # YAML manifest application
 │   ├── blockdevice.go  # BlockDevice operations
+│   ├── cephblockpool.go         # Rook CephBlockPool CRUD + wait
+│   ├── cephcluster.go           # Rook CephCluster CRUD + wait
+│   ├── cephclusterconnection.go # csi-ceph CephClusterConnection/Auth CRs
+│   ├── cephcredentials.go       # Read fsid/mons/admin-key from Rook secrets
+│   ├── cephstorageclass.go      # csi-ceph CephStorageClass CR
 │   ├── client.go       # Clientset/dynamic client with retry
 │   ├── localstorageclass.go  # LocalStorageClass CR operations
 │   ├── lvmvolumegroup.go     # LVMVolumeGroup operations
@@ -495,14 +511,20 @@ pkg/
 │   ├── nodes.go        # Node listing, taints, labels
 │   ├── pod.go          # Pod operations
 │   ├── pvc.go          # PVC operations
+│   ├── rookconfigoverride.go    # Rook global ceph.conf override
 │   ├── secrets.go      # Secret operations
 │   ├── storageclass.go # StorageClass get/wait/default
+│   ├── storageclass_manage.go   # Global default-SC management
 │   ├── virtualdisk.go  # VirtualDisk attach/detach
-│   └── vmpod.go        # VM pod lookup
+│   ├── vmpod.go        # VM pod lookup
+│   └── volumesnapshotclass.go   # VolumeSnapshotClass helpers
 ├── retry/
 │   └── retry.go        # Generic retry with exponential backoff
 └── testkit/
-    ├── storageclass.go  # Default StorageClass provisioning
+    ├── ceph.go          # EnsureCephStorageClass / EnsureDefaultCephStorageClass
+    ├── ceph_cluster.go  # EnsureCephCluster (Rook-only, no csi-ceph)
+    ├── ceph_crc.go      # Ceph CRC tuning helpers
+    ├── storageclass.go  # EnsureDefaultStorageClass (sds-local-volume)
     └── stress-tests.go  # Stress test runner
 ```
 

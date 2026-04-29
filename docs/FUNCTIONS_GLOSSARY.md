@@ -24,7 +24,14 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [Secrets](#secrets)
 - [Modules](#modules)
 - [Retry](#retry)
+- [Rook Config Override](#rook-config-override)
+- [Ceph Credentials](#ceph-credentials)
+- [CephCluster (Rook)](#cephcluster-rook)
+- [CephBlockPool (Rook)](#cephblockpool-rook)
+- [CephClusterConnection / CephClusterAuthentication (csi-ceph)](#cephclusterconnection--cephclusterauthentication-csi-ceph)
+- [CephStorageClass (csi-ceph)](#cephstorageclass-csi-ceph)
 - [Default StorageClass (Testkit)](#default-storageclass-testkit)
+- [Ceph StorageClass (Testkit)](#ceph-storageclass-testkit)
 - [Stress Tests (Testkit)](#stress-tests-testkit)
 
 ---
@@ -223,12 +230,72 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `IsSSHConnectionError(err)` — Checks if an error specifically indicates SSH connection failure requiring reconnection.
 - `WithRetryAfter(cfg, err)` — Returns a modified retry config that respects `RetryAfterSeconds` hints from Kubernetes API errors.
 
+## Rook Config Override
+
+`pkg/kubernetes/rookconfigoverride.go`
+
+- `SetRookConfigOverride(ctx, kubeconfig, namespace, globals)` — Creates or updates the `rook-config-override` ConfigMap in the Rook operator namespace. The provided map is rendered under `[global]` and Rook picks it up into every Ceph daemon's `ceph.conf` (used for `ms_crc_data`, `bdev_enable_discard`, and similar knobs). Keys are sorted for stable output.
+- `DeleteRookConfigOverride(ctx, kubeconfig, namespace)` — Removes the ConfigMap; safe if it does not exist.
+
+## Ceph Credentials
+
+`pkg/kubernetes/cephcredentials.go`
+
+- `WaitForCephCredentials(ctx, kubeconfig, namespace, timeout)` — Polls Rook's `rook-ceph-mon` Secret and `rook-ceph-mon-endpoints` ConfigMap until all pieces required to connect a CSI client to the cluster (`fsid`, admin user, admin key, monitor endpoints) are present. Returns a `*CephCredentials`.
+
+## CephCluster (Rook)
+
+`pkg/kubernetes/cephcluster.go`
+
+- `CreateCephCluster(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephCluster` CR using `CephClusterConfig` (image, mon/mgr counts, network provider, OSD storage class / count / size, data-dir host path, etc.). Idempotent.
+- `WaitForCephClusterReady(ctx, kubeconfig, namespace, name, timeout)` — Blocks until `status.state == "Created"` (or `status.phase == "Ready"`). HEALTH_WARN is tolerated so single-OSD test clusters still succeed.
+- `DeleteCephCluster(ctx, kubeconfig, namespace, name)` — Deletes the CR; NotFound is treated as success. Does NOT garbage-collect OSD data on host disks.
+
+## CephBlockPool (Rook)
+
+`pkg/kubernetes/cephblockpool.go`
+
+- `CreateCephBlockPool(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephBlockPool` from `CephBlockPoolConfig` (replicated with optional `requireSafeReplicaSize` override, or erasure-coded with `dataChunks`/`codingChunks`; `failureDomain`).
+- `WaitForCephBlockPoolReady(ctx, kubeconfig, namespace, name, timeout)` — Polls until `status.phase == "Ready"`.
+- `DeleteCephBlockPool(ctx, kubeconfig, namespace, name)` — Idempotent delete.
+
+## CephClusterConnection / CephClusterAuthentication (csi-ceph)
+
+`pkg/kubernetes/cephclusterconnection.go`
+
+- `CreateCephClusterAuthentication(ctx, kubeconfig, cfg)` — Creates or updates a `CephClusterAuthentication` CR (`userID` + `userKey`) used by csi-ceph to log in to Ceph.
+- `DeleteCephClusterAuthentication(ctx, kubeconfig, name)` — Idempotent delete.
+- `CreateCephClusterConnection(ctx, kubeconfig, cfg)` — Creates or updates a `CephClusterConnection` CR (`clusterID == fsid`, `monitors`, `userID`, `userKey`). `clusterID` is immutable: existing-resource updates leave it unchanged and only sync monitors/user.
+- `DeleteCephClusterConnection(ctx, kubeconfig, name)` — Idempotent delete.
+- `WaitForCephClusterConnectionCreated(ctx, kubeconfig, name, timeout)` — Polls until csi-ceph reports `status.phase == "Created"` (credentials + monitors validated against the live Ceph cluster).
+
+## CephStorageClass (csi-ceph)
+
+`pkg/kubernetes/cephstorageclass.go`
+
+- `CreateCephStorageClass(ctx, kubeconfig, cfg)` — Creates or updates a csi-ceph `CephStorageClass` CR (RBD by default; CephFS when `Type == "CephFS"` and `CephFSName` / `CephFSPool` are set). The csi-ceph controller provisions a corresponding core `storage.k8s.io/v1 StorageClass` as a side effect.
+- `DeleteCephStorageClass(ctx, kubeconfig, name)` — Idempotent delete; the controller removes the backing StorageClass.
+- `WaitForCephStorageClassCreated(ctx, kubeconfig, name, timeout)` — Polls until `status.phase == "Created"`.
+
 ## Default StorageClass (Testkit)
 
 `pkg/testkit/storageclass.go`
 
 - `CreateDefaultStorageClass(ctx, kubeconfig, cfg)` — High-level helper: discovers nodes, enables sds-node-configurator/sds-local-volume modules, labels nodes, optionally attaches VirtualDisks, creates LVMVolumeGroups (Thick or Thin with thin pool), creates LocalStorageClass, waits for StorageClass. Configured via `DefaultStorageClassConfig`.
 - `EnsureDefaultStorageClass(ctx, kubeconfig, cfg)` — Idempotent wrapper around `CreateDefaultStorageClass`. Checks if StorageClass already exists, skips creation if so, then sets it as the cluster default via "global" ModuleConfig.
+
+## Ceph StorageClass (Testkit)
+
+`pkg/testkit/ceph.go`
+
+- `EnsureCephStorageClass(ctx, kubeconfig, cfg)` — High-level end-to-end helper that turns an empty test cluster into one with a working csi-ceph `StorageClass`. Steps: (1) enable `sds-node-configurator`, `sds-elastic`, `csi-ceph` modules and wait Ready; (2) optionally call `EnsureDefaultStorageClass` to auto-provision a sds-local-volume SC for OSDs when `OSDStorageClass` is empty; (3) seed `rook-config-override` with `GlobalCephConfigOverrides` (e.g. `ms_crc_data=false`); (4) create Rook `CephCluster` and wait Created; (5) create `CephBlockPool` and wait Ready; (6) read fsid/monitors/admin-key from Rook-managed secrets; (7) wire csi-ceph by creating `CephClusterAuthentication` + `CephClusterConnection`; (8) create `CephStorageClass` and wait for the backing core StorageClass. Idempotent; returns the resulting StorageClass name.
+- `EnsureDefaultCephStorageClass(ctx, kubeconfig, cfg)` — `EnsureCephStorageClass` + `SetGlobalDefaultStorageClass` so new PVCs without an explicit `storageClassName` use the provisioned Ceph RBD class.
+
+## Ceph Cluster (Testkit) — no csi-ceph wiring
+
+`pkg/testkit/ceph_cluster.go`
+
+- `EnsureCephCluster(ctx, kubeconfig, cfg)` — "Stop-before-csi-ceph" variant of `EnsureCephStorageClass`: brings up a Rook-managed Ceph cluster + CephBlockPool via sds-elastic alone. Steps: (1) enable `sds-node-configurator` + `sds-elastic` (does **not** enable `csi-ceph`); (2) resolve/provision OSD backing StorageClass (reuses `EnsureDefaultStorageClass`); (3) seed `rook-config-override` with `GlobalCephConfigOverrides`; (4) create Rook `CephCluster` and wait Created; (5) create `CephBlockPool` and wait Ready. Does not create `CephClusterConnection`/`CephClusterAuthentication`/`CephStorageClass`. Useful when tests need a live Ceph backend to talk to directly (e.g. from within csi-ceph's own e2e) without the testkit preselecting a csi-ceph-backed StorageClass. Idempotent; returns the pool name.
 
 ## Stress Tests (Testkit)
 
