@@ -5,6 +5,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -100,6 +103,11 @@ var (
 	// TestClusterStorageClass specifies the storage class for DKP cluster deployment
 	TestClusterStorageClass = os.Getenv("TEST_CLUSTER_STORAGE_CLASS")
 	//TestClusterStorageClassDefaultValue = "rsc-test-r2-local"
+
+	// TestClusterVirtualMachineClassName is spec.virtualMachineClassName for VirtualMachines created on the base cluster.
+	// Empty means use TestClusterVirtualMachineClassNameDefaultValue ("generic"). Values other than generic must be a valid DNS-1123 label.
+	TestClusterVirtualMachineClassName             = os.Getenv("TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME")
+	TestClusterVirtualMachineClassNameDefaultValue = "generic"
 
 	// DKPLicenseKey specifies the DKP license key for cluster deployment
 	DKPLicenseKey = os.Getenv("DKP_LICENSE_KEY")
@@ -224,6 +232,15 @@ var (
 	LogTimetampsEnabledDefaultValue = "true"
 )
 
+// EffectiveVirtualMachineClassName returns the VM class name used for test VMs (defaults to generic when unset).
+func EffectiveVirtualMachineClassName() string {
+	n := strings.TrimSpace(TestClusterVirtualMachineClassName)
+	if n == "" {
+		return TestClusterVirtualMachineClassNameDefaultValue
+	}
+	return n
+}
+
 func ValidateEnvironment() error {
 	// Default values for environment variables
 	if YAMLConfigFilename == "" {
@@ -247,25 +264,36 @@ func ValidateEnvironment() error {
 		TestClusterNamespace = TestClusterNamespaceDefaultValue
 	}
 
+	TestClusterVirtualMachineClassName = strings.TrimSpace(TestClusterVirtualMachineClassName)
+	if TestClusterVirtualMachineClassName == "" {
+		TestClusterVirtualMachineClassName = TestClusterVirtualMachineClassNameDefaultValue
+	}
+	if TestClusterVirtualMachineClassName != TestClusterVirtualMachineClassNameDefaultValue {
+		if errs := validation.IsDNS1123Label(TestClusterVirtualMachineClassName); len(errs) > 0 {
+			return fmt.Errorf("TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME %q is not a valid Kubernetes DNS label name: %v",
+				TestClusterVirtualMachineClassName, errs)
+		}
+	}
+
 	// There are no default values for these variables and they must be set! Otherwise, the test will fail.
 	if SSHUser == "" {
-		return fmt.Errorf("SSH_USER environment variable is required but not set.")
+		return fmt.Errorf("SSH_USER environment variable is required but not set")
 	}
 
 	if SSHHost == "" {
-		return fmt.Errorf("SSH_HOST environment variable is required but not set.")
+		return fmt.Errorf("SSH_HOST environment variable is required but not set")
 	}
 
 	if TestClusterStorageClass == "" {
-		return fmt.Errorf("TEST_CLUSTER_STORAGE_CLASS environment variable is required but not set.")
+		return fmt.Errorf("TEST_CLUSTER_STORAGE_CLASS environment variable is required but not set")
 	}
 
 	if DKPLicenseKey == "" {
-		return fmt.Errorf("DKP_LICENSE_KEY environment variable is required but not set. ")
+		return fmt.Errorf("DKP_LICENSE_KEY environment variable is required but not set")
 	}
 
 	if RegistryDockerCfg == "" {
-		return fmt.Errorf("REGISTRY_DOCKER_CFG environment variable is required but not set.")
+		return fmt.Errorf("REGISTRY_DOCKER_CFG environment variable is required but not set")
 	}
 
 	if ImagePullPolicy == "" {
@@ -273,22 +301,22 @@ func ValidateEnvironment() error {
 	}
 
 	if ImagePullPolicy != ImagePullPolicyAlways && ImagePullPolicy != ImagePullPolicyIfNotExists {
-		return fmt.Errorf("IMAGE_PULL_POLICY has invalid value '%s'. "+
-			"Must be either '%s' or '%s'",
+		return fmt.Errorf("IMAGE_PULL_POLICY has invalid value '%s'; "+
+			"must be either '%s' or '%s'",
 			ImagePullPolicy, ImagePullPolicyAlways, ImagePullPolicyIfNotExists)
 	}
 
 	if TestClusterCreateMode == "" {
-		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE environment variable is required but not set. "+
-			"Please set it to '%s', '%s', or '%s'",
+		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE environment variable is required but not set; "+
+			"please set it to '%s', '%s', or '%s'",
 			ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander)
 	}
 
 	if TestClusterCreateMode != ClusterCreateModeAlwaysUseExisting &&
 		TestClusterCreateMode != ClusterCreateModeAlwaysCreateNew &&
 		TestClusterCreateMode != ClusterCreateModeCommander {
-		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE has invalid value '%s'. "+
-			"Must be '%s', '%s', or '%s'",
+		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE has invalid value '%s'; "+
+			"must be '%s', '%s', or '%s'",
 			TestClusterCreateMode, ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander)
 	}
 
@@ -320,8 +348,8 @@ func ValidateEnvironment() error {
 	}
 
 	if LogLevel != LogLevelDebug && LogLevel != LogLevelInfo && LogLevel != LogLevelWarn && LogLevel != LogLevelError {
-		return fmt.Errorf("LOG_LEVEL has invalid value '%s'. "+
-			"Must be either '%s' or '%s' or '%s' or '%s'",
+		return fmt.Errorf("LOG_LEVEL has invalid value '%s'; "+
+			"must be either '%s' or '%s' or '%s' or '%s'",
 			LogLevel, LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError)
 	}
 
@@ -330,8 +358,8 @@ func ValidateEnvironment() error {
 	}
 
 	if LogTimetampsEnabled != "true" && LogTimetampsEnabled != "false" {
-		return fmt.Errorf("LOG_TIMESTAMPS_ENABLED has invalid value '%s'. "+
-			"Must be either '%s' or '%s'",
+		return fmt.Errorf("LOG_TIMESTAMPS_ENABLED has invalid value '%s'; "+
+			"must be either '%s' or '%s'",
 			LogTimetampsEnabled, "true", "false")
 	}
 

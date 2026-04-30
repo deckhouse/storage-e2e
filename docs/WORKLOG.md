@@ -4,6 +4,20 @@ All notable changes to this repository are documented here. New entries are appe
 
 ---
 
+## 2026-04-30
+
+- **Add** `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` in `internal/config/env.go`: configurable `VirtualMachineClassName` for base-cluster VMs (default `generic`), DNS-1123 validation for non-generic names
+- **Add** `EffectiveVirtualMachineClassName()` and `VirtualMachineClassReadinessTimeout` (`internal/config/config.go`)
+- **Add** `VirtualMachineClass` client (`internal/kubernetes/virtualization/virtual_machine_class.go`) and `Client.VirtualMachineClasses()` in `client.go`
+- **Add** `ensureVirtualMachineClassForClusterVMs` / readiness wait in `pkg/cluster/vms.go`: if named class is missing, clone from `generic` with `spec.cpu.type` Host, label `storage-e2e.deckhouse.io/auto-created=true`; no deletion on e2e cleanup
+- **Update** `CreateVirtualMachines` to call ensure before CVMI creation; `createVM` uses effective class name
+- **Update** env dumps in `pkg/cluster/cluster.go`, `tests/test-template/template_test.go`, and `tests/csi-all-stress-tests/csi_all_stress_tests_test.go`
+- **Update** `docs/FUNCTIONS_GLOSSARY.md`: `CreateVirtualMachines` description (ensure VM class)
+- **Bugfix** `ValidateEnvironment` in `internal/config/env.go`: align error strings with staticcheck ST1005 (no trailing punctuation; semicolons in multi-part messages)
+- **Update** `github.com/deckhouse/virtualization/api` to v1.8.0: register `core/v1alpha3` scheme in virtualization client; `VirtualMachineClass` CRUD uses `v1alpha3` (preferred API; `spec.cpu.discovery` is `*CpuDiscovery`, so Host CPU serializes without empty discovery object)
+
+---
+
 ## 2026-03-25
 
 - **Refactor** `WaitForLocalStorageClassCreated` in `pkg/kubernetes/localstorageclass.go`: replaced manual deadline + `time.Sleep` with idiomatic `context.WithTimeout` + `time.NewTicker` + `select` pattern
