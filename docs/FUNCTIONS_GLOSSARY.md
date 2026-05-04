@@ -28,6 +28,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [Ceph Credentials](#ceph-credentials)
 - [CephCluster (Rook)](#cephcluster-rook)
 - [CephBlockPool (Rook)](#cephblockpool-rook)
+- [CephFilesystem (Rook)](#cephfilesystem-rook)
 - [CephClusterConnection / CephClusterAuthentication (csi-ceph)](#cephclusterconnection--cephclusterauthentication-csi-ceph)
 - [CephStorageClass (csi-ceph)](#cephstorageclass-csi-ceph)
 - [Default StorageClass (Testkit)](#default-storageclass-testkit)
@@ -259,6 +260,15 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `WaitForCephBlockPoolReady(ctx, kubeconfig, namespace, name, timeout)` — Polls until `status.phase == "Ready"`.
 - `DeleteCephBlockPool(ctx, kubeconfig, namespace, name)` — Idempotent delete.
 
+## CephFilesystem (Rook)
+
+`pkg/kubernetes/cephfilesystem.go`
+
+- `CreateCephFilesystem(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephFilesystem` from `CephFilesystemConfig` (one replicated metadata pool + one replicated data pool, configurable `failureDomain`, `MetadataServerActiveCount`, optional `RequireSafeReplicaSize`). Idempotent.
+- `WaitForCephFilesystemReady(ctx, kubeconfig, namespace, name, timeout)` — Polls until `status.phase == "Ready"`, with a fallback that also accepts `status.conditions[type=Ready,status=True]` for Rook revisions that populate conditions before phase.
+- `DeleteCephFilesystem(ctx, kubeconfig, namespace, name)` — Idempotent delete.
+- `CephFSDataPoolFullName(fsName, dataPoolName)` — Returns the full Ceph pool name (`<fsName>-<dataPoolName>`) that should be passed to `CephStorageClass.spec.cephFS.pool`.
+
 ## CephClusterConnection / CephClusterAuthentication (csi-ceph)
 
 `pkg/kubernetes/cephclusterconnection.go`
@@ -288,8 +298,9 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 `pkg/testkit/ceph.go`
 
-- `EnsureCephStorageClass(ctx, kubeconfig, cfg)` — High-level end-to-end helper that turns an empty test cluster into one with a working csi-ceph `StorageClass`. Steps: (1) enable `sds-node-configurator`, `sds-elastic`, `csi-ceph` modules and wait Ready; (2) optionally call `EnsureDefaultStorageClass` to auto-provision a sds-local-volume SC for OSDs when `OSDStorageClass` is empty; (3) seed `rook-config-override` with `GlobalCephConfigOverrides` (e.g. `ms_crc_data=false`); (4) create Rook `CephCluster` and wait Created; (5) create `CephBlockPool` and wait Ready; (6) read fsid/monitors/admin-key from Rook-managed secrets; (7) wire csi-ceph by creating `CephClusterAuthentication` + `CephClusterConnection`; (8) create `CephStorageClass` and wait for the backing core StorageClass. Idempotent; returns the resulting StorageClass name.
-- `EnsureDefaultCephStorageClass(ctx, kubeconfig, cfg)` — `EnsureCephStorageClass` + `SetGlobalDefaultStorageClass` so new PVCs without an explicit `storageClassName` use the provisioned Ceph RBD class.
+- `EnsureCephStorageClass(ctx, kubeconfig, cfg)` — High-level end-to-end helper that turns an empty test cluster into one with a working csi-ceph `StorageClass`. Steps: (1) enable `sds-node-configurator`, `sds-elastic`, `csi-ceph` modules and wait Ready; (2) optionally call `EnsureDefaultStorageClass` to auto-provision a sds-local-volume SC for OSDs when `OSDStorageClass` is empty; (3) seed `rook-config-override` with `GlobalCephConfigOverrides` (e.g. `ms_crc_data=false`); (4) create Rook `CephCluster` and wait Created; (5) create the backing pool primitive — `CephBlockPool` (when `Type == "RBD"`, default) or `CephFilesystem` (when `Type == "CephFS"`) — and wait Ready; (6) read fsid/monitors/admin-key from Rook-managed secrets; (7) wire csi-ceph by creating `CephClusterAuthentication` + `CephClusterConnection`; (8) create the matching `CephStorageClass` (RBD pool or `<fsName>-<dataPoolName>` for CephFS) and wait for the backing core StorageClass. Idempotent; returns the resulting StorageClass name.
+- `EnsureDefaultCephStorageClass(ctx, kubeconfig, cfg)` — `EnsureCephStorageClass` + `SetGlobalDefaultStorageClass` so new PVCs without an explicit `storageClassName` use the provisioned Ceph (RBD or CephFS) class.
+- `TeardownCephStorageClass(ctx, kubeconfig, cfg)` — Reverse of `EnsureCephStorageClass`. Deletes the `CephStorageClass`, `CephClusterConnection`, `CephClusterAuthentication`, and the `CephBlockPool` / `CephFilesystem` matching `cfg.Type`. Also removes the `CephCluster` and `rook-config-override` ConfigMap unless `SkipClusterTeardown` is set (use that flag when several StorageClasses share one `CephCluster` and only the last teardown should drop the cluster). NotFound is treated as success; the first error is returned but later deletions are still attempted.
 
 ## Ceph Cluster (Testkit) — no csi-ceph wiring
 
