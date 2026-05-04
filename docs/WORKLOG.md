@@ -4,6 +4,14 @@ All notable changes to this repository are documented here. New entries are appe
 
 ---
 
+## 2026-05-04
+
+- **Bugfix** `BootstrapCluster` in `pkg/cluster/setup.go`: drop dhctl-in-Docker flow via `SSH_AUTH_SOCK`/ssh-agent; bind-mount the setup-node key (from `UploadBootstrapFiles`) to `/root/.ssh/id_rsa` and pass `--ssh-agent-private-keys` — aligns with dhctl/lib-connection `ExtractConfig` reading key paths early ([deckhouse#19063](https://github.com/deckhouse/deckhouse/pull/19063))
+- **Add** when `SSH_PASSPHRASE` is set: build dhctl connection-config (`SSHConfig` + `SSHHost`, `dhctl.deckhouse.io/v1`) with inline PEM and passphrase, upload to the setup node, run bootstrap with `--connection-config` only (dhctl disallows mixing with `--ssh-*`)
+- **Add** `buildDHCTLSSHConnectionConfig` and YAML manifest structs (`dhctlSSHConfigManifest`, etc.) in `pkg/cluster/setup.go`
+
+---
+
 ## 2026-04-30
 
 - **Add** `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` in `internal/config/env.go`: configurable `VirtualMachineClassName` for base-cluster VMs (default `generic`), DNS-1123 validation for non-generic names
