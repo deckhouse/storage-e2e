@@ -77,6 +77,7 @@ storage-e2e/
 │   │   ├── blockdevice.go        # BlockDevice operations
 │   │   ├── cephblockpool.go      # Rook CephBlockPool operations
 │   │   ├── cephcluster.go        # Rook CephCluster operations
+│   │   ├── cephfilesystem.go     # Rook CephFilesystem operations
 │   │   ├── cephclusterconnection.go # csi-ceph connection/auth CRs
 │   │   ├── cephcredentials.go    # Rook Ceph credential discovery
 │   │   ├── cephstorageclass.go   # csi-ceph CephStorageClass CR
@@ -88,6 +89,7 @@ storage-e2e/
 │   │   ├── nodegroup.go          # NodeGroup operations
 │   │   ├── nodes.go              # Node listing, taints, labels
 │   │   ├── pod.go                # Pod operations
+│   │   ├── poll.go               # Generic readiness poller (per-call timeout, WARN on net errors)
 │   │   ├── pvc.go                # PVC operations
 │   │   ├── rookconfigoverride.go # Rook ceph.conf override ConfigMap
 │   │   ├── secrets.go            # Secret operations
@@ -337,6 +339,7 @@ Tests use Ginkgo's lifecycle hooks:
 config/
 ├── config.go           # Main configuration operations
 ├── env.go              # Environment variable definitions and validation
+├── overrides.go        # ${VAR} expansion in modulePullOverride at config load time
 ├── types.go            # Configuration type definitions
 └── images.go           # OS image URL definitions
 ```
@@ -499,6 +502,7 @@ pkg/
 │   ├── blockdevice.go  # BlockDevice operations
 │   ├── cephblockpool.go         # Rook CephBlockPool CRUD + wait
 │   ├── cephcluster.go           # Rook CephCluster CRUD + wait
+│   ├── cephfilesystem.go        # Rook CephFilesystem CRUD + wait
 │   ├── cephclusterconnection.go # csi-ceph CephClusterConnection/Auth CRs
 │   ├── cephcredentials.go       # Read fsid/mons/admin-key from Rook secrets
 │   ├── cephstorageclass.go      # csi-ceph CephStorageClass CR
@@ -510,6 +514,7 @@ pkg/
 │   ├── nodegroup.go    # NodeGroup operations
 │   ├── nodes.go        # Node listing, taints, labels
 │   ├── pod.go          # Pod operations
+│   ├── poll.go         # pollResourceUntilReady helper for Wait*Ready callers
 │   ├── pvc.go          # PVC operations
 │   ├── rookconfigoverride.go    # Rook global ceph.conf override
 │   ├── secrets.go      # Secret operations

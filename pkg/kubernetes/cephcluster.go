@@ -331,46 +331,27 @@ func toInterfaceSlice(in []string) []interface{} {
 //
 // We return success once `state == "Created"`. HEALTH_ERR is reported in the
 // log and does not short-circuit (Rook may recover).
+//
+// Network errors are logged loud (WARN) after a few consecutive failures so a
+// dropped SSH tunnel surfaces in seconds instead of getting buried in Debug
+// output. See pollResourceUntilReady for the per-call deadline rationale.
 func WaitForCephClusterReady(ctx context.Context, kubeconfig *rest.Config, namespace, name string, timeout time.Duration) error {
-	if namespace == "" || name == "" {
-		return fmt.Errorf("namespace and name are required")
-	}
-
-	logger.Debug("Waiting for CephCluster %s/%s to reach Created state (timeout: %v)", namespace, name, timeout)
-
-	dynamicClient, err := NewDynamicClientWithRetry(ctx, kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		obj, err := dynamicClient.Resource(CephClusterGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err == nil {
+	return pollResourceUntilReady(
+		ctx, kubeconfig, CephClusterGVR, namespace, name,
+		timeout, 10*time.Second, "CephCluster",
+		func(obj *unstructured.Unstructured) (bool, string) {
 			state, _, _ := unstructured.NestedString(obj.Object, "status", "state")
 			health, _, _ := unstructured.NestedString(obj.Object, "status", "ceph", "health")
 			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
 
 			if state == "Created" || phase == "Ready" {
-				logger.Success("CephCluster %s/%s is Created (ceph health: %s)", namespace, name, health)
-				return nil
+				return true, fmt.Sprintf("state=%s phase=%s ceph health: %s", state, phase, health)
 			}
-			logger.Debug("CephCluster %s/%s state=%q phase=%q health=%q", namespace, name, state, phase, health)
-		} else if !apierrors.IsNotFound(err) {
-			logger.Debug("Error getting CephCluster %s/%s: %v", namespace, name, err)
-		}
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for CephCluster %s/%s: %w", namespace, name, ctx.Err())
-		case <-ticker.C:
-		}
-	}
+			logger.Debug("CephCluster %s/%s state=%q phase=%q health=%q",
+				obj.GetNamespace(), obj.GetName(), state, phase, health)
+			return false, ""
+		},
+	)
 }
 
 // DeleteCephCluster removes a CephCluster. Tearing down the cluster this way

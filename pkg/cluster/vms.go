@@ -487,10 +487,39 @@ func getCVMINameFromImageURL(imageURL string) string {
 	return name
 }
 
+// cloudInitAptMirror configures cloud-init to use mirror.yandex.ru as the
+// Ubuntu apt mirror for both the primary archive and security pools, and
+// pins apt to IPv4. Default Ubuntu mirrors (archive.ubuntu.com /
+// security.ubuntu.com) round-robin across many IPs and are partially
+// unreachable from some Flant infra (e.g. some egress paths block all the
+// IPv6 endpoints, and most IPv4 ones time out for archive.ubuntu.com),
+// which makes Step 9 (Wait for Docker) and per-node package_update very flaky
+// or outright stall. mirror.yandex.ru carries main/universe/multiverse/restricted
+// for the same suites and is reachable in those environments.
+//
+// The leading newline keeps the indentation flush with the rest of the
+// cloud-config when interpolated mid-document.
+const cloudInitAptMirror = `apt:
+  primary:
+    - arches: [default]
+      uri: http://mirror.yandex.ru/ubuntu
+  security:
+    - arches: [default]
+      uri: http://mirror.yandex.ru/ubuntu
+`
+
+// cloudInitForceIPv4 disables IPv6 for apt to avoid 30-second connection
+// timeouts on every package fetch when the host lacks working IPv6 egress.
+// Written via write_files so it is in effect before package_update runs.
+const cloudInitForceIPv4Apt = `  - path: /etc/apt/apt.conf.d/99force-ipv4
+    content: |
+      Acquire::ForceIPv4 "true";
+`
+
 // generateCloudInitUserData generates cloud-init user data for VM provisioning (cluster nodes)
 func generateCloudInitUserData(hostname, sshPubKey string) string {
 	return fmt.Sprintf(`#cloud-config
-package_update: true
+%spackage_update: true
 packages:
   - tmux
   - htop
@@ -515,7 +544,7 @@ users:
     ssh_authorized_keys:
       - %s
 write_files:
-  - path: /etc/ssh/sshd_config.d/allow_tcp_forwarding.conf
+%s  - path: /etc/ssh/sshd_config.d/allow_tcp_forwarding.conf
     content: |
       # Разрешить TCP forwarding
       AllowTcpForwarding yes
@@ -531,14 +560,14 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable --now qemu-guest-agent.service
   - echo 'source /root/.kubectl_aliases' >> /root/.bashrc
-`, sshPubKey, hostname)
+`, cloudInitAptMirror, sshPubKey, cloudInitForceIPv4Apt, hostname)
 }
 
 // generateSetupNodeCloudInit generates cloud-init user data for the setup/bootstrap node.
 // This includes Docker which is required for running the Deckhouse installer.
 func generateSetupNodeCloudInit(hostname, sshPubKey string) string {
 	return fmt.Sprintf(`#cloud-config
-package_update: true
+%spackage_update: true
 packages:
   - tmux
   - htop
@@ -560,7 +589,7 @@ users:
     ssh_authorized_keys:
       - %s
 write_files:
-  - path: /etc/ssh/sshd_config.d/allow_tcp_forwarding.conf
+%s  - path: /etc/ssh/sshd_config.d/allow_tcp_forwarding.conf
     content: |
       # Разрешить TCP forwarding
       AllowTcpForwarding yes
@@ -571,7 +600,7 @@ runcmd:
   - systemctl daemon-reload
   - systemctl enable --now qemu-guest-agent.service
   - systemctl enable --now docker.service
-`, sshPubKey, hostname)
+`, cloudInitAptMirror, sshPubKey, cloudInitForceIPv4Apt, hostname)
 }
 
 // RemoveAllVMs forcefully stops and deletes virtual machines, virtual disks, and virtual images.

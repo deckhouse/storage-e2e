@@ -45,9 +45,11 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
+	"github.com/deckhouse/storage-e2e/internal/logger"
 )
 
 // LoadClusterConfig loads and validates a cluster configuration from a YAML file
@@ -71,6 +73,14 @@ func LoadClusterConfig(configFilename string) (*config.ClusterDefinition, error)
 	var clusterDef config.ClusterDefinition
 	if err := yaml.Unmarshal(data, &clusterDef); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
+	}
+
+	// Expand ${VAR} placeholders in modulePullOverride fields. CI uses this to
+	// pass a per-PR/MR image tag via a single env var (e.g. MODULE_IMAGE_TAG)
+	// without editing the YAML between runs. Missing envs fail fast here so we
+	// don't silently regress to "main" on accidentally unset variables.
+	if err := config.ExpandEnvInModulePullOverride(&clusterDef); err != nil {
+		return nil, fmt.Errorf("expand env in modulePullOverride: %w", err)
 	}
 
 	// Validate the configuration
@@ -219,30 +229,40 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 	var kubeconfigContent []byte
 
 	// Read kubeconfig via SSH: prefer super-admin.conf when present (see getKubeconfigRemoteShell).
-	kubeconfigContentStr, err := sshClient.Exec(ctx, getKubeconfigRemoteShell)
-	if err != nil {
-		// SSH retrieval failed (likely due to sudo password requirement)
-		// Try to use KUBE_CONFIG_PATH if set, otherwise notify user
-		if config.KubeConfigPath != "" {
-			// Expand path to handle ~ and resolve symlinks if present
-			resolvedPath, err := expandPath(config.KubeConfigPath)
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to expand KUBE_CONFIG_PATH (%s): %w", config.KubeConfigPath, err)
-			}
-			// Read kubeconfig content from the provided file
-			kubeconfigContent, err = os.ReadFile(resolvedPath)
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to read kubeconfig from KUBE_CONFIG_PATH (%s): %w", resolvedPath, err)
-			}
-		} else {
-			// KUBE_CONFIG_PATH not set, notify user and fail
-			return nil, "", fmt.Errorf("failed to read kubeconfig from master (this may occur if sudo requires a password). "+
-				"Please download the kubeconfig file manually and provide its full path via KUBE_CONFIG_PATH environment variable. "+
-				"Original error: %w", err)
-		}
-	} else {
+	kubeconfigContentStr, sshErr := sshClient.Exec(ctx, getKubeconfigRemoteShell)
+	switch {
+	case sshErr == nil:
 		// SSH succeeded - use the content from SSH
 		kubeconfigContent = []byte(kubeconfigContentStr)
+
+	case config.KubeConfigPath != "":
+		// SSH retrieval failed (likely due to sudo password requirement) and the
+		// caller pointed us at a specific kubeconfig file via KUBE_CONFIG_PATH.
+		resolvedPath, expandErr := expandPath(config.KubeConfigPath)
+		if expandErr != nil {
+			return nil, "", fmt.Errorf("failed to expand KUBE_CONFIG_PATH (%s): %w", config.KubeConfigPath, expandErr)
+		}
+		readContent, readErr := os.ReadFile(resolvedPath)
+		if readErr != nil {
+			return nil, "", fmt.Errorf("failed to read kubeconfig from KUBE_CONFIG_PATH (%s): %w", resolvedPath, readErr)
+		}
+		kubeconfigContent = readContent
+
+	default:
+		// SSH failed and no explicit KUBE_CONFIG_PATH. Fall back to kubectl's
+		// standard resolution (KUBECONFIG env, otherwise ~/.kube/config) so
+		// that a developer whose `kubectl` already targets the right base
+		// cluster doesn't have to set anything else.
+		fallbackContent, fallbackPath, fallbackErr := loadDefaultKubeconfig()
+		if fallbackErr == nil {
+			logger.Info("SSH kubeconfig retrieval failed (%v); falling back to local kubeconfig at %s", sshErr, fallbackPath)
+			kubeconfigContent = fallbackContent
+		} else {
+			return nil, "", fmt.Errorf("failed to read kubeconfig from master (this may occur if sudo requires a password) "+
+				"and the local kubectl-default kubeconfig fallback also failed (%v). "+
+				"Set KUBE_CONFIG_PATH to a working kubeconfig, or ensure $KUBECONFIG / ~/.kube/config points at the base cluster. "+
+				"Original SSH error: %w", fallbackErr, sshErr)
+		}
 	}
 
 	// Write kubeconfig content to file (always write a working copy, regardless of source)
@@ -347,4 +367,43 @@ func UpdateKubeconfigPort(kubeconfigPath string, localPort int) error {
 	}
 
 	return nil
+}
+
+// loadDefaultKubeconfig replicates kubectl's standard kubeconfig resolution
+// (KUBECONFIG env, otherwise ~/.kube/config; multiple files in KUBECONFIG are
+// merged) and returns the serialized merged config plus a human-readable
+// description of where it was loaded from. Used as a last-resort fallback when
+// SSH-based retrieval fails and KUBE_CONFIG_PATH is not set, so a developer
+// whose `kubectl` already points at the right base cluster can simply run the
+// suite without exporting any extra variables.
+func loadDefaultKubeconfig() ([]byte, string, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	rawConfig, err := loadingRules.Load()
+	if err != nil {
+		return nil, "", fmt.Errorf("clientcmd default loader: %w", err)
+	}
+	if rawConfig == nil || len(rawConfig.Clusters) == 0 {
+		return nil, "", fmt.Errorf("no clusters in default kubeconfig (KUBECONFIG=%q, ~/.kube/config)", os.Getenv("KUBECONFIG"))
+	}
+
+	// Minify down to the current-context only. Otherwise UpdateKubeconfigPort
+	// would rewrite the `server:` URL of every cluster in a multi-cluster
+	// kubeconfig, breaking unrelated entries on the developer's machine.
+	minified := *rawConfig
+	if err := clientcmdapi.MinifyConfig(&minified); err != nil {
+		return nil, "", fmt.Errorf("clientcmd minify default kubeconfig: %w", err)
+	}
+
+	content, err := clientcmd.Write(minified)
+	if err != nil {
+		return nil, "", fmt.Errorf("clientcmd serialize default kubeconfig: %w", err)
+	}
+
+	source := os.Getenv("KUBECONFIG")
+	if source == "" {
+		source = "~/.kube/config (current-context=" + minified.CurrentContext + ")"
+	} else {
+		source = "KUBECONFIG=" + source + " (current-context=" + minified.CurrentContext + ")"
+	}
+	return content, source, nil
 }
