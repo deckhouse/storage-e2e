@@ -226,7 +226,15 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 
 	kubeconfigPath := filepath.Join(outputDir, fmt.Sprintf("kubeconfig-%s.yml", masterIP))
 
-	var kubeconfigContent []byte
+	var (
+		kubeconfigContent []byte
+		// kubeconfigSource is a short, human-readable tag identifying where the
+		// kubeconfig came from. It's printed at the end of GetKubeconfig so it
+		// is always obvious in test logs which cluster we're actually about to
+		// hit — important after diagnosing wrong-cluster bugs that look like
+		// "stale lock" or "unexpected modules".
+		kubeconfigSource string
+	)
 
 	// Read kubeconfig via SSH: prefer super-admin.conf when present (see getKubeconfigRemoteShell).
 	kubeconfigContentStr, sshErr := sshClient.Exec(ctx, getKubeconfigRemoteShell)
@@ -234,6 +242,7 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 	case sshErr == nil:
 		// SSH succeeded - use the content from SSH
 		kubeconfigContent = []byte(kubeconfigContentStr)
+		kubeconfigSource = fmt.Sprintf("SSH(%s@%s:/etc/kubernetes/{super-admin,admin}.conf)", user, masterIP)
 
 	case config.KubeConfigPath != "":
 		// SSH retrieval failed (likely due to sudo password requirement) and the
@@ -247,23 +256,45 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 			return nil, "", fmt.Errorf("failed to read kubeconfig from KUBE_CONFIG_PATH (%s): %w", resolvedPath, readErr)
 		}
 		kubeconfigContent = readContent
+		kubeconfigSource = fmt.Sprintf("KUBE_CONFIG_PATH=%s", resolvedPath)
 
 	default:
 		// SSH failed and no explicit KUBE_CONFIG_PATH. Fall back to kubectl's
 		// standard resolution (KUBECONFIG env, otherwise ~/.kube/config) so
 		// that a developer whose `kubectl` already targets the right base
 		// cluster doesn't have to set anything else.
+		//
+		// This branch is *very loud* on purpose: silent fallback to the
+		// developer's personal ~/.kube/config has historically caused tests
+		// to acquire stale locks on unrelated SAN clusters or deploy modules
+		// against the wrong stand. We make sure both the WARN line and the
+		// final source-stamp surface what just happened.
 		fallbackContent, fallbackPath, fallbackErr := loadDefaultKubeconfig()
-		if fallbackErr == nil {
-			logger.Info("SSH kubeconfig retrieval failed (%v); falling back to local kubeconfig at %s", sshErr, fallbackPath)
-			kubeconfigContent = fallbackContent
-		} else {
+		if fallbackErr != nil {
 			return nil, "", fmt.Errorf("failed to read kubeconfig from master (this may occur if sudo requires a password) "+
 				"and the local kubectl-default kubeconfig fallback also failed (%v). "+
 				"Set KUBE_CONFIG_PATH to a working kubeconfig, or ensure $KUBECONFIG / ~/.kube/config points at the base cluster. "+
 				"Original SSH error: %w", fallbackErr, sshErr)
 		}
+		fbCtx, fbServer := kubeconfigContextSummary(fallbackContent)
+		logger.Warn(
+			"SSH kubeconfig retrieval from %s@%s failed (%v); falling back to LOCAL kubeconfig at %s "+
+				"(current-context=%q, server=%q). "+
+				"This is almost certainly NOT the cluster you intended to test against — check SSH_HOST/SSH_USER, "+
+				"or set KUBE_CONFIG_PATH to a specific kubeconfig file. "+
+				"To fail fast instead of silently falling back, unset $KUBECONFIG and remove ~/.kube/config",
+			user, masterIP, sshErr, fallbackPath, fbCtx, fbServer,
+		)
+		kubeconfigContent = fallbackContent
+		kubeconfigSource = fmt.Sprintf("LOCAL_FALLBACK(%s)", fallbackPath)
 	}
+
+	// Always stamp the kubeconfig source + the resulting current-context/server
+	// in the log. With this single line a developer reading the output knows
+	// for sure which cluster the test is about to talk to, regardless of which
+	// of the three resolution paths fired above.
+	finalCtx, finalServer := kubeconfigContextSummary(kubeconfigContent)
+	logger.Info("Loaded kubeconfig (source=%s, current-context=%q, server=%q)", kubeconfigSource, finalCtx, finalServer)
 
 	// Write kubeconfig content to file (always write a working copy, regardless of source)
 	kubeconfigFile, err := os.Create(kubeconfigPath)
@@ -367,6 +398,33 @@ func UpdateKubeconfigPort(kubeconfigPath string, localPort int) error {
 	}
 
 	return nil
+}
+
+// kubeconfigContextSummary parses a serialized kubeconfig and returns its
+// current-context name and the matching cluster's `server:` URL. Used purely
+// for human-readable log lines that identify which cluster the test is about
+// to talk to. On any parse failure the helper returns "<unknown>" / "<unknown>"
+// rather than an error: failing here would defeat its only purpose, which is
+// to make the surrounding log message safer to print under partial failures.
+func kubeconfigContextSummary(content []byte) (currentContext, server string) {
+	currentContext = "<unknown>"
+	server = "<unknown>"
+	if len(content) == 0 {
+		return
+	}
+	cfg, err := clientcmd.Load(content)
+	if err != nil || cfg == nil {
+		return
+	}
+	if cfg.CurrentContext != "" {
+		currentContext = cfg.CurrentContext
+	}
+	if ctx, ok := cfg.Contexts[cfg.CurrentContext]; ok && ctx != nil {
+		if cl, ok := cfg.Clusters[ctx.Cluster]; ok && cl != nil && cl.Server != "" {
+			server = cl.Server
+		}
+	}
+	return
 }
 
 // loadDefaultKubeconfig replicates kubectl's standard kubeconfig resolution
