@@ -150,6 +150,9 @@ func CreateCephBlockPool(ctx context.Context, kubeconfig *rest.Config, cfg CephB
 	if err != nil {
 		return fmt.Errorf("failed to fetch existing CephBlockPool %s/%s: %w", cfg.Namespace, cfg.Name, err)
 	}
+	if err := errIfTerminating(existing, "CephBlockPool", formatRef(cfg.Namespace, cfg.Name)); err != nil {
+		return err
+	}
 	existing.Object["spec"] = spec
 	if _, err := dynamicClient.Resource(CephBlockPoolGVR).Namespace(cfg.Namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("failed to update CephBlockPool %s/%s: %w", cfg.Namespace, cfg.Name, err)
@@ -180,7 +183,11 @@ func WaitForCephBlockPoolReady(ctx context.Context, kubeconfig *rest.Config, nam
 }
 
 // DeleteCephBlockPool deletes a CephBlockPool. Safe to call if the pool does
-// not exist.
+// not exist. NOTE: this is fire-and-forget — the API call returns as soon as
+// the apiserver accepts the request, but Rook may still be running its
+// finalizer (`cephblockpool.ceph.rook.io`) for a few minutes afterwards. If
+// you want to be certain the CR is fully gone before continuing, follow up
+// with WaitForCephBlockPoolGone.
 func DeleteCephBlockPool(ctx context.Context, kubeconfig *rest.Config, namespace, name string) error {
 	dynamicClient, err := NewDynamicClientWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -195,4 +202,24 @@ func DeleteCephBlockPool(ctx context.Context, kubeconfig *rest.Config, namespace
 	}
 	logger.Info("Deleted CephBlockPool %s/%s", namespace, name)
 	return nil
+}
+
+// CephBlockPoolGoneTimeout is the default budget for WaitForCephBlockPoolGone.
+// Rook removes the underlying RBD pool from Ceph before lifting the
+// finalizer; with one OSD the pool delete normally completes in seconds but
+// can take a few minutes if the cluster is unhealthy.
+const CephBlockPoolGoneTimeout = 5 * time.Minute
+
+// WaitForCephBlockPoolGone polls until the CephBlockPool is fully GC'd by
+// Kubernetes (GET returns NotFound). Use this after DeleteCephBlockPool to
+// be sure the parent CephCluster won't be blocked by `ObjectHasDependents`
+// when it gets deleted next.
+func WaitForCephBlockPoolGone(ctx context.Context, kubeconfig *rest.Config, namespace, name string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = CephBlockPoolGoneTimeout
+	}
+	return pollResourceUntilGone(
+		ctx, kubeconfig, CephBlockPoolGVR, namespace, name,
+		timeout, PollTickInterval, "CephBlockPool",
+	)
 }

@@ -178,6 +178,9 @@ func CreateCephFilesystem(ctx context.Context, kubeconfig *rest.Config, cfg Ceph
 	if err != nil {
 		return fmt.Errorf("failed to fetch existing CephFilesystem %s/%s: %w", cfg.Namespace, cfg.Name, err)
 	}
+	if err := errIfTerminating(existing, "CephFilesystem", formatRef(cfg.Namespace, cfg.Name)); err != nil {
+		return err
+	}
 	existing.Object["spec"] = spec
 	if _, err := dynamicClient.Resource(CephFilesystemGVR).Namespace(cfg.Namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("failed to update CephFilesystem %s/%s: %w", cfg.Namespace, cfg.Name, err)
@@ -230,7 +233,11 @@ func cephFilesystemReadyByCondition(obj map[string]interface{}) bool {
 }
 
 // DeleteCephFilesystem deletes a CephFilesystem. Safe to call if the
-// filesystem does not exist.
+// filesystem does not exist. NOTE: fire-and-forget — Rook's
+// `cephfilesystem.ceph.rook.io` finalizer takes time to detach the MDS
+// daemons and remove the metadata/data pools. Pair with
+// WaitForCephFilesystemGone if you need to know the CR has actually been
+// GC'd before doing something else (e.g. deleting the parent CephCluster).
 func DeleteCephFilesystem(ctx context.Context, kubeconfig *rest.Config, namespace, name string) error {
 	dynamicClient, err := NewDynamicClientWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -245,4 +252,23 @@ func DeleteCephFilesystem(ctx context.Context, kubeconfig *rest.Config, namespac
 	}
 	logger.Info("Deleted CephFilesystem %s/%s", namespace, name)
 	return nil
+}
+
+// CephFilesystemGoneTimeout is the default budget for WaitForCephFilesystemGone.
+// MDS shutdown + pool removal usually settles in 1-2 minutes; we allow more
+// to absorb operator restarts and slow Ceph mons.
+const CephFilesystemGoneTimeout = 5 * time.Minute
+
+// WaitForCephFilesystemGone polls until the CephFilesystem is fully GC'd by
+// Kubernetes (GET returns NotFound). Use this after DeleteCephFilesystem to
+// be sure the parent CephCluster's deletion won't be blocked by
+// `ObjectHasDependents`.
+func WaitForCephFilesystemGone(ctx context.Context, kubeconfig *rest.Config, namespace, name string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = CephFilesystemGoneTimeout
+	}
+	return pollResourceUntilGone(
+		ctx, kubeconfig, CephFilesystemGVR, namespace, name,
+		timeout, PollTickInterval, "CephFilesystem",
+	)
 }

@@ -477,6 +477,21 @@ func EnsureCephStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg Ce
 // call on partial state (missing resources are skipped — the first error is
 // returned but subsequent deletions are still attempted).
 //
+// Each Delete is followed by a Wait*Gone that waits for the apiserver to
+// actually GC the CR. Without this synchronization the next test run (in
+// alwaysUseExisting mode, or a fresh bootstrap that re-creates the same
+// namespace) would race against Rook's finalizer and either:
+//   - find the CR still in Terminating and try to update its spec (no-op
+//     while the controller unwinds the finalizer);
+//   - delete the parent CephCluster while a child CephBlockPool /
+//     CephFilesystem is still alive — Rook then sets `DeletionIsBlocked /
+//     ObjectHasDependents` and the CephCluster sticks in `phase=Deleting`
+//     forever.
+//
+// On a Wait*Gone timeout we DO NOT auto-strip finalizers: the failure is
+// surfaced as an aggregated error so the operator can investigate the
+// cluster (typical reasons: HEALTH_ERR Ceph, stuck OSD prepare, dead mgr).
+//
 // It deliberately does NOT disable the Deckhouse modules: they may be owned
 // by the cluster admin, and re-bootstrapping is cheaper than a full
 // module-disable → module-enable cycle.
@@ -495,17 +510,37 @@ func TeardownCephStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg 
 	}
 
 	logger.Info("Tearing down csi-ceph StorageClass %q (type=%s)", cfg.StorageClassName, cfg.Type)
+
+	// 1. CephStorageClass: leaf, no finalizer dependency on the rest.
 	note(kubernetes.DeleteCephStorageClass(ctx, kubeconfig, cfg.StorageClassName), "delete CephStorageClass")
+	note(kubernetes.WaitForCephStorageClassGone(ctx, kubeconfig, cfg.StorageClassName, 0), "wait CephStorageClass gone")
+
+	// 2. CephClusterConnection / CephClusterAuthentication: csi-ceph CRs.
+	// Order between conn and auth doesn't matter — neither depends on the
+	// other.
 	note(kubernetes.DeleteCephClusterConnection(ctx, kubeconfig, cfg.ClusterConnectionName), "delete CephClusterConnection")
+	note(kubernetes.WaitForCephClusterConnectionGone(ctx, kubeconfig, cfg.ClusterConnectionName, 0), "wait CephClusterConnection gone")
+
 	note(kubernetes.DeleteCephClusterAuthentication(ctx, kubeconfig, cfg.ClusterAuthenticationName), "delete CephClusterAuthentication")
+	note(kubernetes.WaitForCephClusterAuthenticationGone(ctx, kubeconfig, cfg.ClusterAuthenticationName, 0), "wait CephClusterAuthentication gone")
+
+	// 3. Pool / Filesystem: must be fully gone before deleting CephCluster,
+	// otherwise Rook records DeletionIsBlocked / ObjectHasDependents.
 	switch cfg.Type {
 	case kubernetes.CephStorageClassTypeCephFS:
 		note(kubernetes.DeleteCephFilesystem(ctx, kubeconfig, cfg.Namespace, cfg.CephFSName), "delete CephFilesystem")
+		note(kubernetes.WaitForCephFilesystemGone(ctx, kubeconfig, cfg.Namespace, cfg.CephFSName, 0), "wait CephFilesystem gone")
 	default:
 		note(kubernetes.DeleteCephBlockPool(ctx, kubeconfig, cfg.Namespace, cfg.PoolName), "delete CephBlockPool")
+		note(kubernetes.WaitForCephBlockPoolGone(ctx, kubeconfig, cfg.Namespace, cfg.PoolName, 0), "wait CephBlockPool gone")
 	}
+
+	// 4. CephCluster: only when this teardown call owns it (the other
+	// TeardownCephStorageClass call shares the same Rook cluster — see
+	// SkipClusterTeardown doc-comment).
 	if !cfg.SkipClusterTeardown {
 		note(kubernetes.DeleteCephCluster(ctx, kubeconfig, cfg.Namespace, cfg.CephClusterName), "delete CephCluster")
+		note(kubernetes.WaitForCephClusterGone(ctx, kubeconfig, cfg.Namespace, cfg.CephClusterName, 0), "wait CephCluster gone")
 		note(kubernetes.DeleteRookConfigOverride(ctx, kubeconfig, cfg.Namespace), "delete rook-config-override")
 	} else {
 		logger.Info("Skipping CephCluster + rook-config-override teardown (SkipClusterTeardown=true)")

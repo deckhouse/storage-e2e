@@ -103,6 +103,9 @@ func CreateCephClusterAuthentication(ctx context.Context, kubeconfig *rest.Confi
 	if err != nil {
 		return fmt.Errorf("failed to fetch CephClusterAuthentication %s: %w", cfg.Name, err)
 	}
+	if err := errIfTerminating(existing, "CephClusterAuthentication", cfg.Name); err != nil {
+		return err
+	}
 	existing.Object["spec"] = obj.Object["spec"]
 	if _, err := dynamicClient.Resource(CephClusterAuthenticationGVR).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("failed to update CephClusterAuthentication %s: %w", cfg.Name, err)
@@ -111,7 +114,8 @@ func CreateCephClusterAuthentication(ctx context.Context, kubeconfig *rest.Confi
 }
 
 // DeleteCephClusterAuthentication removes a CephClusterAuthentication.
-// NotFound is treated as success.
+// NotFound is treated as success. Pair with WaitForCephClusterAuthenticationGone
+// when teardown order matters.
 func DeleteCephClusterAuthentication(ctx context.Context, kubeconfig *rest.Config, name string) error {
 	dynamicClient, err := NewDynamicClientWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -125,6 +129,22 @@ func DeleteCephClusterAuthentication(ctx context.Context, kubeconfig *rest.Confi
 	}
 	logger.Info("Deleted CephClusterAuthentication %s", name)
 	return nil
+}
+
+// CephClusterAuthenticationGoneTimeout is the default budget for
+// WaitForCephClusterAuthenticationGone. The CR has no heavy finalizer.
+const CephClusterAuthenticationGoneTimeout = 1 * time.Minute
+
+// WaitForCephClusterAuthenticationGone polls until the CephClusterAuthentication
+// is fully GC'd by Kubernetes (GET returns NotFound).
+func WaitForCephClusterAuthenticationGone(ctx context.Context, kubeconfig *rest.Config, name string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = CephClusterAuthenticationGoneTimeout
+	}
+	return pollResourceUntilGone(
+		ctx, kubeconfig, CephClusterAuthenticationGVR, "", name,
+		timeout, PollTickInterval, "CephClusterAuthentication",
+	)
 }
 
 // CephClusterConnectionConfig describes a csi-ceph CephClusterConnection CR.
@@ -196,6 +216,9 @@ func CreateCephClusterConnection(ctx context.Context, kubeconfig *rest.Config, c
 	if err != nil {
 		return fmt.Errorf("failed to fetch CephClusterConnection %s: %w", cfg.Name, err)
 	}
+	if err := errIfTerminating(existing, "CephClusterConnection", cfg.Name); err != nil {
+		return err
+	}
 	if err := unstructured.SetNestedSlice(existing.Object, monitors, "spec", "monitors"); err != nil {
 		return fmt.Errorf("set monitors: %w", err)
 	}
@@ -212,7 +235,8 @@ func CreateCephClusterConnection(ctx context.Context, kubeconfig *rest.Config, c
 }
 
 // DeleteCephClusterConnection removes a CephClusterConnection.
-// NotFound is treated as success.
+// NotFound is treated as success. Pair with WaitForCephClusterConnectionGone
+// when teardown order matters.
 func DeleteCephClusterConnection(ctx context.Context, kubeconfig *rest.Config, name string) error {
 	dynamicClient, err := NewDynamicClientWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -226,6 +250,22 @@ func DeleteCephClusterConnection(ctx context.Context, kubeconfig *rest.Config, n
 	}
 	logger.Info("Deleted CephClusterConnection %s", name)
 	return nil
+}
+
+// CephClusterConnectionGoneTimeout is the default budget for
+// WaitForCephClusterConnectionGone. The CR has no heavy finalizer.
+const CephClusterConnectionGoneTimeout = 1 * time.Minute
+
+// WaitForCephClusterConnectionGone polls until the CephClusterConnection is
+// fully GC'd by Kubernetes (GET returns NotFound).
+func WaitForCephClusterConnectionGone(ctx context.Context, kubeconfig *rest.Config, name string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = CephClusterConnectionGoneTimeout
+	}
+	return pollResourceUntilGone(
+		ctx, kubeconfig, CephClusterConnectionGVR, "", name,
+		timeout, PollTickInterval, "CephClusterConnection",
+	)
 }
 
 // WaitForCephClusterConnectionCreated polls until the CephClusterConnection

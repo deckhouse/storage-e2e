@@ -193,6 +193,9 @@ func CreateCephCluster(ctx context.Context, kubeconfig *rest.Config, cfg CephClu
 	if err != nil {
 		return fmt.Errorf("failed to fetch existing CephCluster %s/%s: %w", cfg.Namespace, cfg.Name, err)
 	}
+	if err := errIfTerminating(existing, "CephCluster", formatRef(cfg.Namespace, cfg.Name)); err != nil {
+		return err
+	}
 	existing.Object["spec"] = spec
 	if _, err := dynamicClient.Resource(CephClusterGVR).Namespace(cfg.Namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("failed to update CephCluster %s/%s: %w", cfg.Namespace, cfg.Name, err)
@@ -359,6 +362,16 @@ func WaitForCephClusterReady(ctx context.Context, kubeconfig *rest.Config, names
 // `dataDirHostPath` and operator-managed PVCs will not be garbage-collected
 // automatically. The operation is still idempotent: a NotFound error is
 // swallowed.
+//
+// NOTE: this is fire-and-forget. The apiserver returns success as soon as it
+// records the delete intent; Rook then runs its `cephcluster.ceph.rook.io`
+// finalizer for several minutes, removing pools, mon/mgr/osd pods, and so
+// on. If any dependent CR (CephBlockPool, CephFilesystem, ...) is still
+// alive, Rook records `DeletionIsBlocked / ObjectHasDependents` and the CR
+// stays in `phase=Deleting` indefinitely. Always tear down dependents first
+// (and call WaitForCephBlockPoolGone / WaitForCephFilesystemGone on them)
+// before invoking DeleteCephCluster, then follow up with
+// WaitForCephClusterGone.
 func DeleteCephCluster(ctx context.Context, kubeconfig *rest.Config, namespace, name string) error {
 	dynamicClient, err := NewDynamicClientWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -373,4 +386,26 @@ func DeleteCephCluster(ctx context.Context, kubeconfig *rest.Config, namespace, 
 	}
 	logger.Info("Deleted CephCluster %s/%s", namespace, name)
 	return nil
+}
+
+// CephClusterGoneTimeout is the default budget for WaitForCephClusterGone.
+// Rook needs to drain mon/mgr/osd pods, remove the CRUSH map, and unset
+// finalizers — easily 5+ minutes on a single-OSD cluster, longer on
+// degraded ones.
+const CephClusterGoneTimeout = 10 * time.Minute
+
+// WaitForCephClusterGone polls until the CephCluster is fully GC'd by
+// Kubernetes (GET returns NotFound). The poller logs the
+// deletionTimestamp/finalizers progress periodically so a stuck finalizer
+// (typical e2e failure: orphan dependent CR, broken Ceph health) is
+// immediately visible in the test log instead of being hidden behind a
+// silent timeout.
+func WaitForCephClusterGone(ctx context.Context, kubeconfig *rest.Config, namespace, name string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = CephClusterGoneTimeout
+	}
+	return pollResourceUntilGone(
+		ctx, kubeconfig, CephClusterGVR, namespace, name,
+		timeout, PollTickInterval, "CephCluster",
+	)
 }

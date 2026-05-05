@@ -248,43 +248,49 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 `pkg/kubernetes/cephcluster.go`
 
-- `CreateCephCluster(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephCluster` CR using `CephClusterConfig` (image, mon/mgr counts, network provider, OSD storage class / count / size, data-dir host path, etc.). Idempotent.
-- `WaitForCephClusterReady(ctx, kubeconfig, namespace, name, timeout)` — Blocks until `status.state == "Created"` (or `status.phase == "Ready"`). HEALTH_WARN is tolerated so single-OSD test clusters still succeed. Each Get is bounded by `PollGetTimeout` (30s) and consecutive Get failures emit WARN, so a dropped SSH tunnel surfaces in seconds instead of after the readyTimeout.
-- `DeleteCephCluster(ctx, kubeconfig, namespace, name)` — Deletes the CR; NotFound is treated as success. Does NOT garbage-collect OSD data on host disks.
+- `CreateCephCluster(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephCluster` CR using `CephClusterConfig` (image, mon/mgr counts, network provider, OSD storage class / count / size, data-dir host path, etc.). Idempotent. **Fail-fast:** if an existing CR has `metadata.deletionTimestamp != nil`, returns an error instead of trying to update a Terminating object (which would silently no-op and trap the next `WaitForCephClusterReady` for 15-20 minutes).
+- `WaitForCephClusterReady(ctx, kubeconfig, namespace, name, timeout)` — Blocks until `status.state == "Created"` (or `status.phase == "Ready"`). HEALTH_WARN is tolerated so single-OSD test clusters still succeed. Each Get is bounded by `PollGetTimeout` (30s) and consecutive Get failures emit WARN, so a dropped SSH tunnel surfaces in seconds instead of after the readyTimeout. **Fail-fast** when the CR comes back with `deletionTimestamp != nil` — there's no point waiting for Ready on a Terminating object.
+- `DeleteCephCluster(ctx, kubeconfig, namespace, name)` — Fire-and-forget delete; NotFound is treated as success. Does NOT garbage-collect OSD data on host disks. Pair with `WaitForCephClusterGone` if the next step depends on the CR being fully GC'd (e.g. before re-creating the cluster, or to detect a stuck `cephcluster.ceph.rook.io` finalizer early).
+- `WaitForCephClusterGone(ctx, kubeconfig, namespace, name, timeout)` — Polls until the CR returns NotFound (default `CephClusterGoneTimeout` = 10m when timeout is 0). Logs deletionTimestamp / finalizers progress periodically, so a stuck finalizer (typical after a teardown that left dependents alive — see `DeletionIsBlocked`) is visible immediately instead of after a silent timeout. Fail-fast on timeout: does NOT auto-strip finalizers — investigate the cluster manually before re-running.
 
 ## CephBlockPool (Rook)
 
 `pkg/kubernetes/cephblockpool.go`
 
-- `CreateCephBlockPool(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephBlockPool` from `CephBlockPoolConfig` (replicated with optional `requireSafeReplicaSize` override, or erasure-coded with `dataChunks`/`codingChunks`; `failureDomain`).
-- `WaitForCephBlockPoolReady(ctx, kubeconfig, namespace, name, timeout)` — Polls until `status.phase == "Ready"`. Each Get is bounded by `PollGetTimeout` (30s) and consecutive Get failures emit WARN, so a dropped SSH tunnel surfaces in seconds instead of after the readyTimeout.
-- `DeleteCephBlockPool(ctx, kubeconfig, namespace, name)` — Idempotent delete.
+- `CreateCephBlockPool(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephBlockPool` from `CephBlockPoolConfig` (replicated with optional `requireSafeReplicaSize` override, or erasure-coded with `dataChunks`/`codingChunks`; `failureDomain`). **Fail-fast** when the existing CR has `deletionTimestamp != nil`.
+- `WaitForCephBlockPoolReady(ctx, kubeconfig, namespace, name, timeout)` — Polls until `status.phase == "Ready"`. Each Get is bounded by `PollGetTimeout` (30s) and consecutive Get failures emit WARN, so a dropped SSH tunnel surfaces in seconds instead of after the readyTimeout. Fail-fast on `deletionTimestamp != nil`.
+- `DeleteCephBlockPool(ctx, kubeconfig, namespace, name)` — Fire-and-forget delete; NotFound is treated as success. Pair with `WaitForCephBlockPoolGone` to make sure the parent CephCluster's deletion isn't blocked by `ObjectHasDependents`.
+- `WaitForCephBlockPoolGone(ctx, kubeconfig, namespace, name, timeout)` — Polls until the CR is GC'd (default `CephBlockPoolGoneTimeout` = 5m). Logs progress periodically.
 
 ## CephFilesystem (Rook)
 
 `pkg/kubernetes/cephfilesystem.go`
 
-- `CreateCephFilesystem(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephFilesystem` from `CephFilesystemConfig` (one replicated metadata pool + one replicated data pool, configurable `failureDomain`, `MetadataServerActiveCount`, optional `RequireSafeReplicaSize`). Idempotent.
-- `WaitForCephFilesystemReady(ctx, kubeconfig, namespace, name, timeout)` — Polls until `status.phase == "Ready"`, with a fallback that also accepts `status.conditions[type=Ready,status=True]` for Rook revisions that populate conditions before phase. Each Get is bounded by `PollGetTimeout` (30s) and consecutive Get failures emit WARN, so a dropped SSH tunnel surfaces in seconds instead of after the readyTimeout.
-- `DeleteCephFilesystem(ctx, kubeconfig, namespace, name)` — Idempotent delete.
+- `CreateCephFilesystem(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephFilesystem` from `CephFilesystemConfig` (one replicated metadata pool + one replicated data pool, configurable `failureDomain`, `MetadataServerActiveCount`, optional `RequireSafeReplicaSize`). Idempotent. **Fail-fast** when the existing CR has `deletionTimestamp != nil`.
+- `WaitForCephFilesystemReady(ctx, kubeconfig, namespace, name, timeout)` — Polls until `status.phase == "Ready"`, with a fallback that also accepts `status.conditions[type=Ready,status=True]` for Rook revisions that populate conditions before phase. Each Get is bounded by `PollGetTimeout` (30s) and consecutive Get failures emit WARN, so a dropped SSH tunnel surfaces in seconds instead of after the readyTimeout. Fail-fast on `deletionTimestamp != nil`.
+- `DeleteCephFilesystem(ctx, kubeconfig, namespace, name)` — Fire-and-forget delete; NotFound is treated as success. Pair with `WaitForCephFilesystemGone` to make sure the parent CephCluster's deletion isn't blocked by `ObjectHasDependents`.
+- `WaitForCephFilesystemGone(ctx, kubeconfig, namespace, name, timeout)` — Polls until the CR is GC'd (default `CephFilesystemGoneTimeout` = 5m). Logs progress periodically.
 - `CephFSDataPoolFullName(fsName, dataPoolName)` — Returns the full Ceph pool name (`<fsName>-<dataPoolName>`) that should be passed to `CephStorageClass.spec.cephFS.pool`.
 
 ## CephClusterConnection / CephClusterAuthentication (csi-ceph)
 
 `pkg/kubernetes/cephclusterconnection.go`
 
-- `CreateCephClusterAuthentication(ctx, kubeconfig, cfg)` — Creates or updates a `CephClusterAuthentication` CR (`userID` + `userKey`) used by csi-ceph to log in to Ceph.
-- `DeleteCephClusterAuthentication(ctx, kubeconfig, name)` — Idempotent delete.
-- `CreateCephClusterConnection(ctx, kubeconfig, cfg)` — Creates or updates a `CephClusterConnection` CR (`clusterID == fsid`, `monitors`, `userID`, `userKey`). `clusterID` is immutable: existing-resource updates leave it unchanged and only sync monitors/user.
-- `DeleteCephClusterConnection(ctx, kubeconfig, name)` — Idempotent delete.
+- `CreateCephClusterAuthentication(ctx, kubeconfig, cfg)` — Creates or updates a `CephClusterAuthentication` CR (`userID` + `userKey`) used by csi-ceph to log in to Ceph. **Fail-fast** when the existing CR has `deletionTimestamp != nil`.
+- `DeleteCephClusterAuthentication(ctx, kubeconfig, name)` — Fire-and-forget delete; NotFound is treated as success.
+- `WaitForCephClusterAuthenticationGone(ctx, kubeconfig, name, timeout)` — Polls until the CR is GC'd (default `CephClusterAuthenticationGoneTimeout` = 1m).
+- `CreateCephClusterConnection(ctx, kubeconfig, cfg)` — Creates or updates a `CephClusterConnection` CR (`clusterID == fsid`, `monitors`, `userID`, `userKey`). `clusterID` is immutable: existing-resource updates leave it unchanged and only sync monitors/user. **Fail-fast** when the existing CR has `deletionTimestamp != nil`.
+- `DeleteCephClusterConnection(ctx, kubeconfig, name)` — Fire-and-forget delete; NotFound is treated as success.
+- `WaitForCephClusterConnectionGone(ctx, kubeconfig, name, timeout)` — Polls until the CR is GC'd (default `CephClusterConnectionGoneTimeout` = 1m).
 - `WaitForCephClusterConnectionCreated(ctx, kubeconfig, name, timeout)` — Polls until csi-ceph reports `status.phase == "Created"` (credentials + monitors validated against the live Ceph cluster).
 
 ## CephStorageClass (csi-ceph)
 
 `pkg/kubernetes/cephstorageclass.go`
 
-- `CreateCephStorageClass(ctx, kubeconfig, cfg)` — Creates or updates a csi-ceph `CephStorageClass` CR (RBD by default; CephFS when `Type == "CephFS"` and `CephFSName` / `CephFSPool` are set). The csi-ceph controller provisions a corresponding core `storage.k8s.io/v1 StorageClass` as a side effect.
-- `DeleteCephStorageClass(ctx, kubeconfig, name)` — Idempotent delete; the controller removes the backing StorageClass.
+- `CreateCephStorageClass(ctx, kubeconfig, cfg)` — Creates or updates a csi-ceph `CephStorageClass` CR (RBD by default; CephFS when `Type == "CephFS"` and `CephFSName` / `CephFSPool` are set). The csi-ceph controller provisions a corresponding core `storage.k8s.io/v1 StorageClass` as a side effect. **Fail-fast** when the existing CR has `deletionTimestamp != nil`.
+- `DeleteCephStorageClass(ctx, kubeconfig, name)` — Fire-and-forget delete; the controller removes the backing StorageClass.
+- `WaitForCephStorageClassGone(ctx, kubeconfig, name, timeout)` — Polls until the CR is GC'd (default `CephStorageClassGoneTimeout` = 1m).
 - `WaitForCephStorageClassCreated(ctx, kubeconfig, name, timeout)` — Polls until `status.phase == "Created"`.
 
 ## Default StorageClass (Testkit)
@@ -300,7 +306,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 - `EnsureCephStorageClass(ctx, kubeconfig, cfg)` — High-level end-to-end helper that turns an empty test cluster into one with a working csi-ceph `StorageClass`. Steps: (1) enable `sds-node-configurator`, `sds-elastic`, `csi-ceph` modules and wait Ready; (2) optionally call `EnsureDefaultStorageClass` to auto-provision a sds-local-volume SC for OSDs when `OSDStorageClass` is empty; (3) seed `rook-config-override` with `GlobalCephConfigOverrides` (e.g. `ms_crc_data=false`); (4) create Rook `CephCluster` and wait Created; (5) create the backing pool primitive — `CephBlockPool` (when `Type == "RBD"`, default) or `CephFilesystem` (when `Type == "CephFS"`) — and wait Ready; (6) read fsid/monitors/admin-key from Rook-managed secrets; (7) wire csi-ceph by creating `CephClusterAuthentication` + `CephClusterConnection`; (8) create the matching `CephStorageClass` (RBD pool or `<fsName>-<dataPoolName>` for CephFS) and wait for the backing core StorageClass. Idempotent; returns the resulting StorageClass name.
 - `EnsureDefaultCephStorageClass(ctx, kubeconfig, cfg)` — `EnsureCephStorageClass` + `SetGlobalDefaultStorageClass` so new PVCs without an explicit `storageClassName` use the provisioned Ceph (RBD or CephFS) class.
-- `TeardownCephStorageClass(ctx, kubeconfig, cfg)` — Reverse of `EnsureCephStorageClass`. Deletes the `CephStorageClass`, `CephClusterConnection`, `CephClusterAuthentication`, and the `CephBlockPool` / `CephFilesystem` matching `cfg.Type`. Also removes the `CephCluster` and `rook-config-override` ConfigMap unless `SkipClusterTeardown` is set (use that flag when several StorageClasses share one `CephCluster` and only the last teardown should drop the cluster). NotFound is treated as success; the first error is returned but later deletions are still attempted.
+- `TeardownCephStorageClass(ctx, kubeconfig, cfg)` — Reverse of `EnsureCephStorageClass`. After every Delete it now waits for the CR to be fully GC'd via the matching `WaitForXxxGone` helper. Order is: `CephStorageClass` → `CephClusterConnection` → `CephClusterAuthentication` → (`CephBlockPool` or `CephFilesystem` per `cfg.Type`) → `CephCluster` (unless `SkipClusterTeardown`) → `rook-config-override` ConfigMap. Without those waits the parent `CephCluster` would be deleted before its dependents are gone, Rook would record `DeletionIsBlocked / ObjectHasDependents`, and the next test run would either find a stuck Terminating CR or hang in `WaitForCephClusterReady`. Fail-fast on a Wait*Gone timeout: errors are aggregated and returned, no auto-strip of finalizers — investigate the cluster manually before re-running. NotFound is still treated as success; subsequent deletions are still attempted on partial failures.
 
 ## Ceph Cluster (Testkit) — no csi-ceph wiring
 
