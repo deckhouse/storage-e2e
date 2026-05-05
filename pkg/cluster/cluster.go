@@ -149,6 +149,14 @@ func loadClusterConfigFromPath(configPath string) (*config.ClusterDefinition, er
 		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
 	}
 
+	// Expand ${VAR} placeholders in modulePullOverride fields. CI uses this to
+	// pass a per-PR/MR image tag via a single env var (e.g. MODULE_IMAGE_TAG)
+	// without editing the YAML between runs. Missing envs fail fast here so we
+	// don't silently regress to "main" on accidentally unset variables.
+	if err := config.ExpandEnvInModulePullOverride(&clusterDef); err != nil {
+		return nil, fmt.Errorf("expand env in modulePullOverride: %w", err)
+	}
+
 	// Validate the configuration (using the same validation logic as internal/cluster)
 	if len(clusterDef.Masters) == 0 {
 		return nil, fmt.Errorf("at least one master node is required")
@@ -194,6 +202,22 @@ func CreateTestCluster(
 	ctx context.Context,
 	yamlConfigFilename string,
 ) (*TestClusterResources, error) {
+	// Apply env-var defaults defensively so suites that don't call
+	// config.ValidateEnvironment() (e.g. csi-ceph e2e) still get sensible
+	// values for SSH_VM_USER / SSH_PRIVATE_KEY / SSH_PUBLIC_KEY /
+	// TEST_CLUSTER_NAMESPACE / YAML_CONFIG_FILENAME / TEST_CLUSTER_CLEANUP
+	// instead of empty strings that surface as obscure failures (e.g.
+	// user="" -> sshd "Invalid user", or "" filename -> directory read).
+	config.ApplyDefaults()
+
+	// Belt-and-suspenders: function arg also has a documented default. Without
+	// this, an empty filename gets joined with the test-package directory and
+	// yields a path to the directory itself, failing later with a confusing
+	// "is a directory" read error.
+	if yamlConfigFilename == "" {
+		yamlConfigFilename = config.YAMLConfigFilenameDefaultValue
+	}
+
 	logger.Step(1, "Loading cluster configuration from %s", yamlConfigFilename)
 
 	// Find the test package directory by walking the call stack.

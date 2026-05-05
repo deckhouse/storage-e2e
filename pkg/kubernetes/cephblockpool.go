@@ -160,43 +160,23 @@ func CreateCephBlockPool(ctx context.Context, kubeconfig *rest.Config, cfg CephB
 // WaitForCephBlockPoolReady blocks until the CephBlockPool reports
 // `status.phase == "Ready"`. Rook transitions the pool from Progressing to
 // Ready once the Ceph OSDs have accepted the new pool and its CRUSH rule.
+//
+// Per-call deadlines and loud (WARN) logging on consecutive network failures
+// are inherited from pollResourceUntilReady, so a dropped SSH tunnel surfaces
+// in seconds instead of after the parent timeout.
 func WaitForCephBlockPoolReady(ctx context.Context, kubeconfig *rest.Config, namespace, name string, timeout time.Duration) error {
-	if namespace == "" || name == "" {
-		return fmt.Errorf("namespace and name are required")
-	}
-
-	logger.Debug("Waiting for CephBlockPool %s/%s to become Ready (timeout: %v)", namespace, name, timeout)
-
-	dynamicClient, err := NewDynamicClientWithRetry(ctx, kubeconfig)
-	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		obj, err := dynamicClient.Resource(CephBlockPoolGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err == nil {
+	return pollResourceUntilReady(
+		ctx, kubeconfig, CephBlockPoolGVR, namespace, name,
+		timeout, PollTickInterval, "CephBlockPool",
+		func(obj *unstructured.Unstructured) (bool, string) {
 			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
 			if phase == "Ready" {
-				logger.Success("CephBlockPool %s/%s is Ready", namespace, name)
-				return nil
+				return true, "phase=Ready"
 			}
-			logger.Debug("CephBlockPool %s/%s phase: %q, waiting...", namespace, name, phase)
-		} else if !apierrors.IsNotFound(err) {
-			logger.Debug("Error getting CephBlockPool %s/%s: %v", namespace, name, err)
-		}
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for CephBlockPool %s/%s: %w", namespace, name, ctx.Err())
-		case <-ticker.C:
-		}
-	}
+			logger.Debug("CephBlockPool %s/%s phase: %q, waiting...", obj.GetNamespace(), obj.GetName(), phase)
+			return false, ""
+		},
+	)
 }
 
 // DeleteCephBlockPool deletes a CephBlockPool. Safe to call if the pool does

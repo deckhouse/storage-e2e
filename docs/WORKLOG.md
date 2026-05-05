@@ -58,6 +58,20 @@ All notable changes to this repository are documented here. New entries are appe
 
 ---
 
+## 2026-05-05
+
+- **Add** `internal/config/overrides.go` + `_test.go`: `ExpandEnvInModulePullOverride` resolves `${VAR}` placeholders in `modulePullOverride` at config load time; missing env fails fast with an explicit error so CI can point modules at `pr<N>` / `mr<N>` images via a single env var (`MODULE_IMAGE_TAG`) without editing `cluster_config.yml`.
+- **Update** `internal/cluster/cluster.go::LoadClusterConfig` and `pkg/cluster/cluster.go::loadClusterConfigFromPath`: hook `ExpandEnvInModulePullOverride` right after `yaml.Unmarshal`.
+- **Update** `README.md`: documented `${VAR}` form in `modulePullOverride` and the fail-fast behavior on unset env vars.
+- **Bugfix** `pkg/cluster/vms.go::generateCloudInitUserData`: pin apt at `mirror.yandex.ru` and force IPv4 (`Acquire::ForceIPv4=true`) in cloud-init, so `package_update` and Docker install stop stalling when `archive.ubuntu.com` IPs are partially unreachable.
+- **Refactor** `internal/infrastructure/ssh/client.go::StartTunnel` (both `*client` and `*jumpHostClient`): extracted shared `runTunnelLoop` + `tunnelDialer`. On dial failure that looks like a dropped SSH session, the loop now logs a visible WARN, calls the existing `reconnect()` (retry + exponential backoff), and retries the dial once with the freshly rebuilt session. Fixes the "test hangs 20 minutes silently after Wi-Fi flap" failure mode.
+- **Add** `pkg/kubernetes/poll.go`: `pollResourceUntilReady` centralizes the `WaitFor*Ready` loops with a per-call `PollGetTimeout` (30s) on every Get and WARN logging once consecutive Get failures cross 3, so a dropped tunnel surfaces in seconds instead of after the 20-minute readyTimeout.
+- **Refactor** `pkg/kubernetes/cephcluster.go`, `pkg/kubernetes/cephblockpool.go`, `pkg/kubernetes/cephfilesystem.go`: `WaitForCephClusterReady` / `WaitForCephBlockPoolReady` / `WaitForCephFilesystemReady` migrated to `pollResourceUntilReady`. Public signatures unchanged.
+- **Update** `docs/FUNCTIONS_GLOSSARY.md`: noted that the three `WaitForCeph*Ready` helpers now apply a per-call deadline and emit WARN on consecutive Get failures.
+- **Update** `docs/ARCHITECTURE.md`: added `pkg/kubernetes/poll.go` to Section 1.1 and Section 3.6, added `pkg/kubernetes/cephfilesystem.go`, added `internal/config/overrides.go` to Section 3.1.
+
+---
+
 ## 2026-05-13
 
 - **Update** synchronized docs for commit `bc358dff` by adding `pkg/kubernetes.NewVirtualizationClient` and `pkg/storage-e2e.Initialize` to `docs/FUNCTIONS_GLOSSARY.md`, and reflecting new `pkg/kubernetes/virtclient.go` / `pkg/storage-e2e/setup.go` in `docs/ARCHITECTURE.md`
