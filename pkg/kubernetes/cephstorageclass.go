@@ -161,6 +161,9 @@ func CreateCephStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg Ce
 	if err != nil {
 		return fmt.Errorf("failed to fetch CephStorageClass %s: %w", cfg.Name, err)
 	}
+	if err := errIfTerminating(existing, "CephStorageClass", cfg.Name); err != nil {
+		return err
+	}
 	existing.Object["spec"] = spec
 	if _, err := dynamicClient.Resource(CephStorageClassGVR).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("failed to update CephStorageClass %s: %w", cfg.Name, err)
@@ -170,7 +173,8 @@ func CreateCephStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg Ce
 
 // DeleteCephStorageClass removes a CephStorageClass. NotFound is treated as
 // success. The underlying k8s StorageClass is removed by the csi-ceph
-// controller as a side effect.
+// controller as a side effect. Use WaitForCephStorageClassGone to confirm
+// the CR is fully GC'd.
 func DeleteCephStorageClass(ctx context.Context, kubeconfig *rest.Config, name string) error {
 	dynamicClient, err := NewDynamicClientWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -184,6 +188,24 @@ func DeleteCephStorageClass(ctx context.Context, kubeconfig *rest.Config, name s
 	}
 	logger.Info("Deleted CephStorageClass %s", name)
 	return nil
+}
+
+// CephStorageClassGoneTimeout is the default budget for
+// WaitForCephStorageClassGone. CephStorageClass has no heavyweight finalizer
+// (csi-ceph just deletes the backing k8s StorageClass), so this typically
+// completes in seconds.
+const CephStorageClassGoneTimeout = 1 * time.Minute
+
+// WaitForCephStorageClassGone polls until the CephStorageClass is fully GC'd
+// by Kubernetes (GET returns NotFound).
+func WaitForCephStorageClassGone(ctx context.Context, kubeconfig *rest.Config, name string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = CephStorageClassGoneTimeout
+	}
+	return pollResourceUntilGone(
+		ctx, kubeconfig, CephStorageClassGVR, "", name,
+		timeout, PollTickInterval, "CephStorageClass",
+	)
 }
 
 // WaitForCephStorageClassCreated polls until the CephStorageClass status
