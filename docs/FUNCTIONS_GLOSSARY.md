@@ -145,6 +145,12 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `WaitForAllPodsReadyInNamespace(ctx, kubeconfig, namespace, timeout)` — Waits for all pods in a namespace to be in Ready condition.
 - `WaitForPodsStatus(ctx, clientset, namespace, labelSelector, status, expectedCount, maxAttempts, interval)` — Waits for pods matching a label selector to reach a specific status (Running, Completed, etc.).
 
+`pkg/kubernetes/pod_exec.go`
+
+- `ExecInPod(ctx, kubeconfig, namespace, pod, container, cmd) (stdout, stderr, err)` — Runs a command inside a container via the apiserver's `pods/exec` subresource (SPDY). Returns stdout and stderr separately; the container must ship every binary referenced by `cmd`. Use this when the container has a usable shell/userland.
+- `ReadFileFromPod(ctx, kubeconfig, namespace, pod, container, path)` — `ExecInPod` + `cat <path>`. Convenience wrapper for non-distroless images.
+- `ReadFileFromDistrolessPod(ctx, kubeconfig, namespace, pod, targetContainer, path, opts)` — Reads a file from a distroless / scratch container that ships no `cat`/`sh`/`tar`. Injects a short-lived ephemeral container (image from `opts.DebugImage`, defaults to `DefaultDebugImage = "busybox:1.36"`) with `targetContainerName=targetContainer`, polls until it goes Running (`opts.StartupTimeout`, defaults to 60s), then `cat /proc/1/root<path>` — `/proc/1/root` is the kernel-exposed FS root of PID 1 in the target container, which the ephemeral container can see thanks to the shared PID namespace. Adding the ephemeral container goes through the dedicated `/pods/<name>/ephemeralcontainers` subresource, so existing containers and the pod sandbox are NOT restarted, `metadata.generation` is not bumped, and ReplicaSet/DaemonSet observation is unaffected — downstream rollout / `checksum/...` annotation assertions still see a clean signal. Caveat: ephemeral containers cannot be removed once added, but each call generates a unique name and the `sleep 60` command exits on its own; entries pile up in `pod.status.ephemeralContainerStatuses` until the next pod recycle.
+
 ## PVC (PersistentVolumeClaim)
 
 `pkg/kubernetes/pvc.go`
