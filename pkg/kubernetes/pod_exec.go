@@ -46,13 +46,20 @@ const DefaultDebugImage = "busybox:1.36"
 // upper bound that still surfaces ImagePullBackOff/ErrImagePull early.
 const DefaultEphemeralStartupTimeout = 60 * time.Second
 
+// DefaultDistrolessSessionTTL is the lifetime of the `sleep` process
+// inside the injected ephemeral container when used as a long-lived
+// reader session (OpenDistrolessReader / DistrolessReader.ReadFile).
+// 30 minutes comfortably outlasts any single test cell while still
+// guaranteeing eventual self-cleanup if the caller crashes.
+const DefaultDistrolessSessionTTL = 30 * time.Minute
+
 // ephemeralPollInterval is how often we re-Get the pod when waiting for
 // the ephemeral container to start. 500 ms is a deliberate compromise:
 // fast enough that the typical 1-3 s pull is observed promptly, slow
 // enough that we don't hammer the apiserver.
 const ephemeralPollInterval = 500 * time.Millisecond
 
-// ReadFileOptions tunes ReadFileFromDistrolessPod.
+// ReadFileOptions tunes ReadFileFromDistrolessPod and OpenDistrolessReader.
 type ReadFileOptions struct {
 	// DebugImage overrides the ephemeral container image. Defaults to
 	// DefaultDebugImage. Use this on air-gapped clusters to point at an
@@ -61,6 +68,12 @@ type ReadFileOptions struct {
 	// StartupTimeout caps the wait for the ephemeral container to reach
 	// state.Running. Defaults to DefaultEphemeralStartupTimeout.
 	StartupTimeout time.Duration
+	// SessionTTL controls how long the injected ephemeral container's
+	// `sleep` process stays alive. Defaults to DefaultDistrolessSessionTTL.
+	// Used by OpenDistrolessReader; ReadFileFromDistrolessPod does not
+	// rely on this value (the entry's status flip after the cat exits
+	// has no effect on the pod).
+	SessionTTL time.Duration
 }
 
 // ExecInPod runs cmd inside container of pod namespace/pod via the
@@ -165,69 +178,150 @@ func ReadFileFromPod(
 //     cheap no-op for the pod's lifecycle.
 //
 // Caveat: ephemeral containers cannot be removed once added. The cat
-// process exits with the container after `sleep 60`, but the entry
-// remains in pod.spec.ephemeralContainers and
+// process exits with the container after `sleep`, but the entry remains
+// in pod.spec.ephemeralContainers and
 // pod.status.ephemeralContainerStatuses (state=Terminated). For
 // long-running suites those entries simply pile up until the next pod
 // recycle. Each invocation here generates a unique container name, so
 // repeat calls against the same pod are safe.
+//
+// For polling loops or any scenario that reads the same pod multiple
+// times, prefer OpenDistrolessReader: each ReadFileFromDistrolessPod
+// call pays the full ephemeral-container cold-start cost (~10–20 s for
+// kubelet to launch a new container in the existing pod sandbox), and
+// that cost dominates the runtime of a Eventually-style poll.
 func ReadFileFromDistrolessPod(
 	ctx context.Context,
 	kubeconfig *rest.Config,
 	namespace, pod, targetContainer, path string,
 	opts ReadFileOptions,
 ) (string, error) {
+	r, err := OpenDistrolessReader(ctx, kubeconfig, namespace, pod, targetContainer, opts)
+	if err != nil {
+		return "", err
+	}
+	return r.ReadFile(ctx, path)
+}
+
+// DistrolessReader is a long-lived ephemeral-container reader session
+// against a single distroless pod. Open one with OpenDistrolessReader,
+// then call ReadFile as many times as you need — each ReadFile is just
+// an exec into the already-running ephemeral container (cheap), so a
+// polling loop pays the ephemeral-container cold start ONCE instead of
+// per-iteration.
+//
+// The session expires when the ephemeral container's `sleep`
+// (opts.SessionTTL, default DefaultDistrolessSessionTTL) elapses; there
+// is no Close — Kubernetes does not allow removing an ephemeral
+// container — but the inert "Terminated" status entry has no effect on
+// the pod. Callers that need fresh sessions across pod identities
+// (e.g. after a workload rollout) should re-open against the new pod.
+type DistrolessReader struct {
+	kubeconfig      *rest.Config
+	namespace       string
+	podName         string
+	targetContainer string
+	ephemeralName   string
+}
+
+// PodName returns the name of the pod this reader is bound to. Useful
+// for callers that need to detect rollouts (the pod name changes when
+// the workload-controller recycles the pod) and re-open the session.
+func (r *DistrolessReader) PodName() string { return r.podName }
+
+// EphemeralName returns the auto-generated name of the injected
+// ephemeral container, mostly for logging.
+func (r *DistrolessReader) EphemeralName() string { return r.ephemeralName }
+
+// ReadFile cat's `path` from inside the target container's filesystem
+// (resolved through the ephemeral container's view of /proc/1/root).
+// Cheap — just a pods/exec round-trip; no apiserver mutations.
+func (r *DistrolessReader) ReadFile(ctx context.Context, path string) (string, error) {
+	stdout, stderr, err := ExecInPod(ctx, r.kubeconfig, r.namespace, r.podName, r.ephemeralName,
+		[]string{"cat", "/proc/1/root" + path})
+	if err != nil {
+		return stdout, fmt.Errorf("read %s from %s/%s[%s] via ephemeral %s: %w",
+			path, r.namespace, r.podName, r.targetContainer, r.ephemeralName, err)
+	}
+	if stderr != "" {
+		return stdout, fmt.Errorf("read %s from %s/%s[%s] via ephemeral %s: stderr=%s",
+			path, r.namespace, r.podName, r.targetContainer, r.ephemeralName, stderr)
+	}
+	return stdout, nil
+}
+
+// OpenDistrolessReader injects a long-lived ephemeral container into
+// the target pod and waits for it to become Running. The returned
+// DistrolessReader can then be used for arbitrarily many cheap
+// ReadFile calls until opts.SessionTTL elapses (default 30 minutes).
+//
+// Failure modes (returned as errors): pod not found, ephemeral
+// container terminates before Running, image pull failure, startup
+// timeout. On any of these no usable reader is returned.
+//
+// See ReadFileFromDistrolessPod for the rationale on why this does
+// not restart the target pod or any of its existing containers.
+func OpenDistrolessReader(
+	ctx context.Context,
+	kubeconfig *rest.Config,
+	namespace, pod, targetContainer string,
+	opts ReadFileOptions,
+) (*DistrolessReader, error) {
 	if opts.DebugImage == "" {
 		opts.DebugImage = DefaultDebugImage
 	}
 	if opts.StartupTimeout <= 0 {
 		opts.StartupTimeout = DefaultEphemeralStartupTimeout
 	}
+	if opts.SessionTTL <= 0 {
+		opts.SessionTTL = DefaultDistrolessSessionTTL
+	}
 
 	clientset, err := NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
-		return "", fmt.Errorf("create clientset: %w", err)
+		return nil, fmt.Errorf("create clientset: %w", err)
 	}
 	pods := clientset.CoreV1().Pods(namespace)
 
 	ecName, err := randomEphemeralName("filereader-")
 	if err != nil {
-		return "", fmt.Errorf("generate ephemeral container name: %w", err)
+		return nil, fmt.Errorf("generate ephemeral container name: %w", err)
 	}
 
 	livePod, err := pods.Get(ctx, pod, metav1.GetOptions{})
 	if err != nil {
-		return "", fmt.Errorf("get pod %s/%s: %w", namespace, pod, err)
+		return nil, fmt.Errorf("get pod %s/%s: %w", namespace, pod, err)
+	}
+	sleepSeconds := int64(opts.SessionTTL.Seconds())
+	if sleepSeconds < 1 {
+		sleepSeconds = 1
 	}
 	livePod.Spec.EphemeralContainers = append(livePod.Spec.EphemeralContainers, corev1.EphemeralContainer{
 		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
 			Name:                     ecName,
 			Image:                    opts.DebugImage,
-			Command:                  []string{"sleep", "60"},
+			Command:                  []string{"sleep", fmt.Sprintf("%d", sleepSeconds)},
 			ImagePullPolicy:          corev1.PullIfNotPresent,
 			TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 		},
 		TargetContainerName: targetContainer,
 	})
 	if _, err := pods.UpdateEphemeralContainers(ctx, pod, livePod, metav1.UpdateOptions{}); err != nil {
-		return "", fmt.Errorf("inject ephemeral container %q into %s/%s: %w",
+		return nil, fmt.Errorf("inject ephemeral container %q into %s/%s: %w",
 			ecName, namespace, pod, err)
 	}
 
 	if err := waitEphemeralContainerRunning(ctx, pods, pod, ecName, opts.StartupTimeout); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	stdout, stderr, err := ExecInPod(ctx, kubeconfig, namespace, pod, ecName, []string{"cat", "/proc/1/root" + path})
-	if err != nil {
-		return stdout, fmt.Errorf("read %s from %s/%s[%s] via ephemeral %s: %w",
-			path, namespace, pod, targetContainer, ecName, err)
-	}
-	if stderr != "" {
-		return stdout, fmt.Errorf("read %s from %s/%s[%s] via ephemeral %s: stderr=%s",
-			path, namespace, pod, targetContainer, ecName, stderr)
-	}
-	return stdout, nil
+	return &DistrolessReader{
+		kubeconfig:      kubeconfig,
+		namespace:       namespace,
+		podName:         pod,
+		targetContainer: targetContainer,
+		ephemeralName:   ecName,
+	}, nil
 }
 
 // waitEphemeralContainerRunning polls pod.status.ephemeralContainerStatuses
