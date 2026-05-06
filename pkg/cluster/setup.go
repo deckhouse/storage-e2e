@@ -548,35 +548,57 @@ func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *
 	remoteSSHPrivateKey := filepath.Join("/home", config.VMSSHUser, ".ssh", "id_rsa")
 
 	var dockerVolFlags, dhctlSSHArgs string
+	var remoteConnYAMLPath string // passphrase-only; removed ASAP after docker run (avoid long-lived secrets in /tmp)
+
+	removeRemoteConnYAML := func() {
+		if remoteConnYAMLPath == "" {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = sshClient.Exec(cleanupCtx, fmt.Sprintf("sudo rm -f %s", remoteConnYAMLPath))
+		remoteConnYAMLPath = ""
+	}
 
 	if config.SSHPassphrase != "" {
-		remoteConnPath := fmt.Sprintf("/tmp/dhctl-bootstrap-connection-%d.yaml", os.Getpid())
-		defer func() {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_, _ = sshClient.Exec(cleanupCtx, fmt.Sprintf("sudo rm -f %s", remoteConnPath))
-		}()
+		if _, prepErr := sshClient.Exec(ctx, fmt.Sprintf(`sudo -u %s bash -lc 'mkdir -p "${HOME}/.config/storage-e2e" && chmod 700 "${HOME}/.config/storage-e2e"'`, config.VMSSHUser)); prepErr != nil {
+			return fmt.Errorf("prepare setup-node dir for dhctl connection-config: %w", prepErr)
+		}
+
+		mktempOut, mktempErr := sshClient.Exec(ctx, fmt.Sprintf(`sudo -u %s bash -lc 'mktemp "${HOME}/.config/storage-e2e/dhctl-bootstrap-connection.XXXXXX.yaml"'`, config.VMSSHUser))
+		if mktempErr != nil {
+			return fmt.Errorf("create temp path for dhctl connection-config on setup node: %w", mktempErr)
+		}
+		remoteConnYAMLPath = strings.TrimSpace(strings.Split(strings.TrimSpace(mktempOut), "\n")[0])
+		if remoteConnYAMLPath == "" {
+			return fmt.Errorf("mktemp returned empty path for dhctl connection-config")
+		}
 
 		if _, probeErr := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s test -r %s", config.VMSSHUser, remoteSSHPrivateKey)); probeErr != nil {
+			removeRemoteConnYAML()
 			return fmt.Errorf("SSH private key not readable at %s on setup node: %w", remoteSSHPrivateKey, probeErr)
 		}
 
 		pemOut, pemErr := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s cat %s", config.VMSSHUser, remoteSSHPrivateKey))
 		if pemErr != nil {
+			removeRemoteConnYAML()
 			// Do not include pemOut in the error: Exec uses CombinedOutput and stdout may already contain key material.
 			return fmt.Errorf("read bootstrap SSH private key from setup node for connection-config: %w", pemErr)
 		}
 		if strings.TrimSpace(pemOut) == "" {
+			removeRemoteConnYAML()
 			return fmt.Errorf("empty SSH private key at %s on setup node", remoteSSHPrivateKey)
 		}
 
 		connYAML, connErr := buildDHCTLSSHConnectionConfig(pemOut, config.VMSSHUser, masterIP, config.SSHPassphrase)
 		if connErr != nil {
+			removeRemoteConnYAML()
 			return fmt.Errorf("build dhctl connection-config: %w", connErr)
 		}
 
 		localConnFile, tmpErr := os.CreateTemp("", "dhctl-bootstrap-connection-*.yaml")
 		if tmpErr != nil {
+			removeRemoteConnYAML()
 			return fmt.Errorf("create temp connection-config: %w", tmpErr)
 		}
 		localConnPath := localConnFile.Name()
@@ -584,26 +606,31 @@ func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *
 
 		if chmodErr := os.Chmod(localConnPath, 0600); chmodErr != nil {
 			_ = localConnFile.Close()
+			removeRemoteConnYAML()
 			return fmt.Errorf("chmod temp connection-config: %w", chmodErr)
 		}
 		if _, writeErr := localConnFile.Write(connYAML); writeErr != nil {
 			_ = localConnFile.Close()
+			removeRemoteConnYAML()
 			return fmt.Errorf("write temp connection-config: %w", writeErr)
 		}
 		if closeErr := localConnFile.Close(); closeErr != nil {
+			removeRemoteConnYAML()
 			return fmt.Errorf("close temp connection-config: %w", closeErr)
 		}
 
-		if upErr := sshClient.Upload(ctx, localConnPath, remoteConnPath); upErr != nil {
+		if upErr := sshClient.Upload(ctx, localConnPath, remoteConnYAMLPath); upErr != nil {
+			removeRemoteConnYAML()
 			return fmt.Errorf("upload dhctl connection-config to setup node: %w", upErr)
 		}
-		if _, chErr := sshClient.Exec(ctx, fmt.Sprintf("chmod 600 %s", remoteConnPath)); chErr != nil {
+		if _, chErr := sshClient.Exec(ctx, fmt.Sprintf("chmod 600 %s", remoteConnYAMLPath)); chErr != nil {
+			removeRemoteConnYAML()
 			return fmt.Errorf("chmod remote connection-config: %w", chErr)
 		}
 
 		dockerVolFlags = fmt.Sprintf(
 			`-v "/home/%s/config.yml:/config.yml" -v "%s:/dhctl-connection.yaml:ro"`,
-			config.VMSSHUser, remoteConnPath,
+			config.VMSSHUser, remoteConnYAMLPath,
 		)
 		dhctlSSHArgs = "--connection-config=/dhctl-connection.yaml --config=/config.yml"
 	} else {
@@ -631,6 +658,8 @@ func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *
 	// Run the bootstrap command
 	// Output is redirected to remote log file, so output variable will be empty
 	output, err = sshClient.Exec(ctx, bootstrapCmd)
+
+	removeRemoteConnYAML()
 
 	// Always download log file from remote host (whether success or failure)
 	// Use sudo cat since the log file was created with sudo
