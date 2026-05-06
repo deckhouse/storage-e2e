@@ -45,7 +45,6 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
@@ -259,34 +258,19 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 		kubeconfigSource = fmt.Sprintf("KUBE_CONFIG_PATH=%s", resolvedPath)
 
 	default:
-		// SSH failed and no explicit KUBE_CONFIG_PATH. Fall back to kubectl's
-		// standard resolution (KUBECONFIG env, otherwise ~/.kube/config) so
-		// that a developer whose `kubectl` already targets the right base
-		// cluster doesn't have to set anything else.
-		//
-		// This branch is *very loud* on purpose: silent fallback to the
-		// developer's personal ~/.kube/config has historically caused tests
-		// to acquire stale locks on unrelated SAN clusters or deploy modules
-		// against the wrong stand. We make sure both the WARN line and the
-		// final source-stamp surface what just happened.
-		fallbackContent, fallbackPath, fallbackErr := loadDefaultKubeconfig()
-		if fallbackErr != nil {
-			return nil, "", fmt.Errorf("failed to read kubeconfig from master (this may occur if sudo requires a password) "+
-				"and the local kubectl-default kubeconfig fallback also failed (%v). "+
-				"Set KUBE_CONFIG_PATH to a working kubeconfig, or ensure $KUBECONFIG / ~/.kube/config points at the base cluster. "+
-				"Original SSH error: %w", fallbackErr, sshErr)
-		}
-		fbCtx, fbServer := kubeconfigContextSummary(fallbackContent)
-		logger.Warn(
-			"SSH kubeconfig retrieval from %s@%s failed (%v); falling back to LOCAL kubeconfig at %s "+
-				"(current-context=%q, server=%q). "+
-				"This is almost certainly NOT the cluster you intended to test against — check SSH_HOST/SSH_USER, "+
-				"or set KUBE_CONFIG_PATH to a specific kubeconfig file. "+
-				"To fail fast instead of silently falling back, unset $KUBECONFIG and remove ~/.kube/config",
-			user, masterIP, sshErr, fallbackPath, fbCtx, fbServer,
+		// SSH failed and the caller did not opt into a specific kubeconfig via
+		// KUBE_CONFIG_PATH. Fail fast rather than silently picking up the
+		// developer's ~/.kube/config / $KUBECONFIG, which has historically
+		// caused tests to acquire stale locks on unrelated SAN clusters or
+		// deploy modules against the wrong stand.
+		return nil, "", fmt.Errorf(
+			"failed to read kubeconfig from master via SSH (%s@%s) "+
+				"and KUBE_CONFIG_PATH is not set; "+
+				"set KUBE_CONFIG_PATH to a kubeconfig pointing at the target cluster, "+
+				"or fix SSH credentials so passwordless sudo works on the master. "+
+				"Original SSH error: %w",
+			user, masterIP, sshErr,
 		)
-		kubeconfigContent = fallbackContent
-		kubeconfigSource = fmt.Sprintf("LOCAL_FALLBACK(%s)", fallbackPath)
 	}
 
 	// Always stamp the kubeconfig source + the resulting current-context/server
@@ -427,41 +411,3 @@ func kubeconfigContextSummary(content []byte) (currentContext, server string) {
 	return
 }
 
-// loadDefaultKubeconfig replicates kubectl's standard kubeconfig resolution
-// (KUBECONFIG env, otherwise ~/.kube/config; multiple files in KUBECONFIG are
-// merged) and returns the serialized merged config plus a human-readable
-// description of where it was loaded from. Used as a last-resort fallback when
-// SSH-based retrieval fails and KUBE_CONFIG_PATH is not set, so a developer
-// whose `kubectl` already points at the right base cluster can simply run the
-// suite without exporting any extra variables.
-func loadDefaultKubeconfig() ([]byte, string, error) {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	rawConfig, err := loadingRules.Load()
-	if err != nil {
-		return nil, "", fmt.Errorf("clientcmd default loader: %w", err)
-	}
-	if rawConfig == nil || len(rawConfig.Clusters) == 0 {
-		return nil, "", fmt.Errorf("no clusters in default kubeconfig (KUBECONFIG=%q, ~/.kube/config)", os.Getenv("KUBECONFIG"))
-	}
-
-	// Minify down to the current-context only. Otherwise UpdateKubeconfigPort
-	// would rewrite the `server:` URL of every cluster in a multi-cluster
-	// kubeconfig, breaking unrelated entries on the developer's machine.
-	minified := *rawConfig
-	if err := clientcmdapi.MinifyConfig(&minified); err != nil {
-		return nil, "", fmt.Errorf("clientcmd minify default kubeconfig: %w", err)
-	}
-
-	content, err := clientcmd.Write(minified)
-	if err != nil {
-		return nil, "", fmt.Errorf("clientcmd serialize default kubeconfig: %w", err)
-	}
-
-	source := os.Getenv("KUBECONFIG")
-	if source == "" {
-		source = "~/.kube/config (current-context=" + minified.CurrentContext + ")"
-	} else {
-		source = "KUBECONFIG=" + source + " (current-context=" + minified.CurrentContext + ")"
-	}
-	return content, source, nil
-}
