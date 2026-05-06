@@ -16,6 +16,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [Pod](#pod)
 - [PVC (PersistentVolumeClaim)](#pvc-persistentvolumeclaim)
 - [StorageClass](#storageclass)
+- [VolumeSnapshotClass](#volumesnapshotclass)
 - [BlockDevice](#blockdevice)
 - [LVMVolumeGroup](#lvmvolumegroup)
 - [LocalStorageClass](#localstorageclass)
@@ -33,7 +34,9 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [CephStorageClass (csi-ceph)](#cephstorageclass-csi-ceph)
 - [Default StorageClass (Testkit)](#default-storageclass-testkit)
 - [Ceph StorageClass (Testkit)](#ceph-storageclass-testkit)
+- [Ceph Cluster (Testkit) — no csi-ceph wiring](#ceph-cluster-testkit--no-csi-ceph-wiring)
 - [Stress Tests (Testkit)](#stress-tests-testkit)
+- [Ceph CRC (Testkit)](#ceph-crc-testkit)
 
 ---
 
@@ -149,7 +152,11 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 - `ExecInPod(ctx, kubeconfig, namespace, pod, container, cmd) (stdout, stderr, err)` — Runs a command inside a container via the apiserver's `pods/exec` subresource (SPDY). Returns stdout and stderr separately; the container must ship every binary referenced by `cmd`. Use this when the container has a usable shell/userland.
 - `ReadFileFromPod(ctx, kubeconfig, namespace, pod, container, path)` — `ExecInPod` + `cat <path>`. Convenience wrapper for non-distroless images.
-- `ReadFileFromDistrolessPod(ctx, kubeconfig, namespace, pod, targetContainer, path, opts)` — Reads a file from a distroless / scratch container that ships no `cat`/`sh`/`tar`. Injects a short-lived ephemeral container (image from `opts.DebugImage`, defaults to `DefaultDebugImage = "busybox:1.36"`) with `targetContainerName=targetContainer`, polls until it goes Running (`opts.StartupTimeout`, defaults to 60s), then `cat /proc/1/root<path>` — `/proc/1/root` is the kernel-exposed FS root of PID 1 in the target container, which the ephemeral container can see thanks to the shared PID namespace. Adding the ephemeral container goes through the dedicated `/pods/<name>/ephemeralcontainers` subresource, so existing containers and the pod sandbox are NOT restarted, `metadata.generation` is not bumped, and ReplicaSet/DaemonSet observation is unaffected — downstream rollout / `checksum/...` annotation assertions still see a clean signal. Caveat: ephemeral containers cannot be removed once added, but each call generates a unique name and the `sleep 60` command exits on its own; entries pile up in `pod.status.ephemeralContainerStatuses` until the next pod recycle.
+- `ReadFileFromDistrolessPod(ctx, kubeconfig, namespace, pod, targetContainer, path, opts)` — Reads a file from a distroless / scratch container that ships no `cat`/`sh`/`tar`. Injects a short-lived ephemeral container (image from `opts.DebugImage`, defaults to `DefaultDebugImage = "busybox:1.36"`) with `targetContainerName=targetContainer`, polls until it goes Running (`opts.StartupTimeout`, defaults to 60s), then `cat /proc/1/root<path>` — `/proc/1/root` is the kernel-exposed FS root of PID 1 in the target container, which the ephemeral container can see thanks to the shared PID namespace. Adding the ephemeral container goes through the dedicated `/pods/<name>/ephemeralcontainers` subresource, so existing containers and the pod sandbox are NOT restarted, `metadata.generation` is not bumped, and ReplicaSet/DaemonSet observation is unaffected — downstream rollout / `checksum/...` annotation assertions still see a clean signal. Caveat: ephemeral containers cannot be removed once added, but each call generates a unique name and the `sleep 60` command exits on its own; entries pile up in `pod.status.ephemeralContainerStatuses` until the next pod recycle. Internally a one-shot wrapper around `OpenDistrolessReader` + `(*DistrolessReader).ReadFile`.
+- `OpenDistrolessReader(ctx, kubeconfig, namespace, pod, targetContainer, opts) (*DistrolessReader, error)` — Long-lived variant of `ReadFileFromDistrolessPod`: injects ONE ephemeral container (sleeps for `opts.SessionTTL`, defaults to `DefaultDistrolessSessionTTL` = 30 min) and returns a session that can serve arbitrarily many cheap reads. Use this for polling loops (e.g. `Eventually(...)` waiting for a file's content to flip) so the ephemeral-container cold start is paid once instead of per iteration.
+- `(*DistrolessReader) ReadFile(ctx, path)` — `cat /proc/1/root<path>` against the pre-injected ephemeral container. Cheap — just a `pods/exec` round-trip; no apiserver mutations.
+- `(*DistrolessReader) PodName()` — Name of the pod this reader is bound to. Used by callers that need to detect rollouts (the pod name changes when the workload-controller recycles the pod) and re-`OpenDistrolessReader` against the new pod.
+- `(*DistrolessReader) EphemeralName()` — Auto-generated name of the injected ephemeral container, mostly for logs.
 
 ## PVC (PersistentVolumeClaim)
 
@@ -168,6 +175,17 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `GetDefaultStorageClassName(ctx, kubeconfig)` — Returns the name of the current default StorageClass (annotated with `storageclass.kubernetes.io/is-default-class=true`), or `""` if none exists.
 - `GetStorageClass(ctx, kubeconfig, name)` — Returns the `*storagev1.StorageClass` with the given name, or `(nil, nil)` if it does not exist.
 - `SetGlobalDefaultStorageClass(ctx, kubeconfig, storageClassName)` — Updates the "global" ModuleConfig to set `spec.settings.storageClass` to the given name, making it the cluster default.
+
+`pkg/kubernetes/storageclass_manage.go`
+
+- `CreateStorageClass(ctx, kubeconfig, cfg)` — Creates a `storage.k8s.io/v1 StorageClass` directly from `StorageClassCreateConfig` (`Name`, `Provisioner`, `Parameters`, `VolumeBindingMode`, `ReclaimPolicy`, `AllowExpansion`, `MakeDefault`, plus optional extra labels/annotations). When `MakeDefault=true` both the GA and beta `is-default-class` annotations are set. Idempotent: `AlreadyExists` is logged and treated as success.
+
+## VolumeSnapshotClass
+
+`pkg/kubernetes/volumesnapshotclass.go`
+
+- `CreateVolumeSnapshotClass(ctx, kubeconfig, cfg)` — Creates a `snapshot.storage.k8s.io/v1 VolumeSnapshotClass` from `VolumeSnapshotClassConfig` (`Name`, `Driver`, `DeletionPolicy` defaulting to `Delete`, `Parameters`, `MakeDefault`). Idempotent: `AlreadyExists` is logged and treated as success.
+- `WaitForVolumeSnapshotClass(ctx, kubeconfig, name, timeout)` — Polls until the named VolumeSnapshotClass is Get-able.
 
 ## BlockDevice
 
@@ -243,6 +261,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 - `SetRookConfigOverride(ctx, kubeconfig, namespace, globals)` — Creates or updates the `rook-config-override` ConfigMap in the Rook operator namespace. The provided map is rendered under `[global]` and Rook picks it up into every Ceph daemon's `ceph.conf` (used for `ms_crc_data`, `bdev_enable_discard`, and similar knobs). Keys are sorted for stable output.
 - `DeleteRookConfigOverride(ctx, kubeconfig, namespace)` — Removes the ConfigMap; safe if it does not exist.
+- `RenderCephGlobalConfig(globals)` — Pure helper that renders a `[global]` section for `ceph.conf` from a `map[string]string`. Keys are sorted so the output is byte-stable across calls with logically-equivalent maps (used by `SetRookConfigOverride` to avoid spurious ConfigMap updates and by callers that need to compare the desired vs. live ConfigMap content before deciding to roll daemons).
 
 ## Ceph Credentials
 
@@ -329,3 +348,14 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `(*Config) Validate()` — Validates the stress test configuration (namespace, storage class, PVC size, mode-specific params).
 - `(*StressTestRunner) Run(ctx)` — Executes the stress test based on configured mode: flog, check_fs_only, check_cloning, check_restoring_from_snapshot, snapshot_only, or snapshot_resize_cloning.
 - `CleanupStressNamespaces(ctx, kubeconfig)` — Deletes all namespaces with the `load-test=true` label.
+
+## Ceph CRC (Testkit)
+
+`pkg/testkit/ceph_crc.go`
+
+- `EnableServerCRC(ctx, kubeconfig, namespace)` — Sets `ms_crc_data=true` on the server side: rewrites `rook-config-override` and rolling-restarts every Rook-managed Ceph daemon Deployment (mon/mgr/osd/mds/rgw) plus the rook-operator. Use when a test wants Ceph pinned in the explicit CRC-on state. Thin wrapper over `SetMsCrcDataOnServer(..., ptr(true))`.
+- `DisableServerCRC(ctx, kubeconfig, namespace)` — Same as `EnableServerCRC` but flips Ceph into `ms_crc_data=false`. Paired with a csi-ceph client that defaults to `msCrcData=true` this reproduces the msCrcData matrix mismatch case. Thin wrapper over `SetMsCrcDataOnServer(..., ptr(false))`.
+- `ResetServerCRCToDefault(ctx, kubeconfig, namespace)` — Removes `ms_crc_data` from `rook-config-override` so Ceph falls back to its compile-time default (`true`). Convenient for `AfterAll` / `AfterEach` restoration. Thin wrapper over `SetMsCrcDataOnServer(..., nil)`.
+- `SetMsCrcDataOnServer(ctx, kubeconfig, namespace, enabled *bool)` — Lower-level primitive behind the three readability wrappers. Rewrites `rook-config-override` so that only `ms_crc_data=<enabled>` ends up under `[global]` (`nil` removes the key entirely). Idempotent: when the ConfigMap already encodes the desired state, nothing is restarted. Otherwise it (1) rolling-restarts Rook-managed Ceph daemons via `RestartCephDaemons`, (2) restarts the rook-operator via `RestartRookOperator`, and (3) waits for every `CephFilesystem` in the namespace to come back to Ready. Prefer the named wrappers at call sites; this primitive exists so a boolean test parameter (e.g. a CRC matrix) doesn't have to branch.
+- `RestartCephDaemons(ctx, kubeconfig, namespace, timeout)` — Rollout-restarts every Rook-managed Ceph daemon Deployment that consumes `/etc/ceph/ceph.conf` — the selector covers `rook-ceph-mon`, `rook-ceph-mgr`, `rook-ceph-osd`, `rook-ceph-mds`, `rook-ceph-rgw` — and waits for each to reach its desired Ready replica count. All five roles are bounced because a global ConfigMap knob like `ms_crc_data` lives in `ceph.conf` and any daemon left running with the old value (typically MDS) silently breaks the messenger handshake and degrades CephFS / blocks csi-cephfs PVCs in Pending. Operator restart is intentionally out of scope here — see `RestartRookOperator`.
+- `RestartRookOperator(ctx, kubeconfig, namespace, timeout)` — Rollout-restarts the rook-operator Deployment in the given namespace and waits for the new pod to become Ready. Required after every wire-protocol bounce: the operator runs as a Ceph admin client (admin keyring + baked-in `ceph.conf`), and without a pod restart it keeps retrying with the stale `ceph.conf`, which surfaces in the cephcluster CR as `HEALTH_ERR` / `state: Error` until the next reconcile. Deckhouse-specific naming: the Deployment name is derived from the namespace by stripping the leading `d8-` prefix (`d8-sds-elastic` → `sds-elastic`). Vanilla Rook (`rook-ceph-operator` in `rook-ceph`) is not supported.

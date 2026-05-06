@@ -23,6 +23,7 @@ storage-e2e/
 │   ├── config/                    # Configuration management
 │   │   ├── config.go             # Main configuration struct
 │   │   ├── env.go                # Environment variable parsing
+│   │   ├── overrides.go          # ${VAR} expansion in modulePullOverride at config load time
 │   │   ├── types.go              # Configuration type definitions
 │   │   └── images.go             # OS image definitions
 │   │
@@ -89,6 +90,7 @@ storage-e2e/
 │   │   ├── nodegroup.go          # NodeGroup operations
 │   │   ├── nodes.go              # Node listing, taints, labels
 │   │   ├── pod.go                # Pod operations
+│   │   ├── pod_exec.go           # Pods/exec helpers + DistrolessReader for distroless containers
 │   │   ├── poll.go               # Generic readiness poller (per-call timeout, WARN on net errors)
 │   │   ├── pvc.go                # PVC operations
 │   │   ├── rookconfigoverride.go # Rook ceph.conf override ConfigMap
@@ -514,6 +516,7 @@ pkg/
 │   ├── nodegroup.go    # NodeGroup operations
 │   ├── nodes.go        # Node listing, taints, labels
 │   ├── pod.go          # Pod operations
+│   ├── pod_exec.go     # Exec helpers + DistrolessReader (ephemeral-container session)
 │   ├── poll.go         # pollResourceUntilReady helper for Wait*Ready callers
 │   ├── pvc.go          # PVC operations
 │   ├── rookconfigoverride.go    # Rook global ceph.conf override
@@ -756,7 +759,8 @@ logger.Error("Failed to create resource: %v", err)
 | `TEST_CLUSTER_NAMESPACE` | `e2e-test-cluster` | Test namespace name |
 | `TEST_CLUSTER_CLEANUP` | `false` | Cleanup cluster after tests |
 | `LOG_LEVEL` | `debug` | Log level (debug/info/warn/error) |
-| `KUBE_CONFIG_PATH` | - | Fallback kubeconfig path |
+| `KUBE_CONFIG_PATH` | - | Explicit kubeconfig path. Used when SSH retrieval of `/etc/kubernetes/{super-admin,admin}.conf` from the master fails. If unset and SSH also fails, `GetKubeconfig` returns an error (no silent fallback to `~/.kube/config`). |
+| `MODULE_IMAGE_TAG` (and any other custom name) | - | Any `${VAR}` placeholder used inside `modulePullOverride:` in `cluster_config.yml` is expanded at config load time by `internal/config/overrides.ExpandEnvInModulePullOverride`. Missing/empty placeholders fail fast with an explicit error so CI can point modules at `pr<N>` / `mr<N>` images via a single env var without editing the YAML between runs. |
 
 ### Commander Variables (only when `TEST_CLUSTER_CREATE_MODE=commander`)
 
