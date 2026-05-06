@@ -6,12 +6,9 @@ All notable changes to this repository are documented here. New entries are appe
 
 ## 2026-05-06
 
-- **Add** `UploadPrivate` to `ssh.SSHClient` (`internal/infrastructure/ssh/interface.go`) and implementations in `internal/infrastructure/ssh/client.go`: SFTP `Chmod` on remote path immediately after `Create` and before copying bytes (avoids wide-default-permissions window during transfer); refactor retries via `uploadOverSFTPOnce` / `uploadWithSFTPRetries` / `jumpUploadWithSFTPRetries`
-- **Update** `BootstrapCluster` passphrase branch in `pkg/cluster/setup.go`: upload dhctl connection-config with `UploadPrivate(..., 0600)`, drop separate remote `chmod` Exec; stage dir via `install -d -m 0700`
-- **Update** `docs/ARCHITECTURE.md`: note `UploadPrivate` under ssh file transfer
-- **Bugfix** `ensureVirtualMachineClassForClusterVMs` in `pkg/cluster/vms.go`: when auto-creating from `generic` with Host CPU, clear `spec.nodeSelector` and `spec.tolerations` (Host pins ISA; inherited placement could allow incompatible nodes / break live migration per Deckhouse docs)
-- **Update** `ValidateEnvironment` in `internal/config/env.go`: validate `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` with `validation.IsDNS1123Subdomain` for non-`generic` values (cluster-scoped object names); README and ARCHITECTURE §7 wording aligned
-- **Update** `README.md`, `docs/ARCHITECTURE.md` §7, `docs/FUNCTIONS_GLOSSARY.md`: document what stays inherited from `generic` vs cleared fields for auto-created `VirtualMachineClass`
+- **Add** `UploadPrivate` on `ssh.SSHClient` (`internal/infrastructure/ssh`): SFTP `Chmod` immediately after `Create`, before payload copy; `uploadOverSFTPOnce`, `uploadWithSFTPRetries`, `jumpUploadWithSFTPRetries`; passphrase `BootstrapCluster` uses it with `install -d -m 0700` staging (`pkg/cluster/setup.go`); ARCHITECTURE mentions ssh uploads
+- **Bugfix** `ensureVirtualMachineClassForClusterVMs` (`pkg/cluster/vms.go`): GET + wait Ready for configured class including default `generic`; explicit error if default missing; Host CPU auto-clone still clears `nodeSelector`/`tolerations` from template
+- **Update** `ValidateEnvironment` (`internal/config/env.go`): non-`generic` `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` validated with `IsDNS1123Subdomain`; README, ARCHITECTURE §7, FUNCTIONS_GLOSSARY aligned (names + auto-created class semantics)
 
 ---
 

@@ -253,7 +253,9 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 	return conflicts, nil
 }
 
-// ensureVirtualMachineClassForClusterVMs ensures the configured VirtualMachineClass exists on the base cluster.
+// ensureVirtualMachineClassForClusterVMs ensures the configured VirtualMachineClass exists on the base cluster and reaches Ready.
+// For every configured name (including default generic), it GETs the class and waits for Ready when present.
+// If the default generic class is missing, it fails fast with an actionable error instead of failing later during VM creation.
 // When the name is not generic and the class is missing, it creates one by cloning spec from the built-in "generic"
 // class and setting spec.cpu.type to Host. Inherited sizing policies and similar fields stay; spec.nodeSelector and
 // spec.tolerations are cleared because Host CPU pins the instruction set to the node—keeping generic placement rules
@@ -261,18 +263,18 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 // The new object is labeled for identification and is never deleted by e2e cleanup.
 func ensureVirtualMachineClassForClusterVMs(ctx context.Context, virtClient *virtualization.Client) error {
 	className := config.EffectiveVirtualMachineClassName()
-	if className == config.TestClusterVirtualMachineClassNameDefaultValue {
-		return nil
-	}
-
 	vmcClient := virtClient.VirtualMachineClasses()
 
 	_, err := vmcClient.Get(ctx, className)
 	if err == nil {
-		return nil
+		return waitForVirtualMachineClassReady(ctx, virtClient, className)
 	}
 	if !errors.IsNotFound(err) {
 		return fmt.Errorf("VirtualMachineClass %q: %w", className, err)
+	}
+
+	if className == config.TestClusterVirtualMachineClassNameDefaultValue {
+		return fmt.Errorf("VirtualMachineClass %q not found on the base cluster; enable the virtualization module and ensure this VirtualMachineClass exists before running tests", className)
 	}
 
 	template, err := vmcClient.Get(ctx, config.TestClusterVirtualMachineClassNameDefaultValue)
