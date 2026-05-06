@@ -105,7 +105,8 @@ var (
 	//TestClusterStorageClassDefaultValue = "rsc-test-r2-local"
 
 	// TestClusterVirtualMachineClassName is spec.virtualMachineClassName for VirtualMachines created on the base cluster.
-	// Empty means use TestClusterVirtualMachineClassNameDefaultValue ("generic"). Values other than generic must be a valid DNS-1123 label.
+	// Empty means use TestClusterVirtualMachineClassNameDefaultValue ("generic"). Values other than generic must satisfy
+	// Kubernetes DNS-1123 subdomain rules for object names (cluster-scoped VirtualMachineClass).
 	TestClusterVirtualMachineClassName             = os.Getenv("TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME")
 	TestClusterVirtualMachineClassNameDefaultValue = "generic"
 
@@ -269,8 +270,8 @@ func ValidateEnvironment() error {
 		TestClusterVirtualMachineClassName = TestClusterVirtualMachineClassNameDefaultValue
 	}
 	if TestClusterVirtualMachineClassName != TestClusterVirtualMachineClassNameDefaultValue {
-		if errs := validation.IsDNS1123Label(TestClusterVirtualMachineClassName); len(errs) > 0 {
-			return fmt.Errorf("TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME %q is not a valid Kubernetes DNS label name: %v",
+		if errs := validation.IsDNS1123Subdomain(TestClusterVirtualMachineClassName); len(errs) > 0 {
+			return fmt.Errorf("TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME %q is not a valid Kubernetes DNS-1123 subdomain name: %v",
 				TestClusterVirtualMachineClassName, errs)
 		}
 	}

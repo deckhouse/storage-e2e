@@ -727,7 +727,7 @@ logger.Error("Failed to create resource: %v", err)
 | `SSH_PUBLIC_KEY` | `~/.ssh/id_rsa.pub` | SSH public key path |
 | `SSH_VM_USER` | `cloud` | SSH user for VMs |
 | `TEST_CLUSTER_NAMESPACE` | `e2e-test-cluster` | Test namespace name |
-| `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` | `generic` | VM class for VMs on the base cluster in `alwaysCreateNew`. If set to another DNS-label name and the class does not exist, it is created from `generic` with `spec.cpu.type: Host`, **`spec.nodeSelector` / `spec.tolerations` cleared**, sizing policies retained from template, labeled `storage-e2e.deckhouse.io/auto-created=true`, and left after cleanup |
+| `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` | `generic` | VM class for VMs on the base cluster in `alwaysCreateNew`. If set to another name (DNS-1123 subdomain) and the class does not exist, it is created from `generic` with `spec.cpu.type: Host`, **`spec.nodeSelector` / `spec.tolerations` cleared**, sizing policies retained from template, labeled `storage-e2e.deckhouse.io/auto-created=true`, and left after cleanup |
 | `TEST_CLUSTER_CLEANUP` | `false` | Cleanup cluster after tests |
 | `LOG_LEVEL` | `debug` | Log level (debug/info/warn/error) |
 | `KUBE_CONFIG_PATH` | - | Fallback kubeconfig path |

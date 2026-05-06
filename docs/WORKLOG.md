@@ -10,6 +10,7 @@ All notable changes to this repository are documented here. New entries are appe
 - **Update** `BootstrapCluster` passphrase branch in `pkg/cluster/setup.go`: upload dhctl connection-config with `UploadPrivate(..., 0600)`, drop separate remote `chmod` Exec; stage dir via `install -d -m 0700`
 - **Update** `docs/ARCHITECTURE.md`: note `UploadPrivate` under ssh file transfer
 - **Bugfix** `ensureVirtualMachineClassForClusterVMs` in `pkg/cluster/vms.go`: when auto-creating from `generic` with Host CPU, clear `spec.nodeSelector` and `spec.tolerations` (Host pins ISA; inherited placement could allow incompatible nodes / break live migration per Deckhouse docs)
+- **Update** `ValidateEnvironment` in `internal/config/env.go`: validate `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` with `validation.IsDNS1123Subdomain` for non-`generic` values (cluster-scoped object names); README and ARCHITECTURE §7 wording aligned
 - **Update** `README.md`, `docs/ARCHITECTURE.md` §7, `docs/FUNCTIONS_GLOSSARY.md`: document what stays inherited from `generic` vs cleared fields for auto-created `VirtualMachineClass`
 
 ---
