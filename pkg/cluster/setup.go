@@ -561,11 +561,13 @@ func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *
 	}
 
 	if config.SSHPassphrase != "" {
-		if _, prepErr := sshClient.Exec(ctx, fmt.Sprintf(`sudo -u %s bash -lc 'mkdir -p "${HOME}/.config/storage-e2e" && chmod 700 "${HOME}/.config/storage-e2e"'`, config.VMSSHUser)); prepErr != nil {
+		stageDir := filepath.Join("/home", config.VMSSHUser, ".config", "storage-e2e")
+		if _, prepErr := sshClient.Exec(ctx, fmt.Sprintf("sudo install -d -m 0700 -o %s -g %s -- %q", config.VMSSHUser, config.VMSSHUser, stageDir)); prepErr != nil {
 			return fmt.Errorf("prepare setup-node dir for dhctl connection-config: %w", prepErr)
 		}
 
-		mktempOut, mktempErr := sshClient.Exec(ctx, fmt.Sprintf(`sudo -u %s bash -lc 'mktemp "${HOME}/.config/storage-e2e/dhctl-bootstrap-connection.XXXXXX.yaml"'`, config.VMSSHUser))
+		tmpPattern := filepath.Join(stageDir, "dhctl-bootstrap-connection.XXXXXX.yaml")
+		mktempOut, mktempErr := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s mktemp %q", config.VMSSHUser, tmpPattern))
 		if mktempErr != nil {
 			return fmt.Errorf("create temp path for dhctl connection-config on setup node: %w", mktempErr)
 		}
@@ -619,13 +621,9 @@ func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *
 			return fmt.Errorf("close temp connection-config: %w", closeErr)
 		}
 
-		if upErr := sshClient.Upload(ctx, localConnPath, remoteConnYAMLPath); upErr != nil {
+		if upErr := sshClient.UploadPrivate(ctx, localConnPath, remoteConnYAMLPath, 0600); upErr != nil {
 			removeRemoteConnYAML()
 			return fmt.Errorf("upload dhctl connection-config to setup node: %w", upErr)
-		}
-		if _, chErr := sshClient.Exec(ctx, fmt.Sprintf("chmod 600 %s", remoteConnYAMLPath)); chErr != nil {
-			removeRemoteConnYAML()
-			return fmt.Errorf("chmod remote connection-config: %w", chErr)
 		}
 
 		dockerVolFlags = fmt.Sprintf(

@@ -441,7 +441,7 @@ infrastructure/ssh/
 - SSH key handling
 - Port forwarding (e.g., for Kubernetes API access)
 - Remote command execution
-- File transfer operations
+- File transfer operations (including UploadPrivate: chmod-before-data for sensitive payloads)
 
 **Key Features**:
 - Support for password and key-based authentication

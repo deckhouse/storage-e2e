@@ -4,6 +4,14 @@ All notable changes to this repository are documented here. New entries are appe
 
 ---
 
+## 2026-05-06
+
+- **Add** `UploadPrivate` to `ssh.SSHClient` (`internal/infrastructure/ssh/interface.go`) and implementations in `internal/infrastructure/ssh/client.go`: SFTP `Chmod` on remote path immediately after `Create` and before copying bytes (avoids wide-default-permissions window during transfer); refactor retries via `uploadOverSFTPOnce` / `uploadWithSFTPRetries` / `jumpUploadWithSFTPRetries`
+- **Update** `BootstrapCluster` passphrase branch in `pkg/cluster/setup.go`: upload dhctl connection-config with `UploadPrivate(..., 0600)`, drop separate remote `chmod` Exec; stage dir via `install -d -m 0700`
+- **Update** `docs/ARCHITECTURE.md`: note `UploadPrivate` under ssh file transfer
+
+---
+
 ## 2026-05-04
 
 - **Bugfix** `BootstrapCluster` in `pkg/cluster/setup.go`: drop dhctl-in-Docker flow via `SSH_AUTH_SOCK`/ssh-agent; bind-mount the setup-node key (from `UploadBootstrapFiles`) to `/root/.ssh/id_rsa` and pass `--ssh-agent-private-keys` — aligns with dhctl/lib-connection `ExtractConfig` reading key paths early ([deckhouse#19063](https://github.com/deckhouse/deckhouse/pull/19063))

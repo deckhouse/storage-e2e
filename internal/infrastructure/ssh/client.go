@@ -101,6 +101,33 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) (written
 	return written, err
 }
 
+// uploadOverSFTPOnce creates remotePath via SFTP, optionally chmods it before streaming bytes (avoids a wide-permission window during transfer), then copies localPath.
+func uploadOverSFTPOnce(ctx context.Context, sftpClient *sftp.Client, localPath, remotePath string, chmodBeforeCopy *os.FileMode) error {
+	localFile, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open local file %s: %w", localPath, err)
+	}
+	defer localFile.Close()
+
+	remoteFile, err := sftpClient.Create(remotePath)
+	if err != nil {
+		return fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
+	}
+	defer remoteFile.Close()
+
+	if chmodBeforeCopy != nil {
+		if err := sftpClient.Chmod(remotePath, *chmodBeforeCopy); err != nil {
+			_ = sftpClient.Remove(remotePath)
+			return fmt.Errorf("chmod remote file before transfer: %w", err)
+		}
+	}
+
+	if _, err := copyWithContext(ctx, remoteFile, localFile); err != nil {
+		return fmt.Errorf("failed to copy file: %w", err)
+	}
+	return nil
+}
+
 // readPassword reads a password from the terminal
 func readPassword(prompt string) ([]byte, error) {
 	fmt.Fprint(os.Stderr, prompt)
@@ -538,12 +565,10 @@ func (c *client) ExecFatal(ctx context.Context, cmd string) string {
 	return output
 }
 
-// Upload uploads a local file to the remote host with automatic retry and reconnection
-func (c *client) Upload(ctx context.Context, localPath, remotePath string) error {
+func (c *client) uploadWithSFTPRetries(ctx context.Context, localPath, remotePath string, chmodBeforeCopy *os.FileMode) error {
 	var lastErr error
 
 	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
-		// Check context before starting
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context error before upload: %w", err)
 		}
@@ -564,47 +589,35 @@ func (c *client) Upload(ctx context.Context, localPath, remotePath string) error
 			return lastErr
 		}
 
-		localFile, err := os.Open(localPath)
-		if err != nil {
-			sftpClient.Close()
-			return fmt.Errorf("failed to open local file %s: %w", localPath, err)
-		}
-
-		remoteFile, err := sftpClient.Create(remotePath)
-		if err != nil {
-			localFile.Close()
-			sftpClient.Close()
-			lastErr = fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
-			if isConnectionError(err) {
-				if reconnErr := c.reconnect(ctx); reconnErr != nil {
-					return fmt.Errorf("remote file creation failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
-				}
-				continue
-			}
-			return lastErr
-		}
-
-		// Use context-aware copy
-		_, err = copyWithContext(ctx, remoteFile, localFile)
-		remoteFile.Close()
-		localFile.Close()
+		err = uploadOverSFTPOnce(ctx, sftpClient, localPath, remotePath, chmodBeforeCopy)
 		sftpClient.Close()
 
 		if err != nil {
-			lastErr = fmt.Errorf("failed to copy file: %w", err)
+			lastErr = err
 			if isConnectionError(err) {
 				if reconnErr := c.reconnect(ctx); reconnErr != nil {
-					return fmt.Errorf("file copy failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+					return fmt.Errorf("SFTP upload failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
 				}
 				continue
 			}
-			return lastErr
+			return err
 		}
 
 		return nil
 	}
 
 	return fmt.Errorf("SSH upload failed after %d attempts: %w", config.SSHRetryCount, lastErr)
+}
+
+// Upload uploads a local file to the remote host with automatic retry and reconnection
+func (c *client) Upload(ctx context.Context, localPath, remotePath string) error {
+	return c.uploadWithSFTPRetries(ctx, localPath, remotePath, nil)
+}
+
+// UploadPrivate uploads like Upload but applies remotePerm to remotePath over SFTP immediately after create and before copying payload, avoiding a world-readable window during transfer (CWE-732).
+func (c *client) UploadPrivate(ctx context.Context, localPath, remotePath string, remotePerm os.FileMode) error {
+	p := remotePerm & os.ModePerm
+	return c.uploadWithSFTPRetries(ctx, localPath, remotePath, &p)
 }
 
 // Close closes the SSH connection
@@ -1064,12 +1077,10 @@ func (c *jumpHostClient) ExecFatal(ctx context.Context, cmd string) string {
 	return output
 }
 
-// Upload uploads a local file to the remote host with automatic retry and reconnection
-func (c *jumpHostClient) Upload(ctx context.Context, localPath, remotePath string) error {
+func (c *jumpHostClient) jumpUploadWithSFTPRetries(ctx context.Context, localPath, remotePath string, chmodBeforeCopy *os.FileMode) error {
 	var lastErr error
 
 	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
-		// Check context before starting
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context error before upload: %w", err)
 		}
@@ -1090,47 +1101,35 @@ func (c *jumpHostClient) Upload(ctx context.Context, localPath, remotePath strin
 			return lastErr
 		}
 
-		localFile, err := os.Open(localPath)
-		if err != nil {
-			sftpClient.Close()
-			return fmt.Errorf("failed to open local file %s: %w", localPath, err)
-		}
-
-		remoteFile, err := sftpClient.Create(remotePath)
-		if err != nil {
-			localFile.Close()
-			sftpClient.Close()
-			lastErr = fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
-			if isConnectionError(err) {
-				if reconnErr := c.reconnect(ctx); reconnErr != nil {
-					return fmt.Errorf("remote file creation failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
-				}
-				continue
-			}
-			return lastErr
-		}
-
-		// Use context-aware copy
-		_, err = copyWithContext(ctx, remoteFile, localFile)
-		remoteFile.Close()
-		localFile.Close()
+		err = uploadOverSFTPOnce(ctx, sftpClient, localPath, remotePath, chmodBeforeCopy)
 		sftpClient.Close()
 
 		if err != nil {
-			lastErr = fmt.Errorf("failed to copy file: %w", err)
+			lastErr = err
 			if isConnectionError(err) {
 				if reconnErr := c.reconnect(ctx); reconnErr != nil {
-					return fmt.Errorf("file copy failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+					return fmt.Errorf("SFTP upload failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
 				}
 				continue
 			}
-			return lastErr
+			return err
 		}
 
 		return nil
 	}
 
 	return fmt.Errorf("SSH upload failed after %d attempts: %w", config.SSHRetryCount, lastErr)
+}
+
+// Upload uploads a local file to the remote host with automatic retry and reconnection
+func (c *jumpHostClient) Upload(ctx context.Context, localPath, remotePath string) error {
+	return c.jumpUploadWithSFTPRetries(ctx, localPath, remotePath, nil)
+}
+
+// UploadPrivate uploads like Upload but applies remotePerm to remotePath over SFTP immediately after create and before copying payload, avoiding a world-readable window during transfer (CWE-732).
+func (c *jumpHostClient) UploadPrivate(ctx context.Context, localPath, remotePath string, remotePerm os.FileMode) error {
+	p := remotePerm & os.ModePerm
+	return c.jumpUploadWithSFTPRetries(ctx, localPath, remotePath, &p)
 }
 
 // Close closes both SSH connections

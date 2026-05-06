@@ -16,7 +16,10 @@ limitations under the License.
 
 package ssh
 
-import "context"
+import (
+	"context"
+	"os"
+)
 
 // SSHClient provides SSH operations
 type SSHClient interface {
@@ -35,6 +38,9 @@ type SSHClient interface {
 
 	// Uploads a local file to the remote host
 	Upload(ctx context.Context, localPath, remotePath string) error
+
+	// UploadPrivate uploads like Upload but sets remotePerm on the remote path via SFTP after create and before copying payload (reduces permission race on secrets).
+	UploadPrivate(ctx context.Context, localPath, remotePath string, remotePerm os.FileMode) error
 
 	// Close closes the SSH connection
 	Close() error
