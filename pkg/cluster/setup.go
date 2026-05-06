@@ -557,9 +557,14 @@ func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *
 			_, _ = sshClient.Exec(cleanupCtx, fmt.Sprintf("sudo rm -f %s", remoteConnPath))
 		}()
 
+		if _, probeErr := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s test -r %s", config.VMSSHUser, remoteSSHPrivateKey)); probeErr != nil {
+			return fmt.Errorf("SSH private key not readable at %s on setup node: %w", remoteSSHPrivateKey, probeErr)
+		}
+
 		pemOut, pemErr := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s cat %s", config.VMSSHUser, remoteSSHPrivateKey))
 		if pemErr != nil {
-			return fmt.Errorf("read bootstrap SSH private key from setup node for connection-config: %w\nOutput: %s", pemErr, pemOut)
+			// Do not include pemOut in the error: Exec uses CombinedOutput and stdout may already contain key material.
+			return fmt.Errorf("read bootstrap SSH private key from setup node for connection-config: %w", pemErr)
 		}
 		if strings.TrimSpace(pemOut) == "" {
 			return fmt.Errorf("empty SSH private key at %s on setup node", remoteSSHPrivateKey)
