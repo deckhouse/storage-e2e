@@ -255,7 +255,10 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 
 // ensureVirtualMachineClassForClusterVMs ensures the configured VirtualMachineClass exists on the base cluster.
 // When the name is not generic and the class is missing, it creates one by cloning spec from the built-in "generic"
-// class and setting spec.cpu.type to Host; the new object is labeled for identification and is never deleted by e2e cleanup.
+// class and setting spec.cpu.type to Host. Inherited sizing policies and similar fields stay; spec.nodeSelector and
+// spec.tolerations are cleared because Host CPU pins the instruction set to the node—keeping generic placement rules
+// could allow heterogeneous nodes and break live migration (see Deckhouse VirtualMachineClass CPU type Host docs).
+// The new object is labeled for identification and is never deleted by e2e cleanup.
 func ensureVirtualMachineClassForClusterVMs(ctx context.Context, virtClient *virtualization.Client) error {
 	className := config.EffectiveVirtualMachineClassName()
 	if className == config.TestClusterVirtualMachineClassNameDefaultValue {
@@ -283,6 +286,8 @@ func ensureVirtualMachineClassForClusterVMs(ctx context.Context, virtClient *vir
 
 	cloned := template.Spec.DeepCopy()
 	cloned.CPU = v1alpha3.CPU{Type: v1alpha3.CPUTypeHost}
+	cloned.NodeSelector = v1alpha3.NodeSelector{}
+	cloned.Tolerations = nil
 
 	vmc := &v1alpha3.VirtualMachineClass{
 		ObjectMeta: metav1.ObjectMeta{
@@ -301,7 +306,7 @@ func ensureVirtualMachineClassForClusterVMs(ctx context.Context, virtClient *vir
 		return fmt.Errorf("create VirtualMachineClass %q: %w", className, err)
 	}
 
-	logger.Info("Created VirtualMachineClass %s (from generic template, cpu.type=Host, label %s=%s)",
+	logger.Info("Created VirtualMachineClass %s (from generic template, cpu.type=Host, cleared nodeSelector/tolerations, label %s=%s)",
 		className, vmClassAutoCreatedLabelKey, vmClassAutoCreatedLabelValue)
 	return waitForVirtualMachineClassReady(ctx, virtClient, className)
 }

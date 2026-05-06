@@ -9,6 +9,8 @@ All notable changes to this repository are documented here. New entries are appe
 - **Add** `UploadPrivate` to `ssh.SSHClient` (`internal/infrastructure/ssh/interface.go`) and implementations in `internal/infrastructure/ssh/client.go`: SFTP `Chmod` on remote path immediately after `Create` and before copying bytes (avoids wide-default-permissions window during transfer); refactor retries via `uploadOverSFTPOnce` / `uploadWithSFTPRetries` / `jumpUploadWithSFTPRetries`
 - **Update** `BootstrapCluster` passphrase branch in `pkg/cluster/setup.go`: upload dhctl connection-config with `UploadPrivate(..., 0600)`, drop separate remote `chmod` Exec; stage dir via `install -d -m 0700`
 - **Update** `docs/ARCHITECTURE.md`: note `UploadPrivate` under ssh file transfer
+- **Bugfix** `ensureVirtualMachineClassForClusterVMs` in `pkg/cluster/vms.go`: when auto-creating from `generic` with Host CPU, clear `spec.nodeSelector` and `spec.tolerations` (Host pins ISA; inherited placement could allow incompatible nodes / break live migration per Deckhouse docs)
+- **Update** `README.md`, `docs/ARCHITECTURE.md` §7, `docs/FUNCTIONS_GLOSSARY.md`: document what stays inherited from `generic` vs cleared fields for auto-created `VirtualMachineClass`
 
 ---
 
