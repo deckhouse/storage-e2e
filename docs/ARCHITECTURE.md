@@ -23,6 +23,7 @@ storage-e2e/
 │   ├── config/                    # Configuration management
 │   │   ├── config.go             # Main configuration struct
 │   │   ├── env.go                # Environment variable parsing
+│   │   ├── overrides.go          # ${VAR} expansion in modulePullOverride at config load time
 │   │   ├── types.go              # Configuration type definitions
 │   │   └── images.go             # OS image definitions
 │   │
@@ -75,6 +76,12 @@ storage-e2e/
 │   ├── kubernetes/               # Public Kubernetes utilities
 │   │   ├── apply.go              # YAML manifest application
 │   │   ├── blockdevice.go        # BlockDevice operations
+│   │   ├── cephblockpool.go      # Rook CephBlockPool operations
+│   │   ├── cephcluster.go        # Rook CephCluster operations
+│   │   ├── cephfilesystem.go     # Rook CephFilesystem operations
+│   │   ├── cephclusterconnection.go # csi-ceph connection/auth CRs
+│   │   ├── cephcredentials.go    # Rook Ceph credential discovery
+│   │   ├── cephstorageclass.go   # csi-ceph CephStorageClass CR
 │   │   ├── client.go             # Clientset/dynamic client with retry
 │   │   ├── localstorageclass.go  # LocalStorageClass CR operations
 │   │   ├── lvmvolumegroup.go     # LVMVolumeGroup operations
@@ -83,17 +90,25 @@ storage-e2e/
 │   │   ├── nodegroup.go          # NodeGroup operations
 │   │   ├── nodes.go              # Node listing, taints, labels
 │   │   ├── pod.go                # Pod operations
+│   │   ├── pod_exec.go           # Pods/exec helpers + DistrolessReader for distroless containers
+│   │   ├── poll.go               # Generic readiness poller (per-call timeout, WARN on net errors)
 │   │   ├── pvc.go                # PVC operations
+│   │   ├── rookconfigoverride.go # Rook ceph.conf override ConfigMap
 │   │   ├── secrets.go            # Secret operations
 │   │   ├── storageclass.go       # StorageClass get/wait/default
+│   │   ├── storageclass_manage.go # Global default StorageClass management
 │   │   ├── virtualdisk.go        # VirtualDisk attach/detach
-│   │   └── vmpod.go              # VM pod lookup
+│   │   ├── vmpod.go              # VM pod lookup
+│   │   └── volumesnapshotclass.go # VolumeSnapshotClass helpers
 │   │
 │   ├── retry/                    # Generic retry with exponential backoff
 │   │   └── retry.go
 │   │
 │   └── testkit/                  # Test framework utilities
-│       ├── storageclass.go       # Default StorageClass provisioning
+│       ├── ceph.go               # EnsureCephStorageClass (Rook + csi-ceph)
+│       ├── ceph_cluster.go       # EnsureCephCluster (Rook only, no csi-ceph)
+│       ├── ceph_crc.go           # Ceph CRC tuning helpers
+│       ├── storageclass.go       # EnsureDefaultStorageClass (sds-local-volume)
 │       └── stress-tests.go       # Stress test runner
 │
 ├── tests/                         # Test suites
@@ -326,6 +341,7 @@ Tests use Ginkgo's lifecycle hooks:
 config/
 ├── config.go           # Main configuration operations
 ├── env.go              # Environment variable definitions and validation
+├── overrides.go        # ${VAR} expansion in modulePullOverride at config load time
 ├── types.go            # Configuration type definitions
 └── images.go           # OS image URL definitions
 ```
@@ -486,6 +502,12 @@ pkg/
 ├── kubernetes/
 │   ├── apply.go        # YAML manifest application
 │   ├── blockdevice.go  # BlockDevice operations
+│   ├── cephblockpool.go         # Rook CephBlockPool CRUD + wait
+│   ├── cephcluster.go           # Rook CephCluster CRUD + wait
+│   ├── cephfilesystem.go        # Rook CephFilesystem CRUD + wait
+│   ├── cephclusterconnection.go # csi-ceph CephClusterConnection/Auth CRs
+│   ├── cephcredentials.go       # Read fsid/mons/admin-key from Rook secrets
+│   ├── cephstorageclass.go      # csi-ceph CephStorageClass CR
 │   ├── client.go       # Clientset/dynamic client with retry
 │   ├── localstorageclass.go  # LocalStorageClass CR operations
 │   ├── lvmvolumegroup.go     # LVMVolumeGroup operations
@@ -494,15 +516,23 @@ pkg/
 │   ├── nodegroup.go    # NodeGroup operations
 │   ├── nodes.go        # Node listing, taints, labels
 │   ├── pod.go          # Pod operations
+│   ├── pod_exec.go     # Exec helpers + DistrolessReader (ephemeral-container session)
+│   ├── poll.go         # pollResourceUntilReady helper for Wait*Ready callers
 │   ├── pvc.go          # PVC operations
+│   ├── rookconfigoverride.go    # Rook global ceph.conf override
 │   ├── secrets.go      # Secret operations
 │   ├── storageclass.go # StorageClass get/wait/default
+│   ├── storageclass_manage.go   # Global default-SC management
 │   ├── virtualdisk.go  # VirtualDisk attach/detach
-│   └── vmpod.go        # VM pod lookup
+│   ├── vmpod.go        # VM pod lookup
+│   └── volumesnapshotclass.go   # VolumeSnapshotClass helpers
 ├── retry/
 │   └── retry.go        # Generic retry with exponential backoff
 └── testkit/
-    ├── storageclass.go  # Default StorageClass provisioning
+    ├── ceph.go          # EnsureCephStorageClass / EnsureDefaultCephStorageClass
+    ├── ceph_cluster.go  # EnsureCephCluster (Rook-only, no csi-ceph)
+    ├── ceph_crc.go      # Ceph CRC tuning helpers
+    ├── storageclass.go  # EnsureDefaultStorageClass (sds-local-volume)
     └── stress-tests.go  # Stress test runner
 ```
 
@@ -729,7 +759,8 @@ logger.Error("Failed to create resource: %v", err)
 | `TEST_CLUSTER_NAMESPACE` | `e2e-test-cluster` | Test namespace name |
 | `TEST_CLUSTER_CLEANUP` | `false` | Cleanup cluster after tests |
 | `LOG_LEVEL` | `debug` | Log level (debug/info/warn/error) |
-| `KUBE_CONFIG_PATH` | - | Fallback kubeconfig path |
+| `KUBE_CONFIG_PATH` | - | Explicit kubeconfig path. Used when SSH retrieval of `/etc/kubernetes/{super-admin,admin}.conf` from the master fails. If unset and SSH also fails, `GetKubeconfig` returns an error (no silent fallback to `~/.kube/config`). |
+| `MODULE_IMAGE_TAG` (and any other custom name) | - | Any `${VAR}` placeholder used inside `modulePullOverride:` in `cluster_config.yml` is expanded at config load time by `internal/config/overrides.ExpandEnvInModulePullOverride`. Missing/empty placeholders fail fast with an explicit error so CI can point modules at `pr<N>` / `mr<N>` images via a single env var without editing the YAML between runs. |
 
 ### Commander Variables (only when `TEST_CLUSTER_CREATE_MODE=commander`)
 

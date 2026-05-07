@@ -224,8 +224,16 @@ var (
 	LogTimetampsEnabledDefaultValue = "true"
 )
 
-func ValidateEnvironment() error {
-	// Default values for environment variables
+// ApplyDefaults populates package-level config variables that have a documented
+// default value but were not provided through the environment. It is idempotent
+// and safe to call multiple times.
+//
+// Suites that don't call ValidateEnvironment() (because they don't need its
+// required-variable checks) should still call ApplyDefaults() — otherwise
+// optional variables like SSH_VM_USER stay empty and propagate as user="" all
+// the way to the SSH server, where it shows up as "Invalid user" / publickey
+// rejection that is hard to attribute to a missing default.
+func ApplyDefaults() {
 	if YAMLConfigFilename == "" {
 		YAMLConfigFilename = YAMLConfigFilenameDefaultValue
 	}
@@ -246,6 +254,10 @@ func ValidateEnvironment() error {
 	if TestClusterNamespace == "" {
 		TestClusterNamespace = TestClusterNamespaceDefaultValue
 	}
+}
+
+func ValidateEnvironment() error {
+	ApplyDefaults()
 
 	// There are no default values for these variables and they must be set! Otherwise, the test will fail.
 	if SSHUser == "" {

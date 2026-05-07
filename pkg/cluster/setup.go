@@ -542,12 +542,31 @@ echo "%s"
 	_, _ = sshClient.Exec(ctx, chmodCmd)
 
 	// Step 3: Run dhctl bootstrap command with ssh-agent
-	// Mount SSH_AUTH_SOCK into the container and use it for authentication
-	// Note: We don't use --ssh-agent-private-keys anymore, dhctl will use SSH_AUTH_SOCK
-	// Docker needs to run with sudo for access to docker socket
+	// Mount SSH_AUTH_SOCK into the container and use it for authentication.
+	//
+	// dhctl's underlying SSH config parser (`lib-connection`) eagerly opens
+	// `~/.ssh/id_rsa` (=/root/.ssh/id_rsa inside the container) during config
+	// extraction, *before* it considers SSH_AUTH_SOCK. With a passphrase-
+	// protected key uploaded only as cloud@/home/cloud/.ssh/id_rsa, the
+	// bootstrap aborts with either:
+	//   - "open /root/.ssh/id_rsa: no such file or directory" (no mount), or
+	//   - "stdin is not a terminal, error reading password" (mount but
+	//     non-interactive `docker run`).
+	//
+	// `--ssh-agent-private-keys=""` (flag or env) does NOT short-circuit the
+	// file load in this image, neither does the `DHCTL_CLI_`-prefixed env.
+	// `lib-connection` exposes two purpose-built env vars for "auth via agent
+	// only, never touch any key file" (no CLI flags in install:main):
+	//   FORCE_NO_PRIVATE_KEYS=true            skip the id_rsa fallback
+	//   USE_AGENT_WITH_NO_PRIVATE_KEYS=true   set ForceUseSSHAgent=true so
+	//                                         that HaveAuthMethods() passes
+	// Together they force dhctl onto the ssh-agent we already loaded with the
+	// unlocked key (via askpass) above, with no file-side dependencies.
+	//
+	// Docker needs to run with sudo for access to the docker socket.
 	installImage := fmt.Sprintf("%s/install:%s", registryRepo, devBranch)
 	bootstrapCmd := fmt.Sprintf(
-		"sudo -u %s bash -c 'export SSH_AUTH_SOCK=%s; sudo docker run --network=host --pull=always -v \"/home/%s/config.yml:/config.yml\" -v \"%s:/tmp/ssh-agent.sock\" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock %s dhctl bootstrap --ssh-host=%s --ssh-user=%s --config=/config.yml > %s 2>&1'",
+		"sudo -u %s bash -c 'export SSH_AUTH_SOCK=%s; sudo docker run --network=host --pull=always -v \"/home/%s/config.yml:/config.yml\" -v \"%s:/tmp/ssh-agent.sock\" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock -e FORCE_NO_PRIVATE_KEYS=true -e USE_AGENT_WITH_NO_PRIVATE_KEYS=true %s dhctl bootstrap --ssh-host=%s --ssh-user=%s --config=/config.yml > %s 2>&1'",
 		config.VMSSHUser, actualAgentSocket, config.VMSSHUser, actualAgentSocket, installImage, masterIP, config.VMSSHUser, remoteLogPath,
 	)
 

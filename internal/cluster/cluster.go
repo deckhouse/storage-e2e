@@ -48,6 +48,7 @@ import (
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
+	"github.com/deckhouse/storage-e2e/internal/logger"
 )
 
 // LoadClusterConfig loads and validates a cluster configuration from a YAML file
@@ -71,6 +72,14 @@ func LoadClusterConfig(configFilename string) (*config.ClusterDefinition, error)
 	var clusterDef config.ClusterDefinition
 	if err := yaml.Unmarshal(data, &clusterDef); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
+	}
+
+	// Expand ${VAR} placeholders in modulePullOverride fields. CI uses this to
+	// pass a per-PR/MR image tag via a single env var (e.g. MODULE_IMAGE_TAG)
+	// without editing the YAML between runs. Missing envs fail fast here so we
+	// don't silently regress to "main" on accidentally unset variables.
+	if err := config.ExpandEnvInModulePullOverride(&clusterDef); err != nil {
+		return nil, fmt.Errorf("expand env in modulePullOverride: %w", err)
 	}
 
 	// Validate the configuration
@@ -182,7 +191,20 @@ func expandPath(path string) (string, error) {
 // getKubeconfigRemoteShell prints kubeconfig for use with client-go. It prefers
 // /etc/kubernetes/super-admin.conf (Kubernetes 1.29+ unified kubeconfig) when the file
 // exists, and falls back to /etc/kubernetes/admin.conf otherwise.
-const getKubeconfigRemoteShell = "sudo -n sh -c 'if [ -f /etc/kubernetes/super-admin.conf ]; then cat /etc/kubernetes/super-admin.conf; else cat /etc/kubernetes/admin.conf; fi'"
+//
+// The two `sudo -n /bin/cat ...` invocations are intentionally NOT wrapped in
+// `sudo -n sh -c '...'`. With a wrapper the privileged binary is /bin/sh, so a
+// minimal sudoers rule of the form
+//
+//	user ALL=(root) NOPASSWD: /bin/cat /etc/kubernetes/super-admin.conf, /bin/cat /etc/kubernetes/admin.conf
+//
+// would NOT match and sudo would still ask for a password. By calling /bin/cat
+// directly we make this command work with the same fine-grained NOPASSWD rule
+// that the buildKubeconfigFetchError diagnostic recommends. The 2>/dev/null on
+// the first try suppresses the "permission denied / no such file" noise so the
+// fallback to admin.conf produces clean kubeconfig content on stdout.
+const getKubeconfigRemoteShell = "sudo -n /bin/cat /etc/kubernetes/super-admin.conf 2>/dev/null " +
+	"|| sudo -n /bin/cat /etc/kubernetes/admin.conf"
 
 // GetKubeconfig connects to the master node via SSH, retrieves kubeconfig (preferring
 // super-admin.conf over admin.conf when available), and returns a rest.Config that can
@@ -216,34 +238,55 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 
 	kubeconfigPath := filepath.Join(outputDir, fmt.Sprintf("kubeconfig-%s.yml", masterIP))
 
-	var kubeconfigContent []byte
+	var (
+		kubeconfigContent []byte
+		// kubeconfigSource is a short, human-readable tag identifying where the
+		// kubeconfig came from. It's printed at the end of GetKubeconfig so it
+		// is always obvious in test logs which cluster we're actually about to
+		// hit — important after diagnosing wrong-cluster bugs that look like
+		// "stale lock" or "unexpected modules".
+		kubeconfigSource string
+	)
 
 	// Read kubeconfig via SSH: prefer super-admin.conf when present (see getKubeconfigRemoteShell).
-	kubeconfigContentStr, err := sshClient.Exec(ctx, getKubeconfigRemoteShell)
-	if err != nil {
-		// SSH retrieval failed (likely due to sudo password requirement)
-		// Try to use KUBE_CONFIG_PATH if set, otherwise notify user
-		if config.KubeConfigPath != "" {
-			// Expand path to handle ~ and resolve symlinks if present
-			resolvedPath, err := expandPath(config.KubeConfigPath)
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to expand KUBE_CONFIG_PATH (%s): %w", config.KubeConfigPath, err)
-			}
-			// Read kubeconfig content from the provided file
-			kubeconfigContent, err = os.ReadFile(resolvedPath)
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to read kubeconfig from KUBE_CONFIG_PATH (%s): %w", resolvedPath, err)
-			}
-		} else {
-			// KUBE_CONFIG_PATH not set, notify user and fail
-			return nil, "", fmt.Errorf("failed to read kubeconfig from master (this may occur if sudo requires a password). "+
-				"Please download the kubeconfig file manually and provide its full path via KUBE_CONFIG_PATH environment variable. "+
-				"Original error: %w", err)
-		}
-	} else {
+	kubeconfigContentStr, sshErr := sshClient.Exec(ctx, getKubeconfigRemoteShell)
+	switch {
+	case sshErr == nil:
 		// SSH succeeded - use the content from SSH
 		kubeconfigContent = []byte(kubeconfigContentStr)
+		kubeconfigSource = fmt.Sprintf("SSH(%s@%s:/etc/kubernetes/{super-admin,admin}.conf)", user, masterIP)
+
+	case config.KubeConfigPath != "":
+		// SSH retrieval failed (likely due to sudo password requirement) and the
+		// caller pointed us at a specific kubeconfig file via KUBE_CONFIG_PATH.
+		resolvedPath, expandErr := expandPath(config.KubeConfigPath)
+		if expandErr != nil {
+			return nil, "", fmt.Errorf("failed to expand KUBE_CONFIG_PATH (%s): %w", config.KubeConfigPath, expandErr)
+		}
+		readContent, readErr := os.ReadFile(resolvedPath)
+		if readErr != nil {
+			return nil, "", fmt.Errorf("failed to read kubeconfig from KUBE_CONFIG_PATH (%s): %w", resolvedPath, readErr)
+		}
+		kubeconfigContent = readContent
+		kubeconfigSource = fmt.Sprintf("KUBE_CONFIG_PATH=%s", resolvedPath)
+
+	default:
+		// SSH failed and the caller did not opt into a specific kubeconfig via
+		// KUBE_CONFIG_PATH. Fail fast rather than silently picking up the
+		// developer's ~/.kube/config / $KUBECONFIG, which has historically
+		// caused tests to acquire stale locks on unrelated SAN clusters or
+		// deploy modules against the wrong stand. Classify the failure so the
+		// returned error tells the operator which knob to turn.
+		cause := classifyKubeconfigFetchFailure(ctx, sshClient)
+		return nil, "", buildKubeconfigFetchError(user, masterIP, sshErr, cause)
 	}
+
+	// Always stamp the kubeconfig source + the resulting current-context/server
+	// in the log. With this single line a developer reading the output knows
+	// for sure which cluster the test is about to talk to, regardless of which
+	// of the three resolution paths fired above.
+	finalCtx, finalServer := kubeconfigContextSummary(kubeconfigContent)
+	logger.Info("Loaded kubeconfig (source=%s, current-context=%q, server=%q)", kubeconfigSource, finalCtx, finalServer)
 
 	// Write kubeconfig content to file (always write a working copy, regardless of source)
 	kubeconfigFile, err := os.Create(kubeconfigPath)
@@ -348,3 +391,128 @@ func UpdateKubeconfigPort(kubeconfigPath string, localPort int) error {
 
 	return nil
 }
+
+// kubeconfigContextSummary parses a serialized kubeconfig and returns its
+// current-context name and the matching cluster's `server:` URL. Used purely
+// for human-readable log lines that identify which cluster the test is about
+// to talk to. On any parse failure the helper returns "<unknown>" / "<unknown>"
+// rather than an error: failing here would defeat its only purpose, which is
+// to make the surrounding log message safer to print under partial failures.
+func kubeconfigContextSummary(content []byte) (currentContext, server string) {
+	currentContext = "<unknown>"
+	server = "<unknown>"
+	if len(content) == 0 {
+		return
+	}
+	cfg, err := clientcmd.Load(content)
+	if err != nil || cfg == nil {
+		return
+	}
+	if cfg.CurrentContext != "" {
+		currentContext = cfg.CurrentContext
+	}
+	if ctx, ok := cfg.Contexts[cfg.CurrentContext]; ok && ctx != nil {
+		if cl, ok := cfg.Clusters[ctx.Cluster]; ok && cl != nil && cl.Server != "" {
+			server = cl.Server
+		}
+	}
+	return
+}
+
+// kubeconfigFetchCause discriminates the most likely reason
+// getKubeconfigRemoteShell exited non-zero. Used solely to choose the
+// human-readable error template — the original SSH error is always
+// preserved via %w wrapping, so callers' errors.Is/errors.As keep working.
+type kubeconfigFetchCause int
+
+const (
+	causeUnknown kubeconfigFetchCause = iota
+	causeSudoPasswordRequired
+	causeKubeconfigMissing
+)
+
+// classifyKubeconfigFetchFailure runs two cheap probes against the master
+// to figure out the most likely reason getKubeconfigRemoteShell failed.
+// Best-effort: any probe-time error is treated as "unknown" rather than
+// surfaced — we are already in an error path and the original sshErr is
+// what callers care about.
+//
+// Order matters and matches what we actually need to know:
+//  1. Do the kubeconfig files even exist on this host? `test -f` runs as
+//     the SSH user without sudo and returns 0 even when the file is
+//     root:root 0600, because it only checks the inode. If both files are
+//     missing this is almost certainly a non-control-plane node and no
+//     sudoers tweak will help.
+//  2. If at least one file exists, are we allowed to `cat` it without a
+//     password? We probe with `sudo -n -l /bin/cat <path>`: -l makes sudo
+//     just look up the rule (no execution), and with -n it exits non-zero
+//     when no matching NOPASSWD rule applies. Crucially this matches the
+//     SAME granular rule the diagnostic recommends, so a misconfiguration
+//     where the operator added `NOPASSWD: /bin/sh` (or only NOPASSWD: ALL)
+//     does NOT mask the real "missing /bin/cat rule" cause.
+func classifyKubeconfigFetchFailure(ctx context.Context, sshClient ssh.SSHClient) kubeconfigFetchCause {
+	if _, err := sshClient.Exec(ctx,
+		"test -f /etc/kubernetes/super-admin.conf || test -f /etc/kubernetes/admin.conf"); err != nil {
+		return causeKubeconfigMissing
+	}
+	if _, err := sshClient.Exec(ctx,
+		"sudo -n -l /bin/cat /etc/kubernetes/super-admin.conf >/dev/null 2>&1 || "+
+			"sudo -n -l /bin/cat /etc/kubernetes/admin.conf >/dev/null 2>&1"); err != nil {
+		return causeSudoPasswordRequired
+	}
+	return causeUnknown
+}
+
+// buildKubeconfigFetchError renders an actionable, multi-line error for
+// the caller to print. Each branch lists the same kind of remediation
+// (sudoers tweak, KUBE_CONFIG_PATH escape, SSH check) but in the order
+// most relevant for the detected cause. The returned error always wraps
+// the original sshErr so errors.Is(err, &ssh.ExitError{...}) still works.
+func buildKubeconfigFetchError(user, masterIP string, sshErr error, cause kubeconfigFetchCause) error {
+	sudoersLine := fmt.Sprintf(
+		"%s ALL=(root) NOPASSWD: /bin/cat /etc/kubernetes/super-admin.conf, /bin/cat /etc/kubernetes/admin.conf",
+		user,
+	)
+	sudoersFix := "echo '" + sudoersLine + "' | sudo tee /etc/sudoers.d/e2e-kubeconfig && sudo chmod 0440 /etc/sudoers.d/e2e-kubeconfig"
+
+	switch cause {
+	case causeSudoPasswordRequired:
+		return fmt.Errorf(
+			"failed to read kubeconfig from master via SSH (%s@%s): "+
+				"sudo on the master requires a password (sudo -n exited non-zero).\n"+
+				"Pick ONE remedy:\n"+
+				"  1) Allow passwordless cat of the two kubeconfig files (run on the master):\n"+
+				"       %s\n"+
+				"  2) Point the test at a local kubeconfig instead (no SSH/sudo at all):\n"+
+				"       export KUBE_CONFIG_PATH=$HOME/.kube/config\n"+
+				"Original SSH error: %w",
+			user, masterIP, sudoersFix, sshErr)
+
+	case causeKubeconfigMissing:
+		return fmt.Errorf(
+			"failed to read kubeconfig from master via SSH (%s@%s): "+
+				"neither /etc/kubernetes/super-admin.conf nor /etc/kubernetes/admin.conf exists on the host — "+
+				"this looks like a non-control-plane node.\n"+
+				"Pick ONE remedy:\n"+
+				"  1) Make sure SSH_HOST points at a Kubernetes control-plane (master) node "+
+				"(check SSH_HOST/SSH_USER, and SSH_JUMP_HOST if you use one).\n"+
+				"  2) Set KUBE_CONFIG_PATH to a kubeconfig file on your local machine:\n"+
+				"       export KUBE_CONFIG_PATH=$HOME/.kube/config\n"+
+				"Original SSH error: %w",
+			user, masterIP, sshErr)
+
+	default:
+		return fmt.Errorf(
+			"failed to read kubeconfig from master via SSH (%s@%s) "+
+				"and KUBE_CONFIG_PATH is not set.\n"+
+				"Pick ONE remedy:\n"+
+				"  1) If sudo on the master requires a password, allow passwordless cat of the kubeconfig files:\n"+
+				"       %s\n"+
+				"  2) Set KUBE_CONFIG_PATH to a kubeconfig file on your local machine:\n"+
+				"       export KUBE_CONFIG_PATH=$HOME/.kube/config\n"+
+				"  3) Fix SSH credentials so the master is reachable as %s with key-based auth.\n"+
+				"Original SSH error: %w",
+			user, masterIP, sudoersFix, user, sshErr)
+	}
+}
+

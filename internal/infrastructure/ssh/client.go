@@ -377,94 +377,20 @@ func (c *client) reconnect(ctx context.Context) error {
 // StartTunnel starts an SSH tunnel with port forwarding from local to remote
 // It returns a function to stop the tunnel and an error if the tunnel fails to start
 func (c *client) StartTunnel(ctx context.Context, localPort, remotePort string) (func() error, error) {
-	// Check context before starting
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("context error before starting tunnel: %w", err)
-	}
-
-	listener, err := net.Listen("tcp", "127.0.0.1:"+localPort)
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen on local port %s: %w", localPort, err)
-	}
-
-	stopChan := make(chan struct{})
-
-	go func() {
-		defer listener.Close()
-		for {
-			// Check context and stop channel
-			select {
-			case <-ctx.Done():
-				return
-			case <-stopChan:
-				return
-			default:
+	dialer := tunnelDialer{
+		describe: fmt.Sprintf("%s@%s local:%s -> remote:%s", c.user, c.host, localPort, remotePort),
+		dial: func() (net.Conn, error) {
+			c.mu.Lock()
+			sc := c.sshClient
+			c.mu.Unlock()
+			if sc == nil {
+				return nil, fmt.Errorf("ssh client is not initialized")
 			}
-
-			// Set deadline for Accept based on context deadline if available
-			if deadline, ok := ctx.Deadline(); ok {
-				if err := listener.(*net.TCPListener).SetDeadline(deadline); err != nil {
-					// If setting deadline fails, continue without it
-				}
-			}
-
-			localConn, err := listener.Accept()
-			if err != nil {
-				// Listener closed or error occurred
-				select {
-				case <-ctx.Done():
-					return
-				case <-stopChan:
-					return
-				default:
-					// Continue if not stopped
-					continue
-				}
-			}
-
-			go func() {
-				defer localConn.Close()
-				remoteConn, err := c.sshClient.Dial("tcp", "127.0.0.1:"+remotePort)
-				if err != nil {
-					// Connection failed, just return - the error will be visible to the client
-					return
-				}
-				defer remoteConn.Close()
-
-				// Copy data bidirectionally with context support
-				done := make(chan struct{}, 2)
-				go func() {
-					_, _ = copyWithContext(ctx, localConn, remoteConn)
-					done <- struct{}{}
-				}()
-				go func() {
-					_, _ = copyWithContext(ctx, remoteConn, localConn)
-					done <- struct{}{}
-				}()
-
-				// Wait for either direction to finish or context cancellation
-				select {
-				case <-ctx.Done():
-					return
-				case <-done:
-					// One direction finished, wait for the other
-					select {
-					case <-ctx.Done():
-						return
-					case <-done:
-						// Both directions finished
-					}
-				}
-			}()
-		}
-	}()
-
-	stop := func() error {
-		close(stopChan)
-		return listener.Close()
+			return sc.Dial("tcp", "127.0.0.1:"+remotePort)
+		},
+		reconnect: c.reconnect,
 	}
-
-	return stop, nil
+	return runTunnelLoop(ctx, localPort, dialer)
 }
 
 // Exec executes a command on the remote host with automatic retry and reconnection
@@ -654,7 +580,7 @@ func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHo
 	}
 
 	// Create SSH config for target host
-	targetConfig, _, err := createSSHConfig(targetUser, targetKeyPath)
+	targetConfig, targetKeyInfo, err := createSSHConfig(targetUser, targetKeyPath)
 	if err != nil {
 		jumpClient.Close()
 		return nil, fmt.Errorf("failed to create SSH config for target host: %w", err)
@@ -683,14 +609,22 @@ func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHo
 
 		targetConn, err := jumpClient.Dial("tcp", targetAddr)
 		if err != nil {
-			lastErr = fmt.Errorf("failed to dial target host %s@%s through jump host: %w", targetUser, targetAddr, err)
+			lastErr = fmt.Errorf("failed to dial target host %q@%s through jump host %q@%s: %w",
+				targetUser, targetAddr, jumpUser, jumpAddr, err)
 			continue
 		}
 
 		targetClientConn, targetChans, targetReqs, err := ssh.NewClientConn(targetConn, targetAddr, targetConfig)
 		if err != nil {
 			targetConn.Close()
-			lastErr = fmt.Errorf("failed to establish SSH connection to target host: %w", err)
+			lastErr = fmt.Errorf(
+				"failed to establish SSH connection to target host %q@%s (via jump %q@%s): %w\n"+
+					"  Key used: %s (algorithm: %s, fingerprint: %s)\n"+
+					"  Hint: verify SSH_VM_USER (current=%q) is correct for this VM image and that the key's public part is in %s@%s:~/.ssh/authorized_keys",
+				targetUser, targetAddr, jumpUser, jumpAddr, err,
+				targetKeyInfo.Path, targetKeyInfo.Algorithm, targetKeyInfo.Fingerprint,
+				targetUser, targetUser, targetAddr,
+			)
 			continue
 		}
 
@@ -700,7 +634,8 @@ func NewClientWithJumpHost(jumpUser, jumpHost, jumpKeyPath, targetUser, targetHo
 
 	if targetClient == nil {
 		jumpClient.Close()
-		return nil, fmt.Errorf("failed to connect to target host after %d attempts: %w", maxRetries, lastErr)
+		return nil, fmt.Errorf("failed to connect to target host %q@%s after %d attempts: %w",
+			targetUser, targetAddr, maxRetries, lastErr)
 	}
 
 	// Start keepalive for both connections
@@ -893,17 +828,65 @@ func (c *jumpHostClient) reconnect(ctx context.Context) error {
 	return fmt.Errorf("failed to reconnect after %d attempts: %w", config.SSHRetryCount, lastErr)
 }
 
-// StartTunnel starts an SSH tunnel with port forwarding from local to remote
+// StartTunnel starts an SSH tunnel with port forwarding from local to remote.
+// Like the non-jump-host variant, dial errors that look like a dropped SSH
+// session trigger a reconnect attempt against jump+target before the next
+// retry — Wi-Fi flaps on the developer's laptop are by far the most common
+// way for the tunnel to die mid-test.
 func (c *jumpHostClient) StartTunnel(ctx context.Context, localPort, remotePort string) (func() error, error) {
-	// Use the target client's StartTunnel method
-	// We need to access the underlying client's StartTunnel
-	// Since we can't directly call it, we'll implement it here
-	return startTunnelOnClient(ctx, c.targetClient, localPort, remotePort)
+	dialer := tunnelDialer{
+		describe: fmt.Sprintf("%s@%s via jump %s@%s local:%s -> remote:%s",
+			c.targetUser, c.targetHost, c.jumpUser, c.jumpHost, localPort, remotePort),
+		dial: func() (net.Conn, error) {
+			c.mu.Lock()
+			tc := c.targetClient
+			c.mu.Unlock()
+			if tc == nil {
+				return nil, fmt.Errorf("jump-host target client is not initialized")
+			}
+			return tc.Dial("tcp", "127.0.0.1:"+remotePort)
+		},
+		reconnect: c.reconnect,
+	}
+	return runTunnelLoop(ctx, localPort, dialer)
 }
 
-// startTunnelOnClient starts a tunnel on a raw ssh.Client
-func startTunnelOnClient(ctx context.Context, sshClient *ssh.Client, localPort, remotePort string) (func() error, error) {
-	// Check context before starting
+// tunnelDialer abstracts the per-tunnel concerns that runTunnelLoop needs to
+// know about: how to open a fresh remote connection through the active SSH
+// session, how to re-establish that session when it dies, and a human-readable
+// description for log messages.
+type tunnelDialer struct {
+	// describe identifies the tunnel in WARN/INFO logs. It should encode user,
+	// host(s) and ports — enough to distinguish concurrent tunnels.
+	describe string
+	// dial opens a fresh TCP connection to the remote endpoint via the *current*
+	// SSH client. Implementations must read the underlying *ssh.Client under
+	// whatever mutex guards it (so reconnect updates are visible).
+	dial func() (net.Conn, error)
+	// reconnect tries to rebuild the broken SSH session(s). Called once per
+	// accepted local connection when dial fails with a connection-style error.
+	// May itself perform retries with backoff.
+	reconnect func(ctx context.Context) error
+}
+
+// runTunnelLoop runs the accept loop for an SSH tunnel.
+//
+// Compared to the previous inline implementation it adds two things:
+//
+//  1. **Auto-reconnect on dial failure.** When sshClient.Dial returns a
+//     connection-style error (EOF, connection lost, broken pipe…) we kick
+//     dialer.reconnect and retry the dial once with the freshly rebuilt
+//     SSH session. Without this, a Wi-Fi flap on the developer's laptop
+//     killed the SSH session permanently, the tunnel listener stayed up
+//     happily accepting local connects, but every Dial through the dead
+//     session returned EOF — and the test process spent the entire 20-min
+//     readiness timeout silently retrying client-go GETs through a port
+//     that nobody answered. See poll.go for the related per-call deadline.
+//  2. **Visible WARN log when reconnect kicks in.** Previously the failure
+//     was swallowed (`return`); now we emit a WARN every time the tunnel
+//     has to be rebuilt so users can correlate "tests slowed down" with
+//     "wifi flapped".
+func runTunnelLoop(ctx context.Context, localPort string, dialer tunnelDialer) (func() error, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context error before starting tunnel: %w", err)
 	}
@@ -918,7 +901,6 @@ func startTunnelOnClient(ctx context.Context, sshClient *ssh.Client, localPort, 
 	go func() {
 		defer listener.Close()
 		for {
-			// Check context and stop channel
 			select {
 			case <-ctx.Done():
 				return
@@ -927,63 +909,26 @@ func startTunnelOnClient(ctx context.Context, sshClient *ssh.Client, localPort, 
 			default:
 			}
 
-			// Set deadline for Accept based on context deadline if available
-			if deadline, ok := ctx.Deadline(); ok {
-				if tcpListener, ok := listener.(*net.TCPListener); ok {
-					if err := tcpListener.SetDeadline(deadline); err != nil {
-						// If setting deadline fails, continue without it
-					}
-				}
+			// Short Accept deadline so the loop can re-check ctx/stopChan
+			// promptly even when no clients are connecting; a deadline tied
+			// to ctx.Deadline() fired only at the very end of the test.
+			if tcpListener, ok := listener.(*net.TCPListener); ok {
+				_ = tcpListener.SetDeadline(time.Now().Add(500 * time.Millisecond))
 			}
 
 			localConn, err := listener.Accept()
 			if err != nil {
-				// Listener closed or error occurred
 				select {
 				case <-ctx.Done():
 					return
 				case <-stopChan:
 					return
 				default:
-					// Continue if not stopped
 					continue
 				}
 			}
 
-			go func() {
-				defer localConn.Close()
-				remoteConn, err := sshClient.Dial("tcp", "127.0.0.1:"+remotePort)
-				if err != nil {
-					// Connection failed, just return - the error will be visible to the client
-					return
-				}
-				defer remoteConn.Close()
-
-				// Copy data bidirectionally with context support
-				done := make(chan struct{}, 2)
-				go func() {
-					_, _ = copyWithContext(ctx, localConn, remoteConn)
-					done <- struct{}{}
-				}()
-				go func() {
-					_, _ = copyWithContext(ctx, remoteConn, localConn)
-					done <- struct{}{}
-				}()
-
-				// Wait for either direction to finish or context cancellation
-				select {
-				case <-ctx.Done():
-					return
-				case <-done:
-					// One direction finished, wait for the other
-					select {
-					case <-ctx.Done():
-						return
-					case <-done:
-						// Both directions finished
-					}
-				}
-			}()
+			go handleTunnelConnection(ctx, localConn, dialer)
 		}
 	}()
 
@@ -991,8 +936,62 @@ func startTunnelOnClient(ctx context.Context, sshClient *ssh.Client, localPort, 
 		close(stopChan)
 		return listener.Close()
 	}
-
 	return stop, nil
+}
+
+// handleTunnelConnection serves a single accepted local connection. On the
+// first dial failure that looks like a dead SSH session we call
+// dialer.reconnect and retry once. After that, further failures are surfaced
+// to the local client by closing localConn (which causes client-go on the
+// other side to see EOF and retry through the freshly opened tunnel on the
+// next request).
+func handleTunnelConnection(ctx context.Context, localConn net.Conn, dialer tunnelDialer) {
+	defer localConn.Close()
+
+	remoteConn, err := dialer.dial()
+	if err != nil {
+		if !isConnectionError(err) {
+			// Non-connection errors (e.g. invalid address) won't be fixed by a
+			// reconnect — drop the local conn so the client sees the failure.
+			logger.Debug("SSH tunnel %s dial failed (non-retryable): %v", dialer.describe, err)
+			return
+		}
+
+		logger.Warn("SSH tunnel %s dial failed (%v); attempting to reconnect SSH session", dialer.describe, err)
+		if rcErr := dialer.reconnect(ctx); rcErr != nil {
+			logger.Warn("SSH tunnel %s reconnect failed: %v", dialer.describe, rcErr)
+			return
+		}
+		logger.Info("SSH tunnel %s SSH session reconnected; retrying dial", dialer.describe)
+
+		remoteConn, err = dialer.dial()
+		if err != nil {
+			logger.Warn("SSH tunnel %s dial still failing after reconnect: %v", dialer.describe, err)
+			return
+		}
+	}
+	defer remoteConn.Close()
+
+	done := make(chan struct{}, 2)
+	go func() {
+		_, _ = copyWithContext(ctx, localConn, remoteConn)
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = copyWithContext(ctx, remoteConn, localConn)
+		done <- struct{}{}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return
+	case <-done:
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+		}
+	}
 }
 
 // Exec executes a command on the remote host with automatic retry and reconnection

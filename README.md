@@ -53,6 +53,59 @@ Template folder for creating new E2E tests. Contains a complete framework with:
 
 Use `./tests/create-test.sh <your-test-name>` to create a new test from this template.
 
+### csi-ceph
+
+Reference testkit that provisions a full Rook-managed Ceph cluster and a
+csi-ceph-backed `StorageClass` end-to-end, then verifies a plain `PVC`
+bound against that class.
+
+Built around `testkit.EnsureCephStorageClass` (see
+[pkg/FUNCTIONS_GLOSSARY.md](pkg/FUNCTIONS_GLOSSARY.md#ceph-storageclass-testkit)),
+which handles: enabling `sds-node-configurator` + `sds-elastic` + `csi-ceph`
+modules, optionally provisioning a `sds-local-volume` Thick `StorageClass`
+for OSD backing, seeding `rook-config-override` (for things like
+`ms_crc_data=false`), creating Rook `CephCluster` + `CephBlockPool`, and
+wiring `CephClusterConnection` / `CephClusterAuthentication` /
+`CephStorageClass` csi-ceph CRs.
+
+The testkit itself only runs a smoke check; downstream repos (e.g.
+`csi-ceph`) can import `github.com/deckhouse/storage-e2e/pkg/testkit` and
+reuse `EnsureCephStorageClass` inside their own Ginkgo specs.
+
+Testkit-specific env variables:
+
+- `CSI_CEPH_OSD_STORAGE_CLASS` — pre-existing block-mode StorageClass used to
+  back Rook OSD PVCs. When empty, a `sds-local-volume` Thick SC is
+  auto-provisioned via `EnsureDefaultStorageClass`.
+- `CSI_CEPH_MODULE_PULL_OVERRIDE` — image tag for `csi-ceph`'s
+  ModulePullOverride (dev registries only, e.g. when testing a PR build).
+
+#### `modulePullOverride` env templating
+
+Any module entry in `cluster_config.yml` may reference an env var with the
+`${VAR}` form in `modulePullOverride`. `storage-e2e` resolves those at config
+load time, so CI can point a module at a per-PR/MR image without editing the
+YAML between runs:
+
+```yaml
+dkpParameters:
+  modules:
+    - name: csi-ceph
+      modulePullOverride: "${MODULE_IMAGE_TAG}"  # CI must set MODULE_IMAGE_TAG, e.g. "pr131" on GitHub or "mr131" on GitLab
+```
+
+If a referenced env var is unset, `LoadClusterConfig` fails fast with
+`module "<name>" references env var ${VAR} in modulePullOverride but it is not set`
+instead of silently falling back to `main` — so a missing variable in CI is
+caught before bootstrap, not after a 30-minute wrong-image install.
+
+Run:
+
+```bash
+source tests/csi-ceph/test_exports
+go test -timeout=240m -v ./tests/csi-ceph -count=1
+```
+
 ### csi-all-stress-tests
 
 Stress tests for all CSI storage drivers. This test suite:
