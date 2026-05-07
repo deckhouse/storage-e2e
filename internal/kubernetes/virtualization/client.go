@@ -26,6 +26,7 @@ import (
 
 	"github.com/deckhouse/storage-e2e/pkg/retry"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
+	"github.com/deckhouse/virtualization/api/core/v1alpha3"
 )
 
 // Client provides access to virtualization resources
@@ -44,7 +45,10 @@ func NewClient(ctx context.Context, config *rest.Config) (*Client, error) {
 
 		// Register virtualization API types with the scheme
 		if err := v1alpha2.SchemeBuilder.AddToScheme(scheme); err != nil {
-			return nil, fmt.Errorf("failed to add virtualization scheme: %w", err)
+			return nil, fmt.Errorf("failed to add virtualization v1alpha2 scheme: %w", err)
+		}
+		if err := v1alpha3.SchemeBuilder.AddToScheme(scheme); err != nil {
+			return nil, fmt.Errorf("failed to add virtualization v1alpha3 scheme: %w", err)
 		}
 
 		cl, err := client.New(config, client.Options{Scheme: scheme})
@@ -69,6 +73,11 @@ func (c *Client) VirtualDisks() *VirtualDiskClient {
 // ClusterVirtualImages returns a ClusterVirtualImage client
 func (c *Client) ClusterVirtualImages() *ClusterVirtualImageClient {
 	return &ClusterVirtualImageClient{client: c.client}
+}
+
+// VirtualMachineClasses returns a VirtualMachineClass client (cluster-scoped).
+func (c *Client) VirtualMachineClasses() *VirtualMachineClassClient {
+	return &VirtualMachineClassClient{client: c.client}
 }
 
 // VirtualImages returns a VirtualImage client

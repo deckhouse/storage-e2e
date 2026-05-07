@@ -4,6 +4,36 @@ All notable changes to this repository are documented here. New entries are appe
 
 ---
 
+## 2026-05-06
+
+- **Add** `UploadPrivate` on `ssh.SSHClient` (`internal/infrastructure/ssh`): SFTP `Chmod` immediately after `Create`, before payload copy; `uploadOverSFTPOnce`, `uploadWithSFTPRetries`, `jumpUploadWithSFTPRetries`; passphrase `BootstrapCluster` uses it with `install -d -m 0700` staging (`pkg/cluster/setup.go`); ARCHITECTURE mentions ssh uploads
+- **Bugfix** `ensureVirtualMachineClassForClusterVMs` (`pkg/cluster/vms.go`): GET + wait Ready for configured class including default `generic`; explicit error if default missing; Host CPU auto-clone still clears `nodeSelector`/`tolerations` from template
+- **Update** `ValidateEnvironment` (`internal/config/env.go`): non-`generic` `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` validated with `IsDNS1123Subdomain`; README, ARCHITECTURE §7, FUNCTIONS_GLOSSARY aligned (names + auto-created class semantics)
+
+---
+
+## 2026-05-04
+
+- **Bugfix** `BootstrapCluster` in `pkg/cluster/setup.go`: drop dhctl-in-Docker flow via `SSH_AUTH_SOCK`/ssh-agent; bind-mount the setup-node key (from `UploadBootstrapFiles`) to `/root/.ssh/id_rsa` and pass `--ssh-agent-private-keys` — aligns with dhctl/lib-connection `ExtractConfig` reading key paths early ([deckhouse#19063](https://github.com/deckhouse/deckhouse/pull/19063))
+- **Add** when `SSH_PASSPHRASE` is set: build dhctl connection-config (`SSHConfig` + `SSHHost`, `dhctl.deckhouse.io/v1`) with inline PEM and passphrase, upload to the setup node, run bootstrap with `--connection-config` only (dhctl disallows mixing with `--ssh-*`)
+- **Add** `buildDHCTLSSHConnectionConfig` and YAML manifest structs (`dhctlSSHConfigManifest`, etc.) in `pkg/cluster/setup.go`
+
+---
+
+## 2026-04-30
+
+- **Add** `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` in `internal/config/env.go`: configurable `VirtualMachineClassName` for base-cluster VMs (default `generic`), DNS-1123 validation for non-generic names
+- **Add** `EffectiveVirtualMachineClassName()` and `VirtualMachineClassReadinessTimeout` (`internal/config/config.go`)
+- **Add** `VirtualMachineClass` client (`internal/kubernetes/virtualization/virtual_machine_class.go`) and `Client.VirtualMachineClasses()` in `client.go`
+- **Add** `ensureVirtualMachineClassForClusterVMs` / readiness wait in `pkg/cluster/vms.go`: if named class is missing, clone from `generic` with `spec.cpu.type` Host, label `storage-e2e.deckhouse.io/auto-created=true`; no deletion on e2e cleanup
+- **Update** `CreateVirtualMachines` to call ensure before CVMI creation; `createVM` uses effective class name
+- **Update** env dumps in `pkg/cluster/cluster.go`, `tests/test-template/template_test.go`, and `tests/csi-all-stress-tests/csi_all_stress_tests_test.go`
+- **Update** `docs/FUNCTIONS_GLOSSARY.md`: `CreateVirtualMachines` description (ensure VM class)
+- **Bugfix** `ValidateEnvironment` in `internal/config/env.go`: align error strings with staticcheck ST1005 (no trailing punctuation; semicolons in multi-part messages)
+- **Update** `github.com/deckhouse/virtualization/api` to v1.8.0: register `core/v1alpha3` scheme in virtualization client; `VirtualMachineClass` CRUD uses `v1alpha3` (preferred API; `spec.cpu.discovery` is `*CpuDiscovery`, so Host CPU serializes without empty discovery object)
+
+---
+
 ## 2026-03-25
 
 - **Refactor** `WaitForLocalStorageClassCreated` in `pkg/kubernetes/localstorageclass.go`: replaced manual deadline + `time.Sleep` with idiomatic `context.WithTimeout` + `time.NewTicker` + `select` pattern

@@ -67,7 +67,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 `pkg/cluster/vms.go`
 
-- `CreateVirtualMachines(ctx, virtClient, clusterDef)` — Creates all VMs from cluster definition in parallel. Handles name conflicts and returns VM names and resource tracking info.
+- `CreateVirtualMachines(ctx, virtClient, clusterDef)` — Ensures configured `VirtualMachineClass` exists (auto-create from `generic` with Host CPU when missing; clears inherited `nodeSelector`/`tolerations`; keeps sizing policies), creates CVIs/VMs in parallel, handles name conflicts, returns VM names and resource tracking info.
 - `RemoveAllVMs(ctx, resources)` — Forcefully stops and deletes VMs, virtual disks, and virtual images.
 - `RemoveVM(ctx, virtClient, namespace, vmName)` — Removes a single VM and its associated VirtualDisks and ClusterVirtualImage (if unused).
 - `GetSetupNode(clusterDef)` — Returns the setup (bootstrap) VM node from ClusterDefinition.

@@ -426,6 +426,54 @@ func getDevBranchFromConfig(configPath string) (string, error) {
 	return "", fmt.Errorf("devBranch not found in config file %s", configPath)
 }
 
+// dhctlSSHConfigManifest and dhctlSSHHostManifest match dhctl OpenAPI kinds under candi/openapi/dhctl (dhctl.deckhouse.io/v1).
+type dhctlSSHConfigManifest struct {
+	APIVersion          string                    `yaml:"apiVersion"`
+	Kind                string                    `yaml:"kind"`
+	SSHUser             string                    `yaml:"sshUser"`
+	SSHPort             int32                     `yaml:"sshPort"`
+	SSHAgentPrivateKeys []dhctlSSHAgentPrivateKey `yaml:"sshAgentPrivateKeys"`
+}
+
+type dhctlSSHAgentPrivateKey struct {
+	Key        string `yaml:"key"`
+	Passphrase string `yaml:"passphrase,omitempty"`
+}
+
+type dhctlSSHHostManifest struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Host       string `yaml:"host"`
+}
+
+func buildDHCTLSSHConnectionConfig(pemKey, sshUser, masterHost, passphrase string) ([]byte, error) {
+	cfg := dhctlSSHConfigManifest{
+		APIVersion: "dhctl.deckhouse.io/v1",
+		Kind:       "SSHConfig",
+		SSHUser:    sshUser,
+		SSHPort:    22,
+		SSHAgentPrivateKeys: []dhctlSSHAgentPrivateKey{{
+			Key:        strings.TrimSpace(pemKey) + "\n",
+			Passphrase: passphrase,
+		}},
+	}
+	hostDoc := dhctlSSHHostManifest{
+		APIVersion: "dhctl.deckhouse.io/v1",
+		Kind:       "SSHHost",
+		Host:       masterHost,
+	}
+	cfgBytes, err := yaml.Marshal(&cfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal SSHConfig: %w", err)
+	}
+	hostBytes, err := yaml.Marshal(&hostDoc)
+	if err != nil {
+		return nil, fmt.Errorf("marshal SSHHost: %w", err)
+	}
+	doc := "---\n" + strings.TrimSuffix(string(cfgBytes), "\n") + "\n---\n" + strings.TrimSuffix(string(hostBytes), "\n") + "\n"
+	return []byte(doc), nil
+}
+
 // BootstrapCluster bootstraps a Kubernetes cluster from the setup node to the first master node.
 // It performs the following steps:
 // 1. Logs into the Docker registry using DKP_LICENSE_KEY from config
@@ -483,81 +531,133 @@ func BootstrapCluster(ctx context.Context, sshClient ssh.SSHClient, clusterDef *
 	}
 
 	logFilePath := filepath.Join(config.E2ETempDir, fmt.Sprintf("bootstrap-%s.log", time.Now().Format("2006-01-02_15-04-05")))
-	remoteLogPath := fmt.Sprintf("/tmp/bootstrap-%d.log", os.Getpid())    // Use unique name to avoid conflicts
-	agentSocketPath := fmt.Sprintf("/tmp/ssh-agent-%d.sock", os.Getpid()) // Unique agent socket path
+	remoteLogPath := fmt.Sprintf("/tmp/bootstrap-%d.log", os.Getpid()) // Use unique name to avoid conflicts
 
-	// Step 2: Setup ssh-agent and add the SSH key
-	// Create a temporary askpass script to provide the passphrase non-interactively
-	askpassScriptPath := fmt.Sprintf("/tmp/ssh-askpass-%d.sh", os.Getpid())
-	askpassScript := fmt.Sprintf(`#!/bin/bash
-echo "%s"
-`, config.SSHPassphrase)
+	// Bootstrap previously mounted SSH_AUTH_SOCK into the dhctl container so authentication went through ssh-agent.
+	// After Deckhouse PR https://github.com/deckhouse/deckhouse/pull/19063, dhctl resolves SSH settings via lib-connection
+	// ExtractConfig early in bootstrap; that path reads private key files from disk using paths derived from flags (default
+	// ~/.ssh/id_rsa → /root/.ssh/id_rsa inside the install image where HOME is /root). Mounting only the agent socket is then
+	// too late and fails with errors like "extract config: Failed to read private keys from flags". We bind-mount the same
+	// key already placed on the VM by UploadBootstrapFiles and pass --ssh-agent-private-keys explicitly.
+	//
+	// When SSH_PASSPHRASE is set, dhctl cannot prompt inside the non-interactive container. dhctl also forbids combining
+	// --connection-config with other SSH flags, so we upload a small dhctl connection manifest (SSHConfig + SSHHost) with inline
+	// key PEM and passphrase; dhctl copies that into temp key files and fills PrivateKeysToPassPhrasesFromConfig (see dhctl
+	// pkg/config/connection.go ParseConnectionConfigFromFile).
+	const dhctlContainerSSHKeyPath = "/root/.ssh/id_rsa"
+	remoteSSHPrivateKey := filepath.Join("/home", config.VMSSHUser, ".ssh", "id_rsa")
 
-	// Create the askpass script file on the remote host
-	createAskpassCmd := fmt.Sprintf("sudo -u %s bash -c 'cat > %s << \"ASKPASS_EOF\"\n%sASKPASS_EOF\nchmod +x %s'", config.VMSSHUser, askpassScriptPath, askpassScript, askpassScriptPath)
-	_, err = sshClient.Exec(ctx, createAskpassCmd)
-	if err != nil {
-		return fmt.Errorf("failed to create askpass script: %w", err)
-	}
+	var dockerVolFlags, dhctlSSHArgs string
+	var remoteConnYAMLPath string // passphrase-only; removed ASAP after docker run (avoid long-lived secrets in /tmp)
 
-	// Setup ssh-agent and add the key
-	setupAgentScript := fmt.Sprintf(`
-		# Start ssh-agent with specified socket path
-		eval $(ssh-agent -a %s) > /dev/null 2>&1
-		export SSH_AUTH_SOCK=%s
-		export SSH_AGENT_PID=$SSH_AGENT_PID
-		
-		# Add the SSH key to the agent using the askpass script
-		if [ -n "%s" ]; then
-			DISPLAY=:0 SSH_ASKPASS=%s ssh-add /home/%s/.ssh/id_rsa </dev/null 2>&1
-		else
-			ssh-add /home/%s/.ssh/id_rsa </dev/null 2>&1
-		fi
-		
-		# Output the agent socket path for use in docker command
-		echo $SSH_AUTH_SOCK
-	`, agentSocketPath, agentSocketPath, config.SSHPassphrase, askpassScriptPath, config.VMSSHUser, config.VMSSHUser)
-
-	// Run the agent setup script
-	agentOutput, err := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s bash -c %s", config.VMSSHUser, fmt.Sprintf("'%s'", setupAgentScript)))
-	if err != nil {
-		// Clean up askpass script on error
-		_, _ = sshClient.Exec(ctx, fmt.Sprintf("sudo rm -f %s", askpassScriptPath))
-		return fmt.Errorf("failed to setup ssh-agent: %w\nOutput: %s", err, agentOutput)
-	}
-
-	// Extract the actual SSH_AUTH_SOCK path from output (last line)
-	agentSocketLines := strings.Split(strings.TrimSpace(agentOutput), "\n")
-	actualAgentSocket := agentSocketPath // Default to our specified path
-	if len(agentSocketLines) > 0 {
-		lastLine := strings.TrimSpace(agentSocketLines[len(agentSocketLines)-1])
-		if lastLine != "" && strings.HasPrefix(lastLine, "/") {
-			actualAgentSocket = lastLine
+	removeRemoteConnYAML := func() {
+		if remoteConnYAMLPath == "" {
+			return
 		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = sshClient.Exec(cleanupCtx, fmt.Sprintf("sudo rm -f %s", remoteConnYAMLPath))
+		remoteConnYAMLPath = ""
 	}
 
-	// Make the socket readable by root (needed when docker runs with sudo)
-	// This allows the docker process (running as root) to access the socket
-	chmodCmd := fmt.Sprintf("sudo chmod 666 %s 2>/dev/null || true", actualAgentSocket)
-	_, _ = sshClient.Exec(ctx, chmodCmd)
+	if config.SSHPassphrase != "" {
+		stageDir := filepath.Join("/home", config.VMSSHUser, ".config", "storage-e2e")
+		if _, prepErr := sshClient.Exec(ctx, fmt.Sprintf("sudo install -d -m 0700 -o %s -g %s -- %q", config.VMSSHUser, config.VMSSHUser, stageDir)); prepErr != nil {
+			return fmt.Errorf("prepare setup-node dir for dhctl connection-config: %w", prepErr)
+		}
 
-	// Step 3: Run dhctl bootstrap command with ssh-agent
-	// Mount SSH_AUTH_SOCK into the container and use it for authentication
-	// Note: We don't use --ssh-agent-private-keys anymore, dhctl will use SSH_AUTH_SOCK
-	// Docker needs to run with sudo for access to docker socket
+		tmpPattern := filepath.Join(stageDir, "dhctl-bootstrap-connection.XXXXXX.yaml")
+		mktempOut, mktempErr := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s mktemp %q", config.VMSSHUser, tmpPattern))
+		if mktempErr != nil {
+			return fmt.Errorf("create temp path for dhctl connection-config on setup node: %w", mktempErr)
+		}
+		remoteConnYAMLPath = strings.TrimSpace(strings.Split(strings.TrimSpace(mktempOut), "\n")[0])
+		if remoteConnYAMLPath == "" {
+			return fmt.Errorf("mktemp returned empty path for dhctl connection-config")
+		}
+
+		if _, probeErr := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s test -r %s", config.VMSSHUser, remoteSSHPrivateKey)); probeErr != nil {
+			removeRemoteConnYAML()
+			return fmt.Errorf("SSH private key not readable at %s on setup node: %w", remoteSSHPrivateKey, probeErr)
+		}
+
+		pemOut, pemErr := sshClient.Exec(ctx, fmt.Sprintf("sudo -u %s cat %s", config.VMSSHUser, remoteSSHPrivateKey))
+		if pemErr != nil {
+			removeRemoteConnYAML()
+			// Do not include pemOut in the error: Exec uses CombinedOutput and stdout may already contain key material.
+			return fmt.Errorf("read bootstrap SSH private key from setup node for connection-config: %w", pemErr)
+		}
+		if strings.TrimSpace(pemOut) == "" {
+			removeRemoteConnYAML()
+			return fmt.Errorf("empty SSH private key at %s on setup node", remoteSSHPrivateKey)
+		}
+
+		connYAML, connErr := buildDHCTLSSHConnectionConfig(pemOut, config.VMSSHUser, masterIP, config.SSHPassphrase)
+		if connErr != nil {
+			removeRemoteConnYAML()
+			return fmt.Errorf("build dhctl connection-config: %w", connErr)
+		}
+
+		localConnFile, tmpErr := os.CreateTemp("", "dhctl-bootstrap-connection-*.yaml")
+		if tmpErr != nil {
+			removeRemoteConnYAML()
+			return fmt.Errorf("create temp connection-config: %w", tmpErr)
+		}
+		localConnPath := localConnFile.Name()
+		defer func() { _ = os.Remove(localConnPath) }()
+
+		if chmodErr := os.Chmod(localConnPath, 0600); chmodErr != nil {
+			_ = localConnFile.Close()
+			removeRemoteConnYAML()
+			return fmt.Errorf("chmod temp connection-config: %w", chmodErr)
+		}
+		if _, writeErr := localConnFile.Write(connYAML); writeErr != nil {
+			_ = localConnFile.Close()
+			removeRemoteConnYAML()
+			return fmt.Errorf("write temp connection-config: %w", writeErr)
+		}
+		if closeErr := localConnFile.Close(); closeErr != nil {
+			removeRemoteConnYAML()
+			return fmt.Errorf("close temp connection-config: %w", closeErr)
+		}
+
+		if upErr := sshClient.UploadPrivate(ctx, localConnPath, remoteConnYAMLPath, 0600); upErr != nil {
+			removeRemoteConnYAML()
+			return fmt.Errorf("upload dhctl connection-config to setup node: %w", upErr)
+		}
+
+		dockerVolFlags = fmt.Sprintf(
+			`-v "/home/%s/config.yml:/config.yml" -v "%s:/dhctl-connection.yaml:ro"`,
+			config.VMSSHUser, remoteConnYAMLPath,
+		)
+		dhctlSSHArgs = "--connection-config=/dhctl-connection.yaml --config=/config.yml"
+	} else {
+		dockerVolFlags = fmt.Sprintf(
+			`-v "/home/%s/config.yml:/config.yml" -v "%s:%s:ro"`,
+			config.VMSSHUser, remoteSSHPrivateKey, dhctlContainerSSHKeyPath,
+		)
+		dhctlSSHArgs = fmt.Sprintf(
+			"--ssh-host=%s --ssh-user=%s --ssh-agent-private-keys=%s --config=/config.yml",
+			masterIP, config.VMSSHUser, dhctlContainerSSHKeyPath,
+		)
+	}
+
+	// Step 2: Run dhctl bootstrap (Docker needs sudo for access to docker socket)
 	installImage := fmt.Sprintf("%s/install:%s", registryRepo, devBranch)
 	bootstrapCmd := fmt.Sprintf(
-		"sudo -u %s bash -c 'export SSH_AUTH_SOCK=%s; sudo docker run --network=host --pull=always -v \"/home/%s/config.yml:/config.yml\" -v \"%s:/tmp/ssh-agent.sock\" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock %s dhctl bootstrap --ssh-host=%s --ssh-user=%s --config=/config.yml > %s 2>&1'",
-		config.VMSSHUser, actualAgentSocket, config.VMSSHUser, actualAgentSocket, installImage, masterIP, config.VMSSHUser, remoteLogPath,
+		`sudo -u %s bash -c 'sudo docker run --network=host --pull=always %s %s dhctl bootstrap %s > %s 2>&1'`,
+		config.VMSSHUser,
+		dockerVolFlags,
+		installImage,
+		dhctlSSHArgs,
+		remoteLogPath,
 	)
 
 	// Run the bootstrap command
 	// Output is redirected to remote log file, so output variable will be empty
 	output, err = sshClient.Exec(ctx, bootstrapCmd)
 
-	// Clean up ssh-agent and askpass script after bootstrap (whether success or failure)
-	cleanupAgentCmd := fmt.Sprintf("sudo -u %s bash -c 'SSH_AUTH_SOCK=%s ssh-agent -k 2>/dev/null || true; rm -f %s %s 2>/dev/null || true'", config.VMSSHUser, actualAgentSocket, actualAgentSocket, askpassScriptPath)
-	_, _ = sshClient.Exec(ctx, cleanupAgentCmd)
+	removeRemoteConnYAML()
 
 	// Always download log file from remote host (whether success or failure)
 	// Use sudo cat since the log file was created with sudo
@@ -888,7 +988,6 @@ func WaitForAllNodesReady(ctx context.Context, kubeconfig *rest.Config, clusterD
 
 	return nil
 }
-
 
 // GetSSHPublicKeyContent returns the SSH public key content as a string.
 // If SSHPublicKey is a file path, it reads and returns the file content.

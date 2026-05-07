@@ -41,6 +41,9 @@ const (
 	VMInfoTimeout                       = 30 * time.Second // Timeout for gathering VM information
 	ClusterVirtualImageReadinessTimeout = 15 * time.Minute // Timeout for waiting for ClusterVirtualImage to become provisioned (Ready)
 
+	// VirtualMachineClassReadinessTimeout is how long to wait for an auto-created VirtualMachineClass to reach Ready phase.
+	VirtualMachineClassReadinessTimeout = 15 * time.Minute
+
 	// Node operations
 	NodesReadyTimeout = 15 * time.Minute // Timeout for waiting for nodes to become Ready
 

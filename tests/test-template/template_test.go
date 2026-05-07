@@ -74,6 +74,8 @@ var _ = Describe("Template Test", Ordered, func() {
 				GinkgoWriter.Printf("      TEST_CLUSTER_STORAGE_CLASS: %s\n", config.TestClusterStorageClass)
 			}
 
+			GinkgoWriter.Printf("      TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME: %s\n", config.EffectiveVirtualMachineClassName())
+
 			// SSH_HOST - no masking
 			if config.SSHHost != "" {
 				GinkgoWriter.Printf("      SSH_HOST: %s\n", config.SSHHost)

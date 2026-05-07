@@ -31,6 +31,12 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/internal/logger"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
+	"github.com/deckhouse/virtualization/api/core/v1alpha3"
+)
+
+const (
+	vmClassAutoCreatedLabelKey   = "storage-e2e.deckhouse.io/auto-created"
+	vmClassAutoCreatedLabelValue = "true"
 )
 
 // VMResources tracks VM-related resources created for a test cluster
@@ -89,6 +95,10 @@ func CreateVirtualMachines(ctx context.Context, virtClient *virtualization.Clien
 			conflictMessages = append(conflictMessages, fmt.Sprintf("ClusterVirtualImages: %v", conflicts.ClusterVirtualImages))
 		}
 		return nil, nil, fmt.Errorf("the following VM-related resources already exist (CLUSTER_CREATE_MODE=%s): %s", config.TestClusterCreateMode, strings.Join(conflictMessages, ", "))
+	}
+
+	if err := ensureVirtualMachineClassForClusterVMs(ctx, virtClient); err != nil {
+		return nil, nil, err
 	}
 
 	// Create all CVMIs first (with waiting for Ready)
@@ -243,6 +253,100 @@ func checkResourceConflicts(ctx context.Context, virtClient *virtualization.Clie
 	return conflicts, nil
 }
 
+// ensureVirtualMachineClassForClusterVMs ensures the configured VirtualMachineClass exists on the base cluster and reaches Ready.
+// For every configured name (including default generic), it GETs the class and waits for Ready when present.
+// If the default generic class is missing, it fails fast with an actionable error instead of failing later during VM creation.
+// When the name is not generic and the class is missing, it creates one by cloning spec from the built-in "generic"
+// class and setting spec.cpu.type to Host. Inherited sizing policies and similar fields stay; spec.nodeSelector and
+// spec.tolerations are cleared because Host CPU pins the instruction set to the node—keeping generic placement rules
+// could allow heterogeneous nodes and break live migration (see Deckhouse VirtualMachineClass CPU type Host docs).
+// The new object is labeled for identification and is never deleted by e2e cleanup.
+func ensureVirtualMachineClassForClusterVMs(ctx context.Context, virtClient *virtualization.Client) error {
+	className := config.EffectiveVirtualMachineClassName()
+	vmcClient := virtClient.VirtualMachineClasses()
+
+	_, err := vmcClient.Get(ctx, className)
+	if err == nil {
+		return waitForVirtualMachineClassReady(ctx, virtClient, className)
+	}
+	if !errors.IsNotFound(err) {
+		return fmt.Errorf("VirtualMachineClass %q: %w", className, err)
+	}
+
+	if className == config.TestClusterVirtualMachineClassNameDefaultValue {
+		return fmt.Errorf("VirtualMachineClass %q not found on the base cluster; enable the virtualization module and ensure this VirtualMachineClass exists before running tests", className)
+	}
+
+	template, err := vmcClient.Get(ctx, config.TestClusterVirtualMachineClassNameDefaultValue)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("VirtualMachineClass %q is missing and template class %q was not found on the cluster; cannot auto-create the class",
+				className, config.TestClusterVirtualMachineClassNameDefaultValue)
+		}
+		return fmt.Errorf("get template VirtualMachineClass %q: %w", config.TestClusterVirtualMachineClassNameDefaultValue, err)
+	}
+
+	cloned := template.Spec.DeepCopy()
+	cloned.CPU = v1alpha3.CPU{Type: v1alpha3.CPUTypeHost}
+	cloned.NodeSelector = v1alpha3.NodeSelector{}
+	cloned.Tolerations = nil
+
+	vmc := &v1alpha3.VirtualMachineClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: className,
+			Labels: map[string]string{
+				vmClassAutoCreatedLabelKey: vmClassAutoCreatedLabelValue,
+			},
+		},
+		Spec: *cloned,
+	}
+
+	if err := vmcClient.Create(ctx, vmc); err != nil {
+		if errors.IsAlreadyExists(err) {
+			return waitForVirtualMachineClassReady(ctx, virtClient, className)
+		}
+		return fmt.Errorf("create VirtualMachineClass %q: %w", className, err)
+	}
+
+	logger.Info("Created VirtualMachineClass %s (from generic template, cpu.type=Host, cleared nodeSelector/tolerations, label %s=%s)",
+		className, vmClassAutoCreatedLabelKey, vmClassAutoCreatedLabelValue)
+	return waitForVirtualMachineClassReady(ctx, virtClient, className)
+}
+
+func waitForVirtualMachineClassReady(ctx context.Context, virtClient *virtualization.Client, name string) error {
+	waitCtx, cancel := context.WithTimeout(ctx, config.VirtualMachineClassReadinessTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	lastLog := time.Now()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("timeout waiting for VirtualMachineClass %s to reach Ready (phase still not Ready after %v)",
+				name, config.VirtualMachineClassReadinessTimeout)
+		case <-ticker.C:
+			vmc, err := virtClient.VirtualMachineClasses().Get(waitCtx, name)
+			if err != nil {
+				return fmt.Errorf("get VirtualMachineClass %s: %w", name, err)
+			}
+			switch vmc.Status.Phase {
+			case v1alpha3.ClassPhaseReady:
+				logger.Debug("VirtualMachineClass %s is Ready", name)
+				return nil
+			case v1alpha3.ClassPhaseTerminating:
+				return fmt.Errorf("VirtualMachineClass %s is Terminating", name)
+			default:
+				if time.Since(lastLog) >= 30*time.Second {
+					logger.Debug("VirtualMachineClass %s phase: %s", name, vmc.Status.Phase)
+					lastLog = time.Now()
+				}
+			}
+		}
+	}
+}
+
 // getVMNodes extracts all VM nodes from cluster definition
 func getVMNodes(clusterDef *config.ClusterDefinition) []config.ClusterNode {
 	var vmNodes []config.ClusterNode
@@ -385,7 +489,7 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 				Labels:    map[string]string{"vm": "linux", "service": "v1"},
 			},
 			Spec: v1alpha2.VirtualMachineSpec{
-				VirtualMachineClassName:  "generic",
+				VirtualMachineClassName:  config.EffectiveVirtualMachineClassName(),
 				EnableParavirtualization: true,
 				RunPolicy:                v1alpha2.RunPolicy("AlwaysOn"),
 				OsType:                   v1alpha2.OsType("Generic"),
