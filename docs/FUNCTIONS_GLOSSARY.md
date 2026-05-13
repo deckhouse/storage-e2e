@@ -9,6 +9,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [VM (Virtual Machine)](#vm-virtual-machine)
 - [Setup / Bootstrap](#setup--bootstrap)
 - [Kubernetes Client](#kubernetes-client)
+- [Storage E2E](#storage-e2e)
 - [YAML Apply](#yaml-apply)
 - [Namespace](#namespace)
 - [Nodes](#nodes)
@@ -96,6 +97,13 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 - `NewClientsetWithRetry(ctx, config)` — Creates a Kubernetes clientset with retry logic for transient network errors. Validates connection with server version check.
 - `NewDynamicClientWithRetry(ctx, config)` — Creates a Kubernetes dynamic client with retry logic for transient network errors.
+- `NewVirtualizationClient(ctx, config)` — Creates a virtualization API client for VirtualMachine/VirtualDisk and related resources.
+
+## Storage E2E
+
+`pkg/storage-e2e/setup.go`
+
+- `Initialize()` — Initializes framework-level prerequisites: logger setup and environment validation.
 
 ## YAML Apply
 
