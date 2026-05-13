@@ -1,4 +1,4 @@
-package virtclient
+package kubernetes
 
 import (
 	"context"
