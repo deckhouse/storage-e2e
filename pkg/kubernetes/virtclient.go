@@ -7,6 +7,6 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-func New(ctx context.Context, config *rest.Config) (*virtualization.Client, error) {
+func NewVirtualizationClient(ctx context.Context, config *rest.Config) (*virtualization.Client, error) {
 	return virtualization.NewClient(ctx, config)
 }
