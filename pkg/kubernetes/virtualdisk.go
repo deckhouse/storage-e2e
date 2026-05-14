@@ -137,6 +137,65 @@ func AttachVirtualDiskToVM(ctx context.Context, kubeconfig *rest.Config, config 
 	}, nil
 }
 
+// VirtualDiskReattachmentConfig holds configuration for reattaching an existing virtual disk to a VM.
+type VirtualDiskReattachmentConfig struct {
+	// AttachmentName is the name of the VirtualMachineBlockDeviceAttachment to create.
+	AttachmentName string
+	// VMName is the name of the VirtualMachine to attach the disk to.
+	VMName string
+	// Namespace is the namespace where the VM and disk resources are located.
+	Namespace string
+	// DiskName is the name of an existing VirtualDisk to attach.
+	DiskName string
+}
+
+// ReattachVirtualDiskToVM attaches an existing VirtualDisk to the specified VM.
+// It creates a VirtualMachineBlockDeviceAttachment using the provided disk and attachment names.
+func ReattachVirtualDiskToVM(ctx context.Context, kubeconfig *rest.Config, config VirtualDiskReattachmentConfig) (*VirtualDiskAttachmentResult, error) {
+	if config.AttachmentName == "" {
+		return nil, fmt.Errorf("AttachmentName is required")
+	}
+	if config.VMName == "" {
+		return nil, fmt.Errorf("VMName is required")
+	}
+	if config.Namespace == "" {
+		return nil, fmt.Errorf("Namespace is required")
+	}
+	if config.DiskName == "" {
+		return nil, fmt.Errorf("DiskName is required")
+	}
+
+	virtClient, err := virtualization.NewClient(ctx, kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create virtualization client: %w", err)
+	}
+
+	attachment := &v1alpha2.VirtualMachineBlockDeviceAttachment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      config.AttachmentName,
+			Namespace: config.Namespace,
+		},
+		Spec: v1alpha2.VirtualMachineBlockDeviceAttachmentSpec{
+			VirtualMachineName: config.VMName,
+			BlockDeviceRef: v1alpha2.VMBDAObjectRef{
+				Kind: v1alpha2.VMBDAObjectRefKindVirtualDisk,
+				Name: config.DiskName,
+			},
+		},
+	}
+
+	err = virtClient.VirtualMachineBlockDeviceAttachments().Create(ctx, attachment)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VirtualMachineBlockDeviceAttachment %s: %w", config.AttachmentName, err)
+	}
+	logger.Success("VirtualMachineBlockDeviceAttachment %s created", config.AttachmentName)
+
+	return &VirtualDiskAttachmentResult{
+		DiskName:       config.DiskName,
+		AttachmentName: config.AttachmentName,
+	}, nil
+}
+
 // WaitForVirtualDiskAttached waits for the VirtualMachineBlockDeviceAttachment to reach the Attached phase.
 // It polls the attachment status until it's attached or the context is cancelled/times out.
 // The pollInterval parameter specifies how often to check the status (recommended: 10 seconds).

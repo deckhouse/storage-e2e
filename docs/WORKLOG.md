@@ -61,3 +61,9 @@ All notable changes to this repository are documented here. New entries are appe
 ## 2026-05-13
 
 - **Update** synchronized docs for commit `bc358dff` by adding `pkg/kubernetes.NewVirtualizationClient` and `pkg/storage-e2e.Initialize` to `docs/FUNCTIONS_GLOSSARY.md`, and reflecting new `pkg/kubernetes/virtclient.go` / `pkg/storage-e2e/setup.go` in `docs/ARCHITECTURE.md`
+
+---
+
+## 2026-05-14
+
+- **Update** `pkg/kubernetes/virtualdisk.go`: normalized new reattach API to `ReattachVirtualDiskToVM` (Go initialism style), added input validation and exported docs for `VirtualDiskReattachmentConfig`; synced entry in `docs/FUNCTIONS_GLOSSARY.md`
