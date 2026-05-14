@@ -86,8 +86,12 @@ storage-e2e/
 │   │   ├── pvc.go                # PVC operations
 │   │   ├── secrets.go            # Secret operations
 │   │   ├── storageclass.go       # StorageClass get/wait/default
+│   │   ├── virtclient.go         # Virtualization client constructor
 │   │   ├── virtualdisk.go        # VirtualDisk attach/detach
 │   │   └── vmpod.go              # VM pod lookup
+│   │
+│   ├── storage-e2e/              # Framework initialization helpers
+│   │   └── setup.go              # Logger and environment initialization
 │   │
 │   ├── retry/                    # Generic retry with exponential backoff
 │   │   └── retry.go
@@ -386,6 +390,7 @@ pkg/kubernetes/                    # Public Kubernetes utilities
 ├── pvc.go                         # PVC operations (WaitForPVCsBound, WaitForPVCsResized, ResizeList)
 ├── secrets.go                     # Secret operations
 ├── storageclass.go                # StorageClass get/wait/default
+├── virtclient.go                  # Virtualization client constructor
 ├── virtualdisk.go                 # VirtualDisk attach/detach
 └── vmpod.go                       # VM pod lookup
 
@@ -474,7 +479,24 @@ logger/
 - Dual output (console + file)
 - Context-aware logging
 
-### 3.6 Public API (`pkg/`)
+### 3.6 Storage E2E Module (`pkg/storage-e2e/`)
+
+```
+storage-e2e/
+└── setup.go            # Framework initialization helpers
+```
+
+**Responsibilities**:
+- Initializes common prerequisites for test runs
+- Ensures logger is initialized before test actions
+- Validates required environment configuration before cluster operations
+
+**Key Functions**:
+```go
+Initialize() error
+```
+
+### 3.7 Public API (`pkg/`)
 
 ```
 pkg/
@@ -501,6 +523,8 @@ pkg/
 │   └── vmpod.go        # VM pod lookup
 ├── retry/
 │   └── retry.go        # Generic retry with exponential backoff
+├── storage-e2e/
+│   └── setup.go        # Framework initialization (logger + env validation)
 └── testkit/
     ├── storageclass.go  # Default StorageClass provisioning
     └── stress-tests.go  # Stress test runner
