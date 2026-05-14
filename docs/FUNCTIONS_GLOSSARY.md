@@ -192,6 +192,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 `pkg/kubernetes/virtualdisk.go`
 
 - `AttachVirtualDiskToVM(ctx, kubeconfig, config)` — Creates a blank VirtualDisk and attaches it to a VM using VirtualMachineBlockDeviceAttachment. Returns created resource names.
+- `ReattachVirtualDiskToVM(ctx, kubeconfig, config)` — Attaches an existing VirtualDisk to a VM by creating a VirtualMachineBlockDeviceAttachment with explicit names.
 - `WaitForVirtualDiskAttached(ctx, kubeconfig, namespace, attachmentName, pollInterval)` — Waits for a VirtualMachineBlockDeviceAttachment to reach the Attached phase.
 - `ListVirtualMachineNames(ctx, kubeconfig, namespace)` — Lists VM names in a namespace.
 - `GetVMIPFromBaseCluster(ctx, baseKubeconfig, namespace, vmName)` — Returns VM IP address from status (for SSH connections).
