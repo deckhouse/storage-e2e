@@ -447,7 +447,7 @@ internal/kubernetes/               # Internal Kubernetes clients
 
 ```
 infrastructure/ssh/
-├── client.go           # SSH client implementation
+├── client.go           # SSH client implementation (Exec, ExecCapture, tunnels)
 ├── interface.go        # SSH client interface
 ├── tunnel.go           # Port forwarding and tunneling
 └── types.go            # SSH-related types
@@ -458,12 +458,14 @@ infrastructure/ssh/
 - SSH key handling
 - Port forwarding (e.g., for Kubernetes API access)
 - Remote command execution
+- Remote command execution with separated stdout/stderr capture for diagnostics
 - File transfer operations (including UploadPrivate: chmod-before-data for sensitive payloads)
 
 **Key Features**:
 - Support for password and key-based authentication
 - SSH tunneling for accessing remote Kubernetes clusters
 - Connection pooling and reuse
+- `ExecCapture` keeps stdout and stderr separate while preserving retry/reconnect behavior
 - Proper resource cleanup
 
 ### 3.5 Logger Module (`internal/logger/`)

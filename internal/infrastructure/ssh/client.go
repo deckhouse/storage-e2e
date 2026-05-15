@@ -17,6 +17,7 @@ limitations under the License.
 package ssh
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -480,6 +481,66 @@ func (c *client) Exec(ctx context.Context, cmd string) (string, error) {
 	}
 
 	return output, fmt.Errorf("SSH exec failed after %d attempts: %w", config.SSHRetryCount, lastErr)
+}
+
+// ExecCapture executes a command on the remote host with automatic retry and returns stdout/stderr separately.
+func (c *client) ExecCapture(ctx context.Context, cmd string) (string, string, error) {
+	var stdout string
+	var stderr string
+	var lastErr error
+
+	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", "", fmt.Errorf("context error before execution: %w", err)
+		}
+
+		c.mu.Lock()
+		sshClient := c.sshClient
+		c.mu.Unlock()
+
+		session, err := sshClient.NewSession()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create SSH session: %w", err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return "", "", fmt.Errorf("SSH session failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return "", "", lastErr
+		}
+
+		var stdoutBuf, stderrBuf bytes.Buffer
+		session.Stdout = &stdoutBuf
+		session.Stderr = &stderrBuf
+		err = session.Run(cmd)
+		session.Close()
+		stdout = stdoutBuf.String()
+		stderr = stderrBuf.String()
+
+		if err != nil {
+			if ctx.Err() != nil {
+				return stdout, stderr, fmt.Errorf("context cancelled: %w", ctx.Err())
+			}
+
+			lastErr = fmt.Errorf("command failed: %w", err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return stdout, stderr, fmt.Errorf("command failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return stdout, stderr, lastErr
+		}
+
+		if err := ctx.Err(); err != nil {
+			return stdout, stderr, fmt.Errorf("context cancelled: %w", err)
+		}
+
+		return stdout, stderr, nil
+	}
+
+	return stdout, stderr, fmt.Errorf("SSH exec failed after %d attempts: %w", config.SSHRetryCount, lastErr)
 }
 
 // ExecFatal executes a command and returns error if it fails
@@ -1065,6 +1126,66 @@ func (c *jumpHostClient) Exec(ctx context.Context, cmd string) (string, error) {
 	}
 
 	return output, fmt.Errorf("SSH exec failed after %d attempts: %w", config.SSHRetryCount, lastErr)
+}
+
+// ExecCapture executes a command on the target host via jump host with automatic retry and returns stdout/stderr separately.
+func (c *jumpHostClient) ExecCapture(ctx context.Context, cmd string) (string, string, error) {
+	var stdout string
+	var stderr string
+	var lastErr error
+
+	for attempt := 0; attempt < config.SSHRetryCount; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", "", fmt.Errorf("context error before execution: %w", err)
+		}
+
+		c.mu.Lock()
+		targetClient := c.targetClient
+		c.mu.Unlock()
+
+		session, err := targetClient.NewSession()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create SSH session: %w", err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return "", "", fmt.Errorf("SSH session failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return "", "", lastErr
+		}
+
+		var stdoutBuf, stderrBuf bytes.Buffer
+		session.Stdout = &stdoutBuf
+		session.Stderr = &stderrBuf
+		err = session.Run(cmd)
+		session.Close()
+		stdout = stdoutBuf.String()
+		stderr = stderrBuf.String()
+
+		if err != nil {
+			if ctx.Err() != nil {
+				return stdout, stderr, fmt.Errorf("context cancelled: %w", ctx.Err())
+			}
+
+			lastErr = fmt.Errorf("command failed: %w", err)
+			if isConnectionError(err) {
+				if reconnErr := c.reconnect(ctx); reconnErr != nil {
+					return stdout, stderr, fmt.Errorf("command failed and reconnection failed: %w (original: %v)", reconnErr, lastErr)
+				}
+				continue
+			}
+			return stdout, stderr, lastErr
+		}
+
+		if err := ctx.Err(); err != nil {
+			return stdout, stderr, fmt.Errorf("context cancelled: %w", err)
+		}
+
+		return stdout, stderr, nil
+	}
+
+	return stdout, stderr, fmt.Errorf("SSH exec failed after %d attempts: %w", config.SSHRetryCount, lastErr)
 }
 
 // ExecFatal executes a command and returns error if it fails

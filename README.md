@@ -53,14 +53,15 @@ Template folder for creating new E2E tests. Contains a complete framework with:
 
 Use `./tests/create-test.sh <your-test-name>` to create a new test from this template.
 
-### csi-ceph
+### Ceph testkit
 
-Reference testkit that provisions a full Rook-managed Ceph cluster and a
-csi-ceph-backed `StorageClass` end-to-end, then verifies a plain `PVC`
-bound against that class.
+Reusable testkit that provisions a Rook-managed Ceph cluster through
+`sds-elastic` and, when needed, wires a csi-ceph-backed `StorageClass` on top.
+It is meant for downstream module e2e suites that need a Ceph backend without
+copying the cluster bootstrap code.
 
 Built around `testkit.EnsureCephStorageClass` (see
-[pkg/FUNCTIONS_GLOSSARY.md](pkg/FUNCTIONS_GLOSSARY.md#ceph-storageclass-testkit)),
+[docs/FUNCTIONS_GLOSSARY.md](docs/FUNCTIONS_GLOSSARY.md#ceph-storageclass-testkit)),
 which handles: enabling `sds-node-configurator` + `sds-elastic` + `csi-ceph`
 modules, optionally provisioning a `sds-local-volume` Thick `StorageClass`
 for OSD backing, seeding `rook-config-override` (for things like
@@ -68,9 +69,10 @@ for OSD backing, seeding `rook-config-override` (for things like
 wiring `CephClusterConnection` / `CephClusterAuthentication` /
 `CephStorageClass` csi-ceph CRs.
 
-The testkit itself only runs a smoke check; downstream repos (e.g.
-`csi-ceph`) can import `github.com/deckhouse/storage-e2e/pkg/testkit` and
-reuse `EnsureCephStorageClass` inside their own Ginkgo specs.
+`EnsureCephCluster` stops before the csi-ceph wiring and only brings up the
+Rook/Ceph side. Downstream repos (for example `csi-ceph`) can import
+`github.com/deckhouse/storage-e2e/pkg/testkit` and reuse these helpers inside
+their own Ginkgo specs.
 
 Testkit-specific env variables:
 
@@ -98,13 +100,6 @@ If a referenced env var is unset, `LoadClusterConfig` fails fast with
 `module "<name>" references env var ${VAR} in modulePullOverride but it is not set`
 instead of silently falling back to `main` — so a missing variable in CI is
 caught before bootstrap, not after a 30-minute wrong-image install.
-
-Run:
-
-```bash
-source tests/csi-ceph/test_exports
-go test -timeout=240m -v ./tests/csi-ceph -count=1
-```
 
 ### csi-all-stress-tests
 

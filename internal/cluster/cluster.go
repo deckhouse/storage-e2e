@@ -36,7 +36,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -44,6 +43,7 @@ import (
 	"strings"
 	"time"
 
+	gossh "golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -204,7 +204,8 @@ func expandPath(path string) (string, error) {
 // directly we make this command work with the same fine-grained NOPASSWD rule
 // that the buildKubeconfigFetchError diagnostic recommends. The 2>/dev/null on
 // the first try suppresses the "permission denied / no such file" noise so the
-// fallback to admin.conf produces clean kubeconfig content on stdout.
+// fallback to admin.conf produces clean kubeconfig content on stdout; stderr
+// from the final failed attempt is preserved by ExecCapture for diagnostics.
 const getKubeconfigRemoteShell = "sudo -n /bin/cat /etc/kubernetes/super-admin.conf 2>/dev/null " +
 	"|| sudo -n /bin/cat /etc/kubernetes/admin.conf"
 
@@ -251,7 +252,7 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 	)
 
 	// Read kubeconfig via SSH: prefer super-admin.conf when present (see getKubeconfigRemoteShell).
-	kubeconfigContentStr, sshErr := sshClient.Exec(ctx, getKubeconfigRemoteShell)
+	kubeconfigContentStr, kubeconfigStderr, sshErr := sshClient.ExecCapture(ctx, getKubeconfigRemoteShell)
 	switch {
 	case sshErr == nil:
 		// SSH succeeded - use the content from SSH
@@ -277,9 +278,9 @@ func GetKubeconfig(ctx context.Context, masterIP, user, keyPath string, sshClien
 		// KUBE_CONFIG_PATH. Fail fast rather than silently picking up the
 		// developer's ~/.kube/config / $KUBECONFIG, which has historically
 		// caused tests to acquire stale locks on unrelated SAN clusters or
-		// deploy modules against the wrong stand. Classify the failure so the
-		// returned error tells the operator which knob to turn.
-		cause := classifyKubeconfigFetchFailure(ctx, sshClient, sshErr)
+		// deploy modules against the wrong stand. Classify the failed attempt's
+		// stderr so the returned error tells the operator which knob to turn.
+		cause := classifyKubeconfigFetchFailure(ctx, sshErr, kubeconfigStderr)
 		return nil, "", buildKubeconfigFetchError(user, masterIP, sshErr, cause)
 	}
 
@@ -436,122 +437,49 @@ const (
 	causeContextCanceled
 )
 
-// isKubeconfigContextCanceled reports whether the fetch was aborted by context
-// cancellation (suite timeout, Ctrl+C, parent ctx.Done()).
-func isKubeconfigContextCanceled(ctx context.Context, err error) bool {
-	if err := ctx.Err(); err != nil && errors.Is(err, context.Canceled) {
-		return true
+func (c kubeconfigFetchCause) String() string {
+	switch c {
+	case causeKubeconfigMissing:
+		return "kubeconfig file is missing on the host"
+	case causeSudoPasswordRequired:
+		return "sudo requires a password (sudo -n failed)"
+	case causePermissionDenied:
+		return "permission denied reading kubeconfig"
+	case causeSSHUnreachable:
+		return "SSH connection failed"
+	case causeContextCanceled:
+		return "context canceled"
+	default:
+		return "unknown"
 	}
-	return errors.Is(err, context.Canceled)
 }
 
-// isKubeconfigSSHUnreachable reports dial/handshake/transport failures that
-// mean we never got a useful remote shell session.
-func isKubeconfigSSHUnreachable(err error) bool {
-	if err == nil {
-		return false
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return true
-	}
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	for _, needle := range []string{
-		"connection refused",
-		"connection reset",
-		"no route to host",
-		"network is unreachable",
-		"i/o timeout",
-		"dial tcp",
-		"ssh: handshake",
-		"unable to connect",
-		"connect: connection",
-		"broken pipe",
-	} {
-		if strings.Contains(msg, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-// isKubeconfigPermissionDenied reports EACCES-style failures on the remote cat
-// after we know the files exist and sudo -n -l claims /bin/cat is allowed.
-func isKubeconfigPermissionDenied(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	if !strings.Contains(msg, "permission denied") {
-		return false
-	}
-	// Distinguish from sudo password prompts that sometimes surface as exit 1.
-	return !strings.Contains(msg, "a password is required")
-}
-
-// classifyKubeconfigFetchFailure runs cheap probes against the master to figure
-// out the most likely reason getKubeconfigRemoteShell failed. Best-effort: any
-// probe-time error that does not match a known bucket is treated as "unknown".
-//
-// Order matters and matches what we actually need to know:
-//  1. Was the context canceled on the test side? If the suite timed out or the
-//     parent context is done, probing a dead session only hides the real cause.
-//  2. Did SSH fail at the transport layer? Dial/handshake errors mean we never
-//     got a useful remote shell session, so sudo/kubeconfig probes are noise.
-//  3. Do the kubeconfig files even exist on this host? `test -f` runs as the
-//     SSH user without sudo and returns 0 even when the file is root:root 0600,
-//     because it only checks the inode. If both files are missing this is
-//     almost certainly a non-control-plane node and no sudoers tweak will help.
-//  4. If at least one file exists, are we allowed to `cat` it without a
-//     password? We probe with `sudo -n -l /bin/cat <path>`: -l makes sudo just
-//     look up the rule (no execution), and with -n it exits non-zero when no
-//     matching NOPASSWD rule applies. Crucially this matches the SAME granular
-//     rule the diagnostic recommends, so a misconfiguration where the operator
-//     added `NOPASSWD: /bin/sh` does NOT mask the real "missing /bin/cat rule"
-//     cause.
-//  5. If files exist and sudo -l passes, did the original cat still fail with
-//     permission denied? That points at filesystem ACLs/permissions rather than
-//     a missing sudoers rule.
-func classifyKubeconfigFetchFailure(ctx context.Context, sshClient ssh.SSHClient, sshErr error) kubeconfigFetchCause {
-	if isKubeconfigContextCanceled(ctx, sshErr) {
+// classifyKubeconfigFetchFailure inspects the stderr of the failed read attempt
+// and maps it to a cause. It does not perform extra round-trips: the caller
+// already knows the read failed and passes the captured stderr here.
+func classifyKubeconfigFetchFailure(ctx context.Context, sshErr error, stderr string) kubeconfigFetchCause {
+	if ctx.Err() != nil {
 		return causeContextCanceled
 	}
-	if isKubeconfigSSHUnreachable(sshErr) {
+
+	var exitErr *gossh.ExitError
+	if sshErr != nil && !errors.As(sshErr, &exitErr) {
 		return causeSSHUnreachable
 	}
 
-	if _, err := sshClient.Exec(ctx,
-		"test -f /etc/kubernetes/super-admin.conf || test -f /etc/kubernetes/admin.conf"); err != nil {
-		if isKubeconfigContextCanceled(ctx, err) {
-			return causeContextCanceled
-		}
-		if isKubeconfigSSHUnreachable(err) {
-			return causeSSHUnreachable
-		}
-		return causeKubeconfigMissing
-	}
-
-	if _, err := sshClient.Exec(ctx,
-		"sudo -n -l /bin/cat /etc/kubernetes/super-admin.conf >/dev/null 2>&1 || "+
-			"sudo -n -l /bin/cat /etc/kubernetes/admin.conf >/dev/null 2>&1"); err != nil {
-		if isKubeconfigContextCanceled(ctx, err) {
-			return causeContextCanceled
-		}
-		if isKubeconfigSSHUnreachable(err) {
-			return causeSSHUnreachable
-		}
+	s := strings.ToLower(stderr)
+	switch {
+	case strings.Contains(s, "a password is required"),
+		strings.Contains(s, "a terminal is required"),
+		strings.Contains(s, "sudo: no tty present"):
 		return causeSudoPasswordRequired
-	}
-
-	if isKubeconfigPermissionDenied(sshErr) {
+	case strings.Contains(s, "no such file or directory"):
+		return causeKubeconfigMissing
+	case strings.Contains(s, "permission denied"):
 		return causePermissionDenied
+	default:
+		return causeUnknown
 	}
-
-	return causeUnknown
 }
 
 // buildKubeconfigFetchError renders an actionable, multi-line error for
@@ -642,4 +570,3 @@ func buildKubeconfigFetchError(user, masterIP string, sshErr error, cause kubeco
 			user, masterIP, sudoersFix, user, sshErr)
 	}
 }
-
