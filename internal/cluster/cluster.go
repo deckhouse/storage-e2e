@@ -497,12 +497,25 @@ func isKubeconfigPermissionDenied(err error) bool {
 // out the most likely reason getKubeconfigRemoteShell failed. Best-effort: any
 // probe-time error that does not match a known bucket is treated as "unknown".
 //
-// Order matters:
-//  1. Context canceled on the test side (no point probing a dead session).
-//  2. SSH transport unreachable (from the original fetch or a probe).
-//  3. Kubeconfig files missing on the host (non-control-plane / wrong node).
-//  4. sudo -n -l says /bin/cat is not passwordless.
-//  5. Files exist and sudo -l passes, but cat still got permission denied.
+// Order matters and matches what we actually need to know:
+//  1. Was the context canceled on the test side? If the suite timed out or the
+//     parent context is done, probing a dead session only hides the real cause.
+//  2. Did SSH fail at the transport layer? Dial/handshake errors mean we never
+//     got a useful remote shell session, so sudo/kubeconfig probes are noise.
+//  3. Do the kubeconfig files even exist on this host? `test -f` runs as the
+//     SSH user without sudo and returns 0 even when the file is root:root 0600,
+//     because it only checks the inode. If both files are missing this is
+//     almost certainly a non-control-plane node and no sudoers tweak will help.
+//  4. If at least one file exists, are we allowed to `cat` it without a
+//     password? We probe with `sudo -n -l /bin/cat <path>`: -l makes sudo just
+//     look up the rule (no execution), and with -n it exits non-zero when no
+//     matching NOPASSWD rule applies. Crucially this matches the SAME granular
+//     rule the diagnostic recommends, so a misconfiguration where the operator
+//     added `NOPASSWD: /bin/sh` does NOT mask the real "missing /bin/cat rule"
+//     cause.
+//  5. If files exist and sudo -l passes, did the original cat still fail with
+//     permission denied? That points at filesystem ACLs/permissions rather than
+//     a missing sudoers rule.
 func classifyKubeconfigFetchFailure(ctx context.Context, sshClient ssh.SSHClient, sshErr error) kubeconfigFetchCause {
 	if isKubeconfigContextCanceled(ctx, sshErr) {
 		return causeContextCanceled
