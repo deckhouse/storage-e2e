@@ -149,12 +149,8 @@ func loadClusterConfigFromPath(configPath string) (*config.ClusterDefinition, er
 		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
 	}
 
-	// Expand ${VAR} placeholders in modulePullOverride fields. CI uses this to
-	// pass a per-PR/MR image tag via a single env var (e.g. MODULE_IMAGE_TAG)
-	// without editing the YAML between runs. Missing envs fail fast here so we
-	// don't silently regress to "main" on accidentally unset variables.
-	if err := config.ExpandEnvInModulePullOverride(&clusterDef); err != nil {
-		return nil, fmt.Errorf("expand env in modulePullOverride: %w", err)
+	if err := config.ValidateModulePullOverrides(&clusterDef); err != nil {
+		return nil, err
 	}
 
 	// Validate the configuration (using the same validation logic as internal/cluster)

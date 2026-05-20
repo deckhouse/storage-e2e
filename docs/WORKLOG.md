@@ -94,3 +94,11 @@ All notable changes to this repository are documented here. New entries are appe
 ## 2026-05-14
 
 - **Update** `pkg/kubernetes/virtualdisk.go`: normalized new reattach API to `ReattachVirtualDiskToVM` (Go initialism style), added input validation and exported docs for `VirtualDiskReattachmentConfig`; synced entry in `docs/FUNCTIONS_GLOSSARY.md`
+
+---
+
+## 2026-05-20
+
+- **Remove** `internal/config/overrides.go`: dropped `${VAR}` expansion in `modulePullOverride` per review — each module needs its own literal tag in `cluster_config.yml` (e.g. `pr131`, `mr55`).
+- **Add** `internal/config.ValidateModulePullOverrides`: rejects `${...}` placeholders at config load with an explicit error.
+- **Update** `internal/cluster/cluster.go::LoadClusterConfig` and `pkg/cluster/cluster.go::loadClusterConfigFromPath`, `README.md`, `docs/ARCHITECTURE.md`.

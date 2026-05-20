@@ -18,6 +18,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -193,5 +194,23 @@ func (c *ClusterDefinition) UnmarshalYAML(value *yaml.Node) error {
 	c.Workers = tmp.Workers
 	c.Setup = tmp.Setup
 	c.DKPParameters = tmp.DKPParameters
+	return nil
+}
+
+// ValidateModulePullOverrides ensures modulePullOverride values are literal image
+// tags. ${VAR} env templating is intentionally unsupported: each module may need
+// a different PR/MR tag and static cluster_config.yml is clearer for CI and local runs.
+func ValidateModulePullOverrides(def *ClusterDefinition) error {
+	for _, m := range def.DKPParameters.Modules {
+		if m == nil || m.ModulePullOverride == "" {
+			continue
+		}
+		if strings.Contains(m.ModulePullOverride, "${") {
+			return fmt.Errorf(
+				"module %q: modulePullOverride must be a literal image tag (e.g. pr123, mr55, main); ${VAR} env templating is not supported — set the tag directly in cluster_config.yml",
+				m.Name,
+			)
+		}
+	}
 	return nil
 }

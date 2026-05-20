@@ -82,24 +82,20 @@ Testkit-specific env variables:
 - `CSI_CEPH_MODULE_PULL_OVERRIDE` — image tag for `csi-ceph`'s
   ModulePullOverride (dev registries only, e.g. when testing a PR build).
 
-#### `modulePullOverride` env templating
+#### `modulePullOverride` in `cluster_config.yml`
 
-Any module entry in `cluster_config.yml` may reference an env var with the
-`${VAR}` form in `modulePullOverride`. `storage-e2e` resolves those at config
-load time, so CI can point a module at a per-PR/MR image without editing the
-YAML between runs:
+Set a literal image tag per module (e.g. `main`, `pr131`, `mr55`). Different
+modules often need different tags, so use static values in YAML rather than
+env substitution:
 
 ```yaml
 dkpParameters:
   modules:
     - name: csi-ceph
-      modulePullOverride: "${MODULE_IMAGE_TAG}"  # CI must set MODULE_IMAGE_TAG, e.g. "pr131" on GitHub or "mr131" on GitLab
+      modulePullOverride: pr131
 ```
 
-If a referenced env var is unset, `LoadClusterConfig` fails fast with
-`module "<name>" references env var ${VAR} in modulePullOverride but it is not set`
-instead of silently falling back to `main` — so a missing variable in CI is
-caught before bootstrap, not after a 30-minute wrong-image install.
+`${VAR}` placeholders in `modulePullOverride` are rejected at config load time.
 
 ### csi-all-stress-tests
 

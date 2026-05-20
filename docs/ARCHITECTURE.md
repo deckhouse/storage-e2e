@@ -23,7 +23,6 @@ storage-e2e/
 │   ├── config/                    # Configuration management
 │   │   ├── config.go             # Main configuration struct
 │   │   ├── env.go                # Environment variable parsing
-│   │   ├── overrides.go          # ${VAR} expansion in modulePullOverride at config load time
 │   │   ├── types.go              # Configuration type definitions
 │   │   └── images.go             # OS image definitions
 │   │
@@ -341,7 +340,6 @@ Tests use Ginkgo's lifecycle hooks:
 config/
 ├── config.go           # Main configuration operations
 ├── env.go              # Environment variable definitions and validation
-├── overrides.go        # ${VAR} expansion in modulePullOverride at config load time
 ├── types.go            # Configuration type definitions
 └── images.go           # OS image URL definitions
 ```
@@ -782,8 +780,6 @@ logger.Error("Failed to create resource: %v", err)
 | `TEST_CLUSTER_CLEANUP` | `false` | Cleanup cluster after tests |
 | `LOG_LEVEL` | `debug` | Log level (debug/info/warn/error) |
 | `KUBE_CONFIG_PATH` | - | Explicit kubeconfig path. Used when SSH retrieval of `/etc/kubernetes/{super-admin,admin}.conf` from the master fails. If unset and SSH also fails, `GetKubeconfig` returns an error (no silent fallback to `~/.kube/config`). |
-| `MODULE_IMAGE_TAG` (and any other custom name) | - | Any `${VAR}` placeholder used inside `modulePullOverride:` in `cluster_config.yml` is expanded at config load time by `internal/config/overrides.ExpandEnvInModulePullOverride`. Missing/empty placeholders fail fast with an explicit error so CI can point modules at `pr<N>` / `mr<N>` images via a single env var without editing the YAML between runs. |
-
 ### Commander Variables (only when `TEST_CLUSTER_CREATE_MODE=commander`)
 
 | Variable | Default | Description |
