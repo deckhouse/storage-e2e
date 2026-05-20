@@ -33,13 +33,6 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 )
 
-// DefaultDebugImage is the image ReadFileFromDistrolessPod injects as the
-// short-lived ephemeral container. busybox ships cat, sleep and a
-// minimal sh — exactly the toolset we need to read /proc/1/root/<path>
-// in the target container's filesystem. Tests against an air-gapped
-// registry can override this via ReadFileOptions.DebugImage.
-const DefaultDebugImage = "busybox:1.36"
-
 // DefaultEphemeralStartupTimeout caps the wait for the injected
 // ephemeral container to transition into Running. Image pull from a
 // warm registry usually takes a couple of seconds; 60 s is a generous
@@ -61,9 +54,8 @@ const ephemeralPollInterval = 500 * time.Millisecond
 
 // ReadFileOptions tunes ReadFileFromDistrolessPod and OpenDistrolessReader.
 type ReadFileOptions struct {
-	// DebugImage overrides the ephemeral container image. Defaults to
-	// DefaultDebugImage. Use this on air-gapped clusters to point at an
-	// internal mirror.
+	// DebugImage is the ephemeral container image (required). Use a minimal
+	// image that ships cat and sleep, e.g. busybox from your cluster registry.
 	DebugImage string
 	// StartupTimeout caps the wait for the ephemeral container to reach
 	// state.Running. Defaults to DefaultEphemeralStartupTimeout.
@@ -267,8 +259,8 @@ func OpenDistrolessReader(
 	namespace, pod, targetContainer string,
 	opts ReadFileOptions,
 ) (*DistrolessReader, error) {
-	if opts.DebugImage == "" {
-		opts.DebugImage = DefaultDebugImage
+	if err := requireDebugImage(opts.DebugImage); err != nil {
+		return nil, err
 	}
 	if opts.StartupTimeout <= 0 {
 		opts.StartupTimeout = DefaultEphemeralStartupTimeout
@@ -373,6 +365,13 @@ func waitEphemeralContainerRunning(
 		case <-ticker.C:
 		}
 	}
+}
+
+func requireDebugImage(image string) error {
+	if image == "" {
+		return fmt.Errorf("ReadFileOptions.DebugImage is required (use a minimal image with cat and sleep from your cluster registry)")
+	}
+	return nil
 }
 
 // randomEphemeralName returns prefix + 8 hex chars from crypto/rand.

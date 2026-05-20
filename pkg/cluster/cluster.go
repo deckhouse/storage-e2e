@@ -202,14 +202,6 @@ func CreateTestCluster(
 	ctx context.Context,
 	yamlConfigFilename string,
 ) (*TestClusterResources, error) {
-	// Apply env-var defaults defensively so suites that don't call
-	// config.ValidateEnvironment() (e.g. csi-ceph e2e) still get sensible
-	// values for SSH_VM_USER / SSH_PRIVATE_KEY / SSH_PUBLIC_KEY /
-	// TEST_CLUSTER_NAMESPACE / YAML_CONFIG_FILENAME / TEST_CLUSTER_CLEANUP
-	// instead of empty strings that surface as obscure failures (e.g.
-	// user="" -> sshd "Invalid user", or "" filename -> directory read).
-	config.ApplyDefaults()
-
 	// Belt-and-suspenders: function arg also has a documented default. Without
 	// this, an empty filename gets joined with the test-package directory and
 	// yields a path to the directory itself, failing later with a confusing

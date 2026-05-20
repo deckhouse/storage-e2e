@@ -541,8 +541,7 @@ pkg/
 │   ├── pvc.go                   # PVC operations
 │   ├── rookconfigoverride.go    # Rook global ceph.conf override
 │   ├── secrets.go               # Secret operations
-│   ├── storageclass.go          # StorageClass get/wait/default
-│   ├── storageclass_manage.go   # Global default-SC management
+│   ├── storageclass.go          # StorageClass get/wait/create/default
 │   ├── virtclient.go            # Virtualization client constructor
 │   ├── virtualdisk.go           # VirtualDisk attach/detach
 │   ├── vmpod.go                 # VM pod lookup
