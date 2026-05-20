@@ -149,6 +149,10 @@ func loadClusterConfigFromPath(configPath string) (*config.ClusterDefinition, er
 		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
 	}
 
+	if err := config.ValidateModulePullOverrides(&clusterDef); err != nil {
+		return nil, err
+	}
+
 	// Validate the configuration (using the same validation logic as internal/cluster)
 	if len(clusterDef.Masters) == 0 {
 		return nil, fmt.Errorf("at least one master node is required")
@@ -194,6 +198,14 @@ func CreateTestCluster(
 	ctx context.Context,
 	yamlConfigFilename string,
 ) (*TestClusterResources, error) {
+	// Belt-and-suspenders: function arg also has a documented default. Without
+	// this, an empty filename gets joined with the test-package directory and
+	// yields a path to the directory itself, failing later with a confusing
+	// "is a directory" read error.
+	if yamlConfigFilename == "" {
+		yamlConfigFilename = config.YAMLConfigFilenameDefaultValue
+	}
+
 	logger.Step(1, "Loading cluster configuration from %s", yamlConfigFilename)
 
 	// Find the test package directory by walking the call stack.

@@ -252,9 +252,18 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 		settings = moduleConfig.Settings
 	}
 
-	// Retry logic for webhook connection errors and network timeouts
-	maxRetries := 10
+	// Retry logic for webhook connection errors and network timeouts.
+	// On freshly-bootstrapped Deckhouse clusters the validating-webhook-handler
+	// pod (or the d8-system Service endpoint backing it) can be unready for
+	// several minutes while the control plane converges. Our previous cap of
+	// 10 retries with exponential backoff topped out at ~3.7 minutes total
+	// which was not enough for the SAN stand — we'd fail Step 18 with
+	// "connection refused" during the first ModuleConfig write. Bumping to 60
+	// attempts with delays capped at 30s gives us up to ~30 minutes of
+	// soft-retries, which easily outlives any realistic webhook cold start.
+	maxRetries := 60
 	retryDelay := 2 * time.Second
+	const maxRetryDelay = 30 * time.Second
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -282,8 +291,12 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 					case <-ctx.Done():
 						return ctx.Err()
 					case <-time.After(retryDelay):
-						// Exponential backoff
+						// Exponential backoff, capped so we don't sleep forever
+						// between retries on a slow-to-converge cluster.
 						retryDelay = time.Duration(float64(retryDelay) * 1.5)
+						if retryDelay > maxRetryDelay {
+							retryDelay = maxRetryDelay
+						}
 						continue
 					}
 				}
@@ -307,8 +320,12 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 					case <-ctx.Done():
 						return ctx.Err()
 					case <-time.After(retryDelay):
-						// Exponential backoff
+						// Exponential backoff, capped (see create branch above
+						// for the rationale — same webhook cold-start).
 						retryDelay = time.Duration(float64(retryDelay) * 1.5)
+						if retryDelay > maxRetryDelay {
+							retryDelay = maxRetryDelay
+						}
 						continue
 					}
 				}
