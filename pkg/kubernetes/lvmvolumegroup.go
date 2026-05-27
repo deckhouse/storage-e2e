@@ -19,6 +19,7 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/rest"
@@ -33,6 +34,85 @@ type ThinPoolSpec struct {
 	Name            string // Thin pool name
 	Size            string // Size of the thin pool (e.g., "50%" or "10Gi")
 	AllocationLimit string // Allocation limit (optional)
+}
+
+// CreateLVMVolumeGroupWithMatchLabels creates an LVMVolumeGroup with an explicit label selector (one BD per VG stress tests).
+func CreateLVMVolumeGroupWithMatchLabels(ctx context.Context, kubeconfig *rest.Config, name, nodeName, actualVGName string, matchLabels map[string]string) error {
+	lvgClient, err := storage.NewLVMVolumeGroupClient(ctx, kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create LVMVolumeGroup client: %w", err)
+	}
+	if err := lvgClient.CreateWithMatchLabels(ctx, name, nodeName, actualVGName, matchLabels); err != nil {
+		return err
+	}
+	logger.Success("LVMVolumeGroup %s created (selector %v)", name, matchLabels)
+	return nil
+}
+
+// WaitForLVMBatchReady waits until every LVMVolumeGroup in names is Ready or timeout expires.
+func WaitForLVMBatchReady(ctx context.Context, kubeconfig *rest.Config, names []string, timeout time.Duration) bool {
+	lvgClient, err := storage.NewLVMVolumeGroupClient(ctx, kubeconfig)
+	if err != nil {
+		logger.Warn("LVMVolumeGroup client: %v", err)
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	poll := 15 * time.Second
+	for {
+		allReady := true
+		for _, name := range names {
+			lvg, err := lvgClient.Get(ctx, name)
+			if err != nil || lvg.Status.Phase != snc.PhaseReady {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(poll)
+	}
+}
+
+// CountReadyLVMVolumeGroups returns how many of the given LVMVolumeGroups are Ready.
+func CountReadyLVMVolumeGroups(ctx context.Context, kubeconfig *rest.Config, names []string) (int, error) {
+	lvgClient, err := storage.NewLVMVolumeGroupClient(ctx, kubeconfig)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, name := range names {
+		lvg, err := lvgClient.Get(ctx, name)
+		if err != nil {
+			continue
+		}
+		if lvg.Status.Phase == snc.PhaseReady {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// DeleteLVMVolumeGroupsWithPrefix deletes all LVMVolumeGroups whose names start with prefix.
+func DeleteLVMVolumeGroupsWithPrefix(ctx context.Context, kubeconfig *rest.Config, prefix string) error {
+	lvgClient, err := storage.NewLVMVolumeGroupClient(ctx, kubeconfig)
+	if err != nil {
+		return err
+	}
+	list, err := lvgClient.List(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range list.Items {
+		if !strings.HasPrefix(list.Items[i].Name, prefix) {
+			continue
+		}
+		_ = lvgClient.Delete(ctx, list.Items[i].Name)
+	}
+	return nil
 }
 
 // CreateLVMVolumeGroup creates an LVMVolumeGroup resource for a specific node

@@ -76,6 +76,31 @@ func (c *LVMVolumeGroupClient) Get(ctx context.Context, name string) (*snc.LVMVo
 	return &lvg, nil
 }
 
+// CreateWithMatchLabels creates an LVMVolumeGroup bound to block devices selected by label (typical: hostname + metadata.name).
+func (c *LVMVolumeGroupClient) CreateWithMatchLabels(ctx context.Context, name, nodeName, actualVGName string, matchLabels map[string]string) error {
+	lvg := &snc.LVMVolumeGroup{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: snc.SchemeGroupVersion.String(),
+			Kind:       "LVMVolumeGroup",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: snc.LVMVolumeGroupSpec{
+			Type: "Local",
+			Local: snc.LVMVolumeGroupLocalSpec{
+				NodeName: nodeName,
+			},
+			BlockDeviceSelector: &metav1.LabelSelector{
+				MatchLabels: matchLabels,
+			},
+			ActualVGNameOnTheNode: actualVGName,
+		},
+	}
+	if err := c.client.Create(ctx, lvg); err != nil {
+		return fmt.Errorf("failed to create LVMVolumeGroup %s: %w", name, err)
+	}
+	return nil
+}
+
 // Create creates a new LVMVolumeGroup for a specific node
 func (c *LVMVolumeGroupClient) Create(ctx context.Context, name, nodeName string, blockDeviceNames []string, actualVGName string) error {
 	lvg := &snc.LVMVolumeGroup{

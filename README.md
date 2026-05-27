@@ -66,6 +66,23 @@ Designed to validate any CSI driver stability under high load with concurrent PV
 
 Run the test: `go test -timeout=120m -v ./tests/csi-all-stress-tests -count=1`
 
+### sds-node-configurator-stress-tests
+
+Stress test for **sds-node-configurator**: ramps independent **LVMVolumeGroups** on a single node (one VirtualDisk → one BlockDevice → one VG per slot). Empirically finds how many VGs the node and agent can reconcile; LVM2 has no fixed VG count limit.
+
+- Creates a nested cluster with `sds-node-configurator` and `sds-local-volume` (see `cluster_config.yml`)
+- Implementation: `pkg/testkit/snc_max_vgs_stress.go` (`MaxVGsStressRunner`)
+- Probe mode (default): pass if at least one LVG is `Ready`; see report in logs for the empirical ceiling
+- Strict mode: `STRESS_MAX_VG_STRICT=true` requires all `STRESS_MAX_VG_TARGET` to become `Ready`
+
+Run:
+
+```bash
+go test -timeout=240m -v ./tests/sds-node-configurator-stress-tests -count=1
+```
+
+Tuning: `STRESS_MAX_VG_TARGET` (default `30`), `STRESS_MAX_VG_BATCH_SIZE` (default `5`), `STRESS_MAX_VG_DISK_SIZE` (default `1Gi`), `STRESS_MAX_VG_MIN_READY`, `STRESS_MAX_VG_STRICT`.
+
 
 ## Functions Glossary (exportable only)
 
@@ -137,3 +154,11 @@ See [pkg/FUNCTIONS_GLOSSARY.md](pkg/FUNCTIONS_GLOSSARY.md) for a full list of al
 - `STRESS_TEST_MAX_ATTEMPTS` -- Maximum attempts for waiting operations. Default: `360`
 - `STRESS_TEST_INTERVAL` -- Interval between attempts in seconds. Default: `5`
 - `STRESS_TEST_CLEANUP` -- Whether to cleanup resources after stress tests. Default: `true`
+
+**sds-node-configurator max-VG stress** (`sds-node-configurator-stress-tests`):
+
+- `STRESS_MAX_VG_TARGET` -- How many independent LVMVolumeGroups to attempt. Default: `30`
+- `STRESS_MAX_VG_BATCH_SIZE` -- Ramp batch size. Default: `5`
+- `STRESS_MAX_VG_DISK_SIZE` -- VirtualDisk size per slot. Default: `1Gi`
+- `STRESS_MAX_VG_STRICT` -- If `true`, fail unless all targets are Ready. Default: `false` (probe)
+- `STRESS_MAX_VG_MIN_READY` -- Minimum Ready count in probe mode. Default: `1`
