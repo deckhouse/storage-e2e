@@ -33,6 +33,9 @@ type SSHClient interface {
 	// Exec executes a command on the remote host
 	Exec(ctx context.Context, cmd string) (string, error)
 
+	// ExecCapture executes a command on the remote host and returns stdout and stderr separately
+	ExecCapture(ctx context.Context, cmd string) (stdout, stderr string, err error)
+
 	// ExecFatal executes a command and returns error if it fails
 	ExecFatal(ctx context.Context, cmd string) string
 

@@ -53,6 +53,50 @@ Template folder for creating new E2E tests. Contains a complete framework with:
 
 Use `./tests/create-test.sh <your-test-name>` to create a new test from this template.
 
+### Ceph testkit
+
+Reusable testkit that provisions a Rook-managed Ceph cluster through
+`sds-elastic` and, when needed, wires a csi-ceph-backed `StorageClass` on top.
+It is meant for downstream module e2e suites that need a Ceph backend without
+copying the cluster bootstrap code.
+
+Built around `testkit.EnsureCephStorageClass` (see
+[docs/FUNCTIONS_GLOSSARY.md](docs/FUNCTIONS_GLOSSARY.md#ceph-storageclass-testkit)),
+which handles: enabling `sds-node-configurator` + `sds-elastic` + `csi-ceph`
+modules, optionally provisioning a `sds-local-volume` Thick `StorageClass`
+for OSD backing, seeding `rook-config-override` (for things like
+`ms_crc_data=false`), creating Rook `CephCluster` + `CephBlockPool`, and
+wiring `CephClusterConnection` / `CephClusterAuthentication` /
+`CephStorageClass` csi-ceph CRs.
+
+`EnsureCephCluster` stops before the csi-ceph wiring and only brings up the
+Rook/Ceph side. Downstream repos (for example `csi-ceph`) can import
+`github.com/deckhouse/storage-e2e/pkg/testkit` and reuse these helpers inside
+their own Ginkgo specs.
+
+Testkit-specific env variables:
+
+- `CSI_CEPH_OSD_STORAGE_CLASS` — pre-existing block-mode StorageClass used to
+  back Rook OSD PVCs. When empty, a `sds-local-volume` Thick SC is
+  auto-provisioned via `EnsureDefaultStorageClass`.
+- `CSI_CEPH_MODULE_PULL_OVERRIDE` — image tag for `csi-ceph`'s
+  ModulePullOverride (dev registries only, e.g. when testing a PR build).
+
+#### `modulePullOverride` in `cluster_config.yml`
+
+Set a literal image tag per module (e.g. `main`, `pr131`, `mr55`). Different
+modules often need different tags, so use static values in YAML rather than
+env substitution:
+
+```yaml
+dkpParameters:
+  modules:
+    - name: csi-ceph
+      modulePullOverride: pr131
+```
+
+`${VAR}` placeholders in `modulePullOverride` are rejected at config load time.
+
 ### csi-all-stress-tests
 
 Stress tests for all CSI storage drivers. This test suite:

@@ -1,6 +1,8 @@
 package storage_e2e
 
 import (
+	"fmt"
+
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/logger"
 )

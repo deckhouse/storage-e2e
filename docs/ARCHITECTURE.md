@@ -75,6 +75,12 @@ storage-e2e/
 │   ├── kubernetes/               # Public Kubernetes utilities
 │   │   ├── apply.go              # YAML manifest application
 │   │   ├── blockdevice.go        # BlockDevice operations
+│   │   ├── cephblockpool.go      # Rook CephBlockPool operations
+│   │   ├── cephcluster.go        # Rook CephCluster operations
+│   │   ├── cephfilesystem.go     # Rook CephFilesystem operations
+│   │   ├── cephclusterconnection.go # csi-ceph connection/auth CRs
+│   │   ├── cephcredentials.go    # Rook Ceph credential discovery
+│   │   ├── cephstorageclass.go   # csi-ceph CephStorageClass CR
 │   │   ├── client.go             # Clientset/dynamic client with retry
 │   │   ├── localstorageclass.go  # LocalStorageClass CR operations
 │   │   ├── lvmvolumegroup.go     # LVMVolumeGroup operations
@@ -83,6 +89,8 @@ storage-e2e/
 │   │   ├── nodegroup.go          # NodeGroup operations
 │   │   ├── nodes.go              # Node listing, taints, labels
 │   │   ├── pod.go                # Pod operations
+│   │   ├── pod_exec.go           # Pods/exec helpers + DistrolessReader for distroless containers
+│   │   ├── poll.go               # Generic readiness poller (per-call timeout, WARN on net errors)
 │   │   ├── pvc.go                # PVC operations
 │   │   ├── secrets.go            # Secret operations
 │   │   ├── storageclass.go       # StorageClass get/wait/default
@@ -98,7 +106,9 @@ storage-e2e/
 │   │
 │   └── testkit/                  # Test framework utilities
 │       ├── storageclass.go       # Default StorageClass provisioning
-│       └── stress-tests.go       # Stress test runner
+│       ├── stress-tests.go       # Stress test runner
+│       ├── ceph.go               # EnsureCephStorageClass (Rook + csi-ceph)
+│       └── ceph_cluster.go       # EnsureCephCluster (Rook only, no csi-ceph)
 │
 ├── tests/                         # Test suites
 │   ├── test-template/            # Template for creating new tests
@@ -435,7 +445,7 @@ internal/kubernetes/               # Internal Kubernetes clients
 
 ```
 infrastructure/ssh/
-├── client.go           # SSH client implementation
+├── client.go           # SSH client implementation (Exec, ExecCapture, tunnels)
 ├── interface.go        # SSH client interface
 ├── tunnel.go           # Port forwarding and tunneling
 └── types.go            # SSH-related types
@@ -446,12 +456,14 @@ infrastructure/ssh/
 - SSH key handling
 - Port forwarding (e.g., for Kubernetes API access)
 - Remote command execution
+- Remote command execution with separated stdout/stderr capture for diagnostics
 - File transfer operations (including UploadPrivate: chmod-before-data for sensitive payloads)
 
 **Key Features**:
 - Support for password and key-based authentication
 - SSH tunneling for accessing remote Kubernetes clusters
 - Connection pooling and reuse
+- `ExecCapture` keeps stdout and stderr separate while preserving retry/reconnect behavior
 - Proper resource cleanup
 
 ### 3.5 Logger Module (`internal/logger/`)
@@ -506,28 +518,41 @@ pkg/
 │   ├── lock.go         # Cluster locking (ConfigMap-based)
 │   └── vms.go          # VM lifecycle management
 ├── kubernetes/
-│   ├── apply.go        # YAML manifest application
-│   ├── blockdevice.go  # BlockDevice operations
-│   ├── client.go       # Clientset/dynamic client with retry
-│   ├── localstorageclass.go  # LocalStorageClass CR operations
-│   ├── lvmvolumegroup.go     # LVMVolumeGroup operations
-│   ├── modules.go      # Module configuration with dependency handling
-│   ├── namespace.go    # Namespace utilities
-│   ├── nodegroup.go    # NodeGroup operations
-│   ├── nodes.go        # Node listing, taints, labels
-│   ├── pod.go          # Pod operations
-│   ├── pvc.go          # PVC operations
-│   ├── secrets.go      # Secret operations
-│   ├── storageclass.go # StorageClass get/wait/default
-│   ├── virtualdisk.go  # VirtualDisk attach/detach
-│   └── vmpod.go        # VM pod lookup
+│   ├── apply.go                 # YAML manifest application
+│   ├── blockdevice.go           # BlockDevice operations
+│   ├── cephblockpool.go         # Rook CephBlockPool CRUD + wait
+│   ├── cephcluster.go           # Rook CephCluster CRUD + wait
+│   ├── cephfilesystem.go        # Rook CephFilesystem CRUD + wait
+│   ├── cephclusterconnection.go # csi-ceph CephClusterConnection/Auth CRs
+│   ├── cephcredentials.go       # Read fsid/mons/admin-key from Rook secrets
+│   ├── cephstorageclass.go      # csi-ceph CephStorageClass CR
+│   ├── client.go                # Clientset/dynamic client with retry
+│   ├── localstorageclass.go     # LocalStorageClass CR operations
+│   ├── lvmvolumegroup.go        # LVMVolumeGroup operations
+│   ├── modules.go               # Module configuration with dependency handling
+│   ├── namespace.go             # Namespace utilities
+│   ├── nodegroup.go             # NodeGroup operations
+│   ├── nodes.go                 # Node listing, taints, labels
+│   ├── pod.go                   # Pod operations
+│   ├── pod_exec.go              # Exec helpers + DistrolessReader (ephemeral-container session)
+│   ├── poll.go                  # pollResourceUntilReady helper for Wait*Ready callers
+│   ├── pvc.go                   # PVC operations
+│   ├── rookconfigoverride.go    # Rook global ceph.conf override
+│   ├── secrets.go               # Secret operations
+│   ├── storageclass.go          # StorageClass get/wait/create/default
+│   ├── virtclient.go            # Virtualization client constructor
+│   ├── virtualdisk.go           # VirtualDisk attach/detach
+│   ├── vmpod.go                 # VM pod lookup
+│   └── volumesnapshotclass.go   # VolumeSnapshotClass helpers
 ├── retry/
-│   └── retry.go        # Generic retry with exponential backoff
+│   └── retry.go                 # Generic retry with exponential backoff
 ├── storage-e2e/
-│   └── setup.go        # Framework initialization (logger + env validation)
+│   └── setup.go                 # Framework initialization (logger + env validation)
 └── testkit/
-    ├── storageclass.go  # Default StorageClass provisioning
-    └── stress-tests.go  # Stress test runner
+    ├── storageclass.go          # Default StorageClass provisioning
+    ├── stress-tests.go          # Stress test runner
+    ├── ceph.go                  # EnsureCephStorageClass / EnsureDefaultCephStorageClass
+    └── ceph_cluster.go          # EnsureCephCluster (Rook-only, no csi-ceph)
 ```
 
 **Responsibilities**:
@@ -754,8 +779,7 @@ logger.Error("Failed to create resource: %v", err)
 | `TEST_CLUSTER_VIRTUAL_MACHINE_CLASS_NAME` | `generic` | VM class for VMs on the base cluster in `alwaysCreateNew`. If set to another name (DNS-1123 subdomain) and the class does not exist, it is created from `generic` with `spec.cpu.type: Host`, **`spec.nodeSelector` / `spec.tolerations` cleared**, sizing policies retained from template, labeled `storage-e2e.deckhouse.io/auto-created=true`, and left after cleanup |
 | `TEST_CLUSTER_CLEANUP` | `false` | Cleanup cluster after tests |
 | `LOG_LEVEL` | `debug` | Log level (debug/info/warn/error) |
-| `KUBE_CONFIG_PATH` | - | Fallback kubeconfig path |
-
+| `KUBE_CONFIG_PATH` | - | Explicit kubeconfig path. Used when SSH retrieval of `/etc/kubernetes/{super-admin,admin}.conf` from the master fails. If unset and SSH also fails, `GetKubeconfig` returns an error (no silent fallback to `~/.kube/config`). |
 ### Commander Variables (only when `TEST_CLUSTER_CREATE_MODE=commander`)
 
 | Variable | Default | Description |
