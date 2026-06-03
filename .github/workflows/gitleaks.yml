@@ -14,23 +14,12 @@
 
 name: Gitleaks
 
-# Triggers:
-#   push:           every push to any branch — catches leaked secrets before a PR
-#                   is even opened (feature branches, force-pushes, throw-away
-#                   debug branches).
-#   pull_request:   PRs targeting any branch — required so the check is also
-#                   evaluated for fork PRs, whose `push` events do not run in
-#                   the upstream repo.
-#
-# The upstream action (deckhouse/modules-actions/gitleaks) supports two modes:
-#   * diff — checks out refs/pull/<N>/merge and scans only the PR range. This
-#            mode only works on pull_request events (it needs github.event.number);
-#            on a push it produces an empty refspec and `git fetch` fails.
-#   * full — checks out the whole repo and scans every tracked file.
-# So we split into two jobs gated by github.event_name: diff for PRs, full for
-# pushes.
+# Gitleaks runs only on pull requests. The upstream action's diff mode checks
+# out refs/pull/<N>/merge and scans just the PR range; it relies on
+# github.event.number, which exists only for pull_request events. (A push-event
+# run produces an empty refspec — `+refs/pull//merge:...` — and `git fetch`
+# fails, so we deliberately do not trigger on push.)
 on:
-  push: {}
   pull_request:
     types: [opened, synchronize, reopened]
 
@@ -38,16 +27,14 @@ permissions:
   contents: read
   pull-requests: read
 
-# Cancel superseded runs on the same ref so rapid-fire pushes don't pile up.
+# Cancel superseded runs on the same PR ref so rapid-fire pushes don't pile up.
 concurrency:
   group: gitleaks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # PR scan: only the diff introduced by the pull request.
-  gitleaks_diff:
+  gitleaks_scan:
     name: Gitleaks scan
-    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,17 +44,3 @@ jobs:
         uses: deckhouse/modules-actions/gitleaks@v6
         with:
           scan_mode: "diff"
-
-  # Push scan: full-repo scan (diff mode can't resolve a PR ref on a push event).
-  gitleaks_full:
-    name: Gitleaks scan
-    if: ${{ github.event_name == 'push' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Run Gitleaks full scan
-        uses: deckhouse/modules-actions/gitleaks@v6
-        with:
-          scan_mode: "full"
