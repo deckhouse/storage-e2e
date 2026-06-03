@@ -21,6 +21,14 @@ name: Gitleaks
 #   pull_request:   PRs targeting any branch — required so the check is also
 #                   evaluated for fork PRs, whose `push` events do not run in
 #                   the upstream repo.
+#
+# The upstream action (deckhouse/modules-actions/gitleaks) supports two modes:
+#   * diff — checks out refs/pull/<N>/merge and scans only the PR range. This
+#            mode only works on pull_request events (it needs github.event.number);
+#            on a push it produces an empty refspec and `git fetch` fails.
+#   * full — checks out the whole repo and scans every tracked file.
+# So we split into two jobs gated by github.event_name: diff for PRs, full for
+# pushes.
 on:
   push: {}
   pull_request:
@@ -36,8 +44,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gitleaks_scan:
+  # PR scan: only the diff introduced by the pull request.
+  gitleaks_diff:
     name: Gitleaks scan
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -47,3 +57,17 @@ jobs:
         uses: deckhouse/modules-actions/gitleaks@v6
         with:
           scan_mode: "diff"
+
+  # Push scan: full-repo scan (diff mode can't resolve a PR ref on a push event).
+  gitleaks_full:
+    name: Gitleaks scan
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Run Gitleaks full scan
+        uses: deckhouse/modules-actions/gitleaks@v6
+        with:
+          scan_mode: "full"
