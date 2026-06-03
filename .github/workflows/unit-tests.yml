@@ -1,0 +1,81 @@
+# Copyright 2026 Flant JSC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Unit Tests
+
+# Triggers:
+#   push:           every push to any branch — gives feature branches a green/red
+#                   signal without needing an open PR.
+#   pull_request:   PRs targeting main — required so the check is also evaluated
+#                   for fork PRs (whose push events do not run in the upstream repo).
+on:
+  push: {}
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+# Cancel in-flight runs for the same ref when a new commit lands. Each push
+# trigger then evaluates only the latest SHA, which keeps CI minutes bounded
+# on rapid-fire force-pushes.
+concurrency:
+  group: unit-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Build, vet & unit test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      # Compile everything (including the e2e suites under ./tests/...) to catch
+      # refactor breakage in code that the unit-tests package set deliberately
+      # does not execute.
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # Unit tests run with -race (catches data races in retry.Do and module
+      # configuration goroutines) and -shuffle=on (surfaces ordering bugs in
+      # tests that touch package-level env vars in internal/config).
+      # We restrict the set to ./internal/... ./pkg/... so the e2e suites in
+      # ./tests/... do not execute (they require real VMs/clusters/SSH).
+      - name: Unit tests (race + coverage)
+        run: |
+          go test -race -shuffle=on -covermode=atomic \
+            -coverprofile=coverage.out \
+            ./internal/... ./pkg/...
+          echo "Total coverage:"
+          go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: warn

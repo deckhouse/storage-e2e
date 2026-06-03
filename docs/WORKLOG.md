@@ -105,6 +105,16 @@ All notable changes to this repository are documented here. New entries are appe
 
 ---
 
+## 2026-06-03
+
+- **Add** `.github/workflows/unit-tests.yml`: mandatory CI workflow that builds, vets and runs unit tests on every push (any branch) and on PRs to `main`; uses `go-version-file: go.mod`, `-race -shuffle=on -covermode=atomic`, uploads `coverage.out` artifact, scoped to `./internal/... ./pkg/...` so e2e suites stay off CI.
+- **Add** `Makefile`: `test` / `cover` / `vet` / `build` / `e2e` / `clean` targets mirroring the CI commands; `.gitignore` for `coverage.out` / `coverage.html`.
+- **Add** Wave 1 unit tests (`pkg/retry/retry_test.go`, `pkg/kubernetes/{apply,modules,poll}_test.go`, `pkg/cluster/vms_test.go`, `pkg/testkit/stress_tests_test.go`, `internal/config/types_yaml_test.go`, `internal/kubernetes/commander/client_test.go`, `internal/logger/level_test.go`): hermetic table-driven coverage of `retry.Do/IsRetryable/IsSSHConnectionError/WithRetryAfter`, YAML doc splitting/env-var scanning, module graph + topo sort + cycle detection, `cluster/vms` pure helpers, `commander` mappers / base64 / `NewClientWithOptions` validation, `stress-tests.Config.Validate` / `DefaultConfig`, `LevelToString` round-trip, `ClusterNode`/`ClusterDefinition` YAML unmarshal validation.
+- **Add** Wave 2 httptest tests (`internal/kubernetes/commander/client_http_test.go`): drives the Commander HTTP client (`GetClusterByID`, `ListClustersAPI` array/items/data/garbage, `GetClusterByName`, `CreateClusterFromTemplate`, `DeleteClusterByID`, `GetClusterKubeconfigByID` + cluster-details fallback, `GetRegistryByName`, `GetClusterConnectionInfo` precedence + defaults) and all five `setAuthHeaders` paths via a real `httptest.Server`.
+- **Update** `docs/TESTS_IMPLEMENTATION_PLAN.md`: triggers changed from `push → main` to push-on-any-branch + `pull_request → main`; status header refreshed; rollout phases marked Done/Pending; exact `gh api` branch-protection command documented.
+
+---
+
 ## 2026-06-08
 
 - **Add** `pkg/config/config_test.go`: unit tests for `config.New` covering provider parsing, missing required `TEST_CLUSTER_PROVIDER` (error), empty-value handling, and table-driven provider values.
