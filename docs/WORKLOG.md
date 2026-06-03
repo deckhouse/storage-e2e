@@ -115,6 +115,7 @@ All notable changes to this repository are documented here. New entries are appe
 - **Update** `.github/workflows/gitleaks-scan-on-pr.yml` → renamed to `.github/workflows/gitleaks.yml`: workflow `name` shortened to `Gitleaks`, added `push: {}` trigger so secret scanning runs on every push (any branch), not only on PRs; added cancel-in-progress concurrency group.
 - **Update** `.github/workflows/gitleaks.yml`: split into two jobs gated by `github.event_name` — `gitleaks_diff` (`scan_mode: diff`) for `pull_request`, `gitleaks_full` (`scan_mode: full`) for `push`; fixes `fatal: invalid refspec '+refs/pull//merge:...'` that broke push runs because the upstream action's diff mode needs `github.event.number`. Both jobs share check name `Gitleaks scan`.
 - **Update** `.github/workflows/gitleaks.yml`: reverted to `pull_request`-only (single `gitleaks_scan` job, `scan_mode: diff`); dropped the `push` trigger because the upstream action's diff mode needs `github.event.number` and fails on push with `fatal: invalid refspec '+refs/pull//merge:...'`.
+- **Add** `.gitleaksignore`: ignores the `generic-api-key` false positive on `internal/kubernetes/commander/client_test.go:75` (base64 test fixture) by fingerprint at commit `5f1edc2`; the diff scan flags the introducing commit, so the later inline `gitleaks:allow` could not suppress it.
 
 ---
 
