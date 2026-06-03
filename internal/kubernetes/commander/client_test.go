@@ -72,7 +72,7 @@ func TestBase64Encode(t *testing.T) {
 		name, in, want string
 	}{
 		{"empty", "", ""},
-		{"ascii", "user:token", "dXNlcjp0b2tlbg=="},
+		{"ascii", "user:token", "dXNlcjp0b2tlbg=="}, // gitleaks:allow — base64("user:token") test fixture, not a secret
 		{"unicode", "tëst", "dMOrc3Q="},
 	}
 	for _, tc := range cases {
