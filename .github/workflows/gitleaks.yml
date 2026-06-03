@@ -12,14 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Gitleaks Pull Request Scan
+name: Gitleaks
 
+# Triggers:
+#   push:           every push to any branch — catches leaked secrets before a PR
+#                   is even opened (feature branches, force-pushes, throw-away
+#                   debug branches).
+#   pull_request:   PRs targeting any branch — required so the check is also
+#                   evaluated for fork PRs, whose `push` events do not run in
+#                   the upstream repo.
 on:
+  push: {}
   pull_request:
     types: [opened, synchronize, reopened]
+
 permissions:
   contents: read
   pull-requests: read
+
+# Cancel superseded runs on the same ref so rapid-fire pushes don't pile up.
+concurrency:
+  group: gitleaks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   gitleaks_scan:

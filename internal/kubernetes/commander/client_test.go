@@ -173,4 +173,3 @@ func TestNewClientWithOptions_Validation(t *testing.T) {
 		}
 	})
 }
-
