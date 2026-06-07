@@ -27,6 +27,11 @@ on:
 
 permissions:
   contents: read
+  # Required by actions/upload-code-coverage to publish the coverage report.
+  code-quality: write
+  # On push events the action resolves any open PR for the ref via `gh pr list`,
+  # which needs read access to pull requests.
+  pull-requests: read
 
 # Cancel in-flight runs for the same ref when a new commit lands. Each push
 # trigger then evaluates only the latest SHA, which keeps CI minutes bounded
@@ -72,10 +77,30 @@ jobs:
           echo "Total coverage:"
           go tool cover -func=coverage.out | tail -1
 
+      # actions/upload-code-coverage consumes Cobertura XML, so convert the Go
+      # coverage profile produced above into that format.
+      - name: Convert coverage to Cobertura XML
+        run: |
+          go run github.com/boumenot/gocover-cobertura@latest \
+            < coverage.out > coverage.xml
+
+      # Publishes the report via GitHub's native code-coverage feature. On push
+      # to the default branch it sets the baseline; on push to a branch with an
+      # open PR the github-code-quality[bot] posts the comparison on that PR.
+      - name: Upload code coverage
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage.xml
+          language: Go
+          label: code-coverage/go
+          fail-on-error: false
+
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage
-          path: coverage.out
+          path: |
+            coverage.out
+            coverage.xml
           if-no-files-found: warn

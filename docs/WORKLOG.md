@@ -4,6 +4,12 @@ All notable changes to this repository are documented here. New entries are appe
 
 ---
 
+## 2026-06-07
+
+- **Update** `.github/workflows/unit-tests.yml`: integrate GitHub native code coverage (per-push) — add `code-quality: write` + `pull-requests: read` permissions, convert `coverage.out` to Cobertura XML via `boumenot/gocover-cobertura`, and publish with `actions/upload-code-coverage@v1`; coverage artifact now also includes `coverage.xml`
+
+---
+
 ## 2026-05-06
 
 - **Add** `UploadPrivate` on `ssh.SSHClient` (`internal/infrastructure/ssh`): SFTP `Chmod` immediately after `Create`, before payload copy; `uploadOverSFTPOnce`, `uploadWithSFTPRetries`, `jumpUploadWithSFTPRetries`; passphrase `BootstrapCluster` uses it with `install -d -m 0700` staging (`pkg/cluster/setup.go`); ARCHITECTURE mentions ssh uploads
