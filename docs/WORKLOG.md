@@ -102,3 +102,9 @@ All notable changes to this repository are documented here. New entries are appe
 - **Remove** `internal/config/overrides.go`: dropped `${VAR}` expansion in `modulePullOverride` per review — each module needs its own literal tag in `cluster_config.yml` (e.g. `pr131`, `mr55`).
 - **Add** `internal/config.ValidateModulePullOverrides`: rejects `${...}` placeholders at config load with an explicit error.
 - **Update** `internal/cluster/cluster.go::LoadClusterConfig` and `pkg/cluster/cluster.go::loadClusterConfigFromPath`, `README.md`, `docs/ARCHITECTURE.md`.
+
+---
+
+## 2026-06-08
+
+- **Add** `pkg/config/config_test.go`: unit tests for `config.New` covering provider parsing, missing required `TEST_CLUSTER_PROVIDER` (error), empty-value handling, and table-driven provider values.
