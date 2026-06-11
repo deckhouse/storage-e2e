@@ -19,7 +19,7 @@ package config
 import "github.com/caarlos0/env/v11"
 
 type ClusterConfig struct {
-	ClusterProvider string `env:"TEST_CLUSTER_PROVIDER,required"`
+	ClusterProvider string `env:"E2E_TEST_CLUSTER_PROVIDER,required"`
 }
 
 func New() (*ClusterConfig, error) {
