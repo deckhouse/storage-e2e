@@ -14,20 +14,8 @@
  * limitations under the License.
  */
 
-package config
+package dvp
 
-import "github.com/caarlos0/env/v11"
-
-type ClusterConfig struct {
-	ClusterProvider string `env:"E2E_TEST_CLUSTER_PROVIDER,required"`
-}
-
-func New() (*ClusterConfig, error) {
-	cfg := &ClusterConfig{}
-	parseErr := env.Parse(cfg)
-	if parseErr != nil {
-		return nil, parseErr
-	}
-
-	return cfg, nil
+type Config struct {
+	//ClusterBootstrapConfig string `env:"YAML_CONFIG_FILENAME,required"`
 }

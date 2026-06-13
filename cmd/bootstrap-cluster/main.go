@@ -6,28 +6,32 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
-	"github.com/deckhouse/storage-e2e/pkg/clusterprovider/config"
-	"github.com/deckhouse/storage-e2e/pkg/clusterprovider/provider"
+	"github.com/deckhouse/storage-e2e/internal/logger"
+	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
 
 func main() {
-	cfg, err := config.New()
+	cfg, err := clusterprovider.New()
 	if err != nil {
 		log.Fatal("failed to initialize config - ", err)
 	}
 
-	newProvider, registryGetErr := provider.DefaultRegistry.Get(cfg.ClusterProvider)
+	newProvider, registryGetErr := clusterprovider.DefaultRegistry.Get(cfg.ClusterProvider)
 	if registryGetErr != nil {
 		log.Fatal("failed to get provider", registryGetErr)
 	}
 
-	clusterProvider, err := newProvider(cfg)
+	slogger := logger.GetLogger()
+	clusterProvider, err := newProvider(slogger, cfg)
 	if err != nil {
 		log.Fatal("failed to build provider", err)
 	}
 
-	bootstrapErr := clusterProvider.Bootstrap(context.Background())
+	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), time.Minute*45)
+	defer bootstrapCancel()
+	bootstrapErr := clusterProvider.Bootstrap(bootstrapCtx)
 	if bootstrapErr != nil {
 		log.Fatal("failed to bootstrap cluster", bootstrapErr)
 	}
