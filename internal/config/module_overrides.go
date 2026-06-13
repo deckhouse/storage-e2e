@@ -67,8 +67,6 @@ func ResolveModulePullOverrides(def *ClusterDefinition, lookup EnvLookup) error 
 			value, ok := lookup(name)
 			if !ok {
 				problems = append(problems, fmt.Sprintf("module %q references unset ${%s}", m.Name, name))
-				// Value is irrelevant: any problem aborts the whole load. Drop
-				// the reference so it is not re-reported by the residual check.
 				return ""
 			}
 			return value

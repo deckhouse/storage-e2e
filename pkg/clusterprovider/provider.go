@@ -23,5 +23,5 @@ import (
 type Provider interface {
 	Name() string
 	Bootstrap(ctx context.Context) error
-	Teardown(ctx context.Context) error
+	Remove(ctx context.Context) error
 }
