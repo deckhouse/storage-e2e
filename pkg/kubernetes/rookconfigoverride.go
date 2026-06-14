@@ -30,6 +30,12 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/logger"
 )
 
+// DefaultRookNamespace is the namespace the sds-elastic module deploys its
+// vendored Rook operator (and the rook-config-override ConfigMap) into. It is
+// the default scope for the Rook-daemon helpers that survive the removal of
+// the raw-Rook cluster builders.
+const DefaultRookNamespace = "d8-sds-elastic"
+
 // RookConfigOverrideName is the well-known ConfigMap name Rook reads Ceph
 // config overrides from (see Rook docs: "Advanced Configuration – Custom
 // ceph.conf Settings"). Rook watches this ConfigMap in its operator namespace

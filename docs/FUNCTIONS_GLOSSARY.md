@@ -27,15 +27,11 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [Modules](#modules)
 - [Retry](#retry)
 - [Rook Config Override](#rook-config-override)
-- [Ceph Credentials](#ceph-credentials)
-- [CephCluster (Rook)](#cephcluster-rook)
-- [CephBlockPool (Rook)](#cephblockpool-rook)
 - [CephFilesystem (Rook)](#cephfilesystem-rook)
-- [CephClusterConnection / CephClusterAuthentication (csi-ceph)](#cephclusterconnection--cephclusterauthentication-csi-ceph)
-- [CephStorageClass (csi-ceph)](#cephstorageclass-csi-ceph)
+- [ElasticCluster / ElasticStorageClass (sds-elastic)](#elasticcluster--elasticstorageclass-sds-elastic)
+- [Rook verifiers (sds-elastic renamed group)](#rook-verifiers-sds-elastic-renamed-group)
 - [Default StorageClass (Testkit)](#default-storageclass-testkit)
-- [Ceph StorageClass (Testkit)](#ceph-storageclass-testkit)
-- [Ceph Cluster (Testkit) — no csi-ceph wiring](#ceph-cluster-testkit--no-csi-ceph-wiring)
+- [Elastic (Testkit)](#elastic-testkit)
 - [Stress Tests (Testkit)](#stress-tests-testkit)
 - [Ceph CRC (Testkit)](#ceph-crc-testkit)
 
@@ -198,6 +194,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 - `GetConsumableBlockDevices(ctx, kubeconfig)` — Returns all consumable BlockDevices from the cluster.
 - `GetConsumableBlockDevicesByNode(ctx, kubeconfig, nodeName)` — Returns consumable BlockDevices for a specific node.
+- `LabelBlockDevice(ctx, kubeconfig, name, labelKey, labelValue)` — Sets a label on a single `BlockDevice` CR (via the dynamic client on `BlockDeviceGVR`). Idempotent (skips the update when the label already matches) and tolerant of optimistic-concurrency conflicts. Used to mark disks eligible for adoption by an `ElasticCluster.spec.storage.blockDeviceSelector`.
 
 ## LVMVolumeGroup
 
@@ -269,30 +266,6 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `DeleteRookConfigOverride(ctx, kubeconfig, namespace)` — Removes the ConfigMap; safe if it does not exist.
 - `RenderCephGlobalConfig(globals)` — Pure helper that renders a `[global]` section for `ceph.conf` from a `map[string]string`. Keys are sorted so the output is byte-stable across calls with logically-equivalent maps (used by `SetRookConfigOverride` to avoid spurious ConfigMap updates and by callers that need to compare the desired vs. live ConfigMap content before deciding to roll daemons).
 
-## Ceph Credentials
-
-`pkg/kubernetes/cephcredentials.go`
-
-- `WaitForCephCredentials(ctx, kubeconfig, namespace, timeout)` — Polls Rook's `rook-ceph-mon` Secret and `rook-ceph-mon-endpoints` ConfigMap until all pieces required to connect a CSI client to the cluster (`fsid`, admin user, admin key, monitor endpoints) are present. Returns a `*CephCredentials`.
-
-## CephCluster (Rook)
-
-`pkg/kubernetes/cephcluster.go`
-
-- `CreateCephCluster(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephCluster` CR using `CephClusterConfig` (image, mon/mgr counts, network provider, OSD storage class / count / size, data-dir host path, etc.). Idempotent. **Fail-fast:** if an existing CR has `metadata.deletionTimestamp != nil`, returns an error instead of trying to update a Terminating object (which would silently no-op and trap the next `WaitForCephClusterReady` for 15-20 minutes).
-- `WaitForCephClusterReady(ctx, kubeconfig, namespace, name, timeout)` — Blocks until `status.state == "Created"` (or `status.phase == "Ready"`). HEALTH_WARN is tolerated so single-OSD test clusters still succeed. Each Get is bounded by `PollGetTimeout` (30s) and consecutive Get failures emit WARN, so a dropped SSH tunnel surfaces in seconds instead of after the readyTimeout. **Fail-fast** when the CR comes back with `deletionTimestamp != nil` — there's no point waiting for Ready on a Terminating object.
-- `DeleteCephCluster(ctx, kubeconfig, namespace, name)` — Fire-and-forget delete; NotFound is treated as success. Does NOT garbage-collect OSD data on host disks. Pair with `WaitForCephClusterGone` if the next step depends on the CR being fully GC'd (e.g. before re-creating the cluster, or to detect a stuck `cephcluster.ceph.rook.io` finalizer early).
-- `WaitForCephClusterGone(ctx, kubeconfig, namespace, name, timeout)` — Polls until the CR returns NotFound (default `CephClusterGoneTimeout` = 10m when timeout is 0). Logs deletionTimestamp / finalizers progress periodically, so a stuck finalizer (typical after a teardown that left dependents alive — see `DeletionIsBlocked`) is visible immediately instead of after a silent timeout. Fail-fast on timeout: does NOT auto-strip finalizers — investigate the cluster manually before re-running.
-
-## CephBlockPool (Rook)
-
-`pkg/kubernetes/cephblockpool.go`
-
-- `CreateCephBlockPool(ctx, kubeconfig, cfg)` — Creates or updates a Rook `CephBlockPool` from `CephBlockPoolConfig` (replicated with optional `requireSafeReplicaSize` override, or erasure-coded with `dataChunks`/`codingChunks`; `failureDomain`). **Fail-fast** when the existing CR has `deletionTimestamp != nil`.
-- `WaitForCephBlockPoolReady(ctx, kubeconfig, namespace, name, timeout)` — Polls until `status.phase == "Ready"`. Each Get is bounded by `PollGetTimeout` (30s) and consecutive Get failures emit WARN, so a dropped SSH tunnel surfaces in seconds instead of after the readyTimeout. Fail-fast on `deletionTimestamp != nil`.
-- `DeleteCephBlockPool(ctx, kubeconfig, namespace, name)` — Fire-and-forget delete; NotFound is treated as success. Pair with `WaitForCephBlockPoolGone` to make sure the parent CephCluster's deletion isn't blocked by `ObjectHasDependents`.
-- `WaitForCephBlockPoolGone(ctx, kubeconfig, namespace, name, timeout)` — Polls until the CR is GC'd (default `CephBlockPoolGoneTimeout` = 5m). Logs progress periodically.
-
 ## CephFilesystem (Rook)
 
 `pkg/kubernetes/cephfilesystem.go`
@@ -303,26 +276,33 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `WaitForCephFilesystemGone(ctx, kubeconfig, namespace, name, timeout)` — Polls until the CR is GC'd (default `CephFilesystemGoneTimeout` = 5m). Logs progress periodically.
 - `CephFSDataPoolFullName(fsName, dataPoolName)` — Returns the full Ceph pool name (`<fsName>-<dataPoolName>`) that should be passed to `CephStorageClass.spec.cephFS.pool`.
 
-## CephClusterConnection / CephClusterAuthentication (csi-ceph)
+## ElasticCluster / ElasticStorageClass (sds-elastic)
 
-`pkg/kubernetes/cephclusterconnection.go`
+`pkg/kubernetes/elasticcluster.go`, `pkg/kubernetes/elasticstorageclass.go`
 
-- `CreateCephClusterAuthentication(ctx, kubeconfig, cfg)` — Creates or updates a `CephClusterAuthentication` CR (`userID` + `userKey`) used by csi-ceph to log in to Ceph. **Fail-fast** when the existing CR has `deletionTimestamp != nil`.
-- `DeleteCephClusterAuthentication(ctx, kubeconfig, name)` — Fire-and-forget delete; NotFound is treated as success.
-- `WaitForCephClusterAuthenticationGone(ctx, kubeconfig, name, timeout)` — Polls until the CR is GC'd (default `CephClusterAuthenticationGoneTimeout` = 1m).
-- `CreateCephClusterConnection(ctx, kubeconfig, cfg)` — Creates or updates a `CephClusterConnection` CR (`clusterID == fsid`, `monitors`, `userID`, `userKey`). `clusterID` is immutable: existing-resource updates leave it unchanged and only sync monitors/user. **Fail-fast** when the existing CR has `deletionTimestamp != nil`.
-- `DeleteCephClusterConnection(ctx, kubeconfig, name)` — Fire-and-forget delete; NotFound is treated as success.
-- `WaitForCephClusterConnectionGone(ctx, kubeconfig, name, timeout)` — Polls until the CR is GC'd (default `CephClusterConnectionGoneTimeout` = 1m).
-- `WaitForCephClusterConnectionCreated(ctx, kubeconfig, name, timeout)` — Polls until csi-ceph reports `status.phase == "Created"` (credentials + monitors validated against the live Ceph cluster).
+Low-level helpers over the cluster-scoped `storage.deckhouse.io/v1alpha1` `ElasticCluster` (`ec`) and `ElasticStorageClass` (`esc`) CRs. Both are addressed as `unstructured` via the dynamic client, so storage-e2e takes no build dependency on the sds-elastic module. Condition types and teardown reasons are mirrored as plain-string constants (`ElasticClusterCondition*`, `ElasticClusterReason*`, `ElasticStorageClassCondition*`, `ElasticStorageClassReason*`) — keep in sync with `sds-elastic/api/v1alpha1`.
 
-## CephStorageClass (csi-ceph)
+- `CreateElasticCluster(ctx, kubeconfig, params)` — Creates or updates an `ElasticCluster` from `ElasticClusterParams` (name + `nodeSelector` / `blockDeviceSelector` matchLabels + optional `network.{public,cluster}`). Idempotent; **fail-fast** on a Terminating existing CR.
+- `WaitForElasticClusterCondition(ctx, kubeconfig, name, condType, wantStatus, timeout)` — Blocks until the EC has the named status condition at the wanted status. Refuses to wait on a Terminating object.
+- `WaitForElasticClusterReady(ctx, kubeconfig, name, timeout)` — Convenience: waits for `Ready=True`.
+- `GetElasticClusterCondition(ctx, kubeconfig, name, condType)` — Single GET returning `(status, reason, message, found)`; wrap in a Gomega `Eventually`/`Consistently` to assert teardown-guard reasons on a Terminating CR.
+- `GetElasticClusterCephTopology(ctx, kubeconfig, name)` — Reads `status.cephTopology` (effective mon/mgr counts + promotion reason). `found` is false until the controller records a topology.
+- `DeleteElasticCluster(ctx, kubeconfig, name)` / `WaitForElasticClusterGone(ctx, kubeconfig, name, timeout)` — Fire-and-forget delete + GC wait (default `ElasticClusterGoneTimeout` = 15m).
+- `CreateElasticStorageClass(ctx, kubeconfig, params)` — Creates or updates an `ElasticStorageClass` from `ElasticStorageClassParams` (`clusterRef`, `type` RBD/CephFS, `replication`). Idempotent; fail-fast on Terminating.
+- `WaitForElasticStorageClassCondition` / `WaitForElasticStorageClassReady` / `GetElasticStorageClassCondition` — Same shape as the EC helpers.
+- `AnnotateElasticStorageClassForceDeletion(ctx, kubeconfig, name)` — Sets `sds-elastic.deckhouse.io/force-deletion=true`, authorising the destructive purge of a non-empty RBD pool; never bypasses the bound-PV guard.
+- `DeleteElasticStorageClass(ctx, kubeconfig, name)` / `WaitForElasticStorageClassGone(ctx, kubeconfig, name, timeout)` — Fire-and-forget delete + GC wait (default `ElasticStorageClassGoneTimeout` = 10m).
 
-`pkg/kubernetes/cephstorageclass.go`
+## Rook verifiers (sds-elastic renamed group)
 
-- `CreateCephStorageClass(ctx, kubeconfig, cfg)` — Creates or updates a csi-ceph `CephStorageClass` CR (RBD by default; CephFS when `Type == "CephFS"` and `CephFSName` / `CephFSPool` are set). The csi-ceph controller provisions a corresponding core `storage.k8s.io/v1 StorageClass` as a side effect. **Fail-fast** when the existing CR has `deletionTimestamp != nil`.
-- `DeleteCephStorageClass(ctx, kubeconfig, name)` — Fire-and-forget delete; the controller removes the backing StorageClass.
-- `WaitForCephStorageClassGone(ctx, kubeconfig, name, timeout)` — Polls until the CR is GC'd (default `CephStorageClassGoneTimeout` = 1m).
-- `WaitForCephStorageClassCreated(ctx, kubeconfig, name, timeout)` — Polls until `status.phase == "Created"`.
+`pkg/kubernetes/elasticrook.go`
+
+The sds-elastic module ships a vendored Rook operator whose API group is renamed from upstream `ceph.rook.io` to `internal.sdselastic.deckhouse.io`. These helpers verify the Rook resources the EC controller created and that no upstream group leaked.
+
+- `WaitForElasticRookCephClusterReady(ctx, kubeconfig, namespace, name, timeout)` — Blocks until the renamed-group `CephCluster` reports `state=Created` (or `phase=Ready`).
+- `WaitForElasticRookCephBlockPoolReady` / `WaitForElasticRookCephFilesystemReady` — Block until the renamed-group pool/filesystem reports `status.phase=Ready`.
+- `ListElasticRookCephClusterNames(ctx, kubeconfig, namespace)` — Names of all renamed-group `CephCluster`s in the namespace.
+- `ServerHasAPIGroup(ctx, kubeconfig, group)` — Discovery check; used to assert the upstream `ceph.rook.io` group is absent on a cluster running sds-elastic.
 
 ## Default StorageClass (Testkit)
 
@@ -331,19 +311,17 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - `CreateDefaultStorageClass(ctx, kubeconfig, cfg)` — High-level helper: discovers nodes, enables sds-node-configurator/sds-local-volume modules, labels nodes, optionally attaches VirtualDisks, creates LVMVolumeGroups (Thick or Thin with thin pool), creates LocalStorageClass, waits for StorageClass. Configured via `DefaultStorageClassConfig`.
 - `EnsureDefaultStorageClass(ctx, kubeconfig, cfg)` — Idempotent wrapper around `CreateDefaultStorageClass`. Checks if StorageClass already exists, skips creation if so, then sets it as the cluster default via "global" ModuleConfig.
 
-## Ceph StorageClass (Testkit)
+## Elastic (Testkit)
 
-`pkg/testkit/ceph.go`
+`pkg/testkit/elastic.go`
 
-- `EnsureCephStorageClass(ctx, kubeconfig, cfg)` — High-level end-to-end helper that turns an empty test cluster into one with a working csi-ceph `StorageClass`. Steps: (1) enable `sds-node-configurator`, `sds-elastic`, `csi-ceph` modules and wait Ready; (2) optionally call `EnsureDefaultStorageClass` to auto-provision a sds-local-volume SC for OSDs when `OSDStorageClass` is empty; (3) seed `rook-config-override` with `GlobalCephConfigOverrides` (e.g. `ms_crc_data=false`); (4) create Rook `CephCluster` and wait Created; (5) create the backing pool primitive — `CephBlockPool` (when `Type == "RBD"`, default) or `CephFilesystem` (when `Type == "CephFS"`) — and wait Ready; (6) read fsid/monitors/admin-key from Rook-managed secrets; (7) wire csi-ceph by creating `CephClusterAuthentication` + `CephClusterConnection`; (8) create the matching `CephStorageClass` (RBD pool or `<fsName>-<dataPoolName>` for CephFS) and wait for the backing core StorageClass. Idempotent; returns the resulting StorageClass name.
-- `EnsureDefaultCephStorageClass(ctx, kubeconfig, cfg)` — `EnsureCephStorageClass` + `SetGlobalDefaultStorageClass` so new PVCs without an explicit `storageClassName` use the provisioned Ceph (RBD or CephFS) class.
-- `TeardownCephStorageClass(ctx, kubeconfig, cfg)` — Reverse of `EnsureCephStorageClass`. After every Delete it now waits for the CR to be fully GC'd via the matching `WaitForXxxGone` helper. Order is: `CephStorageClass` → `CephClusterConnection` → `CephClusterAuthentication` → (`CephBlockPool` or `CephFilesystem` per `cfg.Type`) → `CephCluster` (unless `SkipClusterTeardown`) → `rook-config-override` ConfigMap. Without those waits the parent `CephCluster` would be deleted before its dependents are gone, Rook would record `DeletionIsBlocked / ObjectHasDependents`, and the next test run would either find a stuck Terminating CR or hang in `WaitForCephClusterReady`. Fail-fast on a Wait*Gone timeout: errors are aggregated and returned, no auto-strip of finalizers — investigate the cluster manually before re-running. NotFound is still treated as success; subsequent deletions are still attempted on partial failures.
+High-level helpers that drive the sds-elastic stack end-to-end. They assume the modules (`sds-node-configurator`, `csi-ceph`, `sds-elastic`) are already enabled on the cluster (e.g. via the suite's `cluster_config.yml`); module enablement is intentionally out of scope here. Type/replication enums are re-exported (`ElasticStorageClassType*`, `ElasticReplication*`).
 
-## Ceph Cluster (Testkit) — no csi-ceph wiring
-
-`pkg/testkit/ceph_cluster.go`
-
-- `EnsureCephCluster(ctx, kubeconfig, cfg)` — "Stop-before-csi-ceph" variant of `EnsureCephStorageClass`: brings up a Rook-managed Ceph cluster + CephBlockPool via sds-elastic alone. Steps: (1) enable `sds-node-configurator` + `sds-elastic` (does **not** enable `csi-ceph`); (2) resolve/provision OSD backing StorageClass (reuses `EnsureDefaultStorageClass`); (3) seed `rook-config-override` with `GlobalCephConfigOverrides`; (4) create Rook `CephCluster` and wait Created; (5) create `CephBlockPool` and wait Ready. Does not create `CephClusterConnection`/`CephClusterAuthentication`/`CephStorageClass`. Useful when tests need a live Ceph backend to talk to directly (e.g. from within csi-ceph's own e2e) without the testkit preselecting a csi-ceph-backed StorageClass. Idempotent; returns the pool name.
+- `EnsureElasticOSDBlockDevices(ctx, kubeconfig, cfg)` — Prepares raw disks for OSD adoption: resolves storage nodes (explicit list or all workers), labels them, waits for `>= MinBlockDevices` consumable `BlockDevice`s to surface on them, then labels those BDs. Returns the labelled BD names. Node/BD label key/value default to the `sds-elastic-e2e.storage.deckhouse.io/*` constants and must match the EC selectors.
+- `EnsureElasticCluster(ctx, kubeconfig, cfg)` — Creates (or reuses) an `ElasticCluster` with the given selectors and waits until `Ready` (default 25m). Returns the EC name.
+- `EnsureElasticStorageClass(ctx, kubeconfig, cfg)` — Creates (or reuses) an `ElasticStorageClass`, waits until `Ready` (default 10m), and confirms the 1:1-named core StorageClass exists. Returns the StorageClass name.
+- `TeardownElasticStorageClass(ctx, kubeconfig, name, force, timeout)` — Optionally sets the force-deletion annotation, deletes the ESC, and waits until it is gone. Force authorises an RBD pool purge but never bypasses the bound-PV guard.
+- `TeardownElasticCluster(ctx, kubeconfig, name, timeout)` — Deletes the EC and waits until the controller finalizer (Rook CephCluster + csi-ceph teardown) completes. Tear down referencing ESCs first, or the EC sticks on the non-bypassable `StorageClassesExist` guard.
 
 ## Stress Tests (Testkit)
 
