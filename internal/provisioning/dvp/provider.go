@@ -102,6 +102,17 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	}
 	p.logger.Info("virtualization module is ready")
 
+	p.logger.Info("ensuring test namespace exists",
+		"namespace", p.dvpConf.Namespace,
+		"timeout", config.NamespaceTimeout,
+	)
+	nsCtx, cancel := context.WithTimeout(ctx, config.NamespaceTimeout)
+	defer cancel()
+	if _, err := kubernetes.CreateNamespaceIfNotExists(nsCtx, kubeconfig, p.dvpConf.Namespace); err != nil {
+		return fmt.Errorf("ensure namespace %q: %w", p.dvpConf.Namespace, err)
+	}
+	p.logger.Info("test namespace is ready", "namespace", p.dvpConf.Namespace)
+
 	return nil
 }
 

@@ -32,6 +32,10 @@ type Config struct {
 	SSHJumpKeyPath string `env:"E2E_DVP_BASE_CLUSTER_SSH_JUMP_KEY_PATH"`
 
 	KubeConfigPath string `env:"E2E_DVP_BASE_CLUSTER_KUBE_CONFIG_PATH,required"`
+
+	// Namespace is the base-cluster namespace where DVP virtual machines for the
+	// test cluster are provisioned. It is created during Bootstrap if absent.
+	Namespace string `env:"E2E_DVP_BASE_CLUSTER_NAMESPACE" envDefault:"e2e-test-cluster"`
 }
 
 func (c *Config) SetPassphrase() error {
