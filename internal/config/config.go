@@ -54,7 +54,7 @@ const (
 	BootstrapUploadTimeout   = 5 * time.Minute  // Timeout for uploading bootstrap files
 
 	// Kubernetes operations
-	ModuleCheckTimeout   = 10 * time.Second // Timeout for checking module status
+	ModuleCheckTimeout   = 60 * time.Second // Timeout for checking module status
 	NamespaceTimeout     = 30 * time.Second // Timeout for creating namespace
 	NodeGroupTimeout     = 2 * time.Minute  // Timeout for creating NodeGroup (API can be slow right after bootstrap)
 	SecretsWaitTimeout   = 2 * time.Minute  // Timeout for waiting for bootstrap secrets to appear

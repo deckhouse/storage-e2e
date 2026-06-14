@@ -17,7 +17,6 @@ limitations under the License.
 package dvp
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -27,22 +26,39 @@ import (
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-
-	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 )
 
-const kubeconfigReadCommand = "sudo -n /bin/cat /etc/kubernetes/super-admin.conf 2>/dev/null " +
-	"|| sudo -n /bin/cat /etc/kubernetes/admin.conf"
-
-func fetchKubeconfig(ctx context.Context, sshClient ssh.SSHClient) ([]byte, error) {
-	stdout, stderr, err := sshClient.ExecCapture(ctx, kubeconfigReadCommand)
+// readKubeconfig loads the user-supplied base cluster kubeconfig from disk.
+// The path may contain ~ and ${VAR} placeholders, which are expanded here.
+func readKubeconfig(path string) ([]byte, error) {
+	resolved, err := expandKubeconfigPath(path)
 	if err != nil {
-		return nil, fmt.Errorf("%w (remote stderr: %s)", err, strings.TrimSpace(stderr))
+		return nil, err
 	}
-	if strings.TrimSpace(stdout) == "" {
-		return nil, fmt.Errorf("empty kubeconfig output (remote stderr: %s)", strings.TrimSpace(stderr))
+	raw, err := os.ReadFile(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("read kubeconfig %q: %w", resolved, err)
 	}
-	return []byte(stdout), nil
+	if strings.TrimSpace(string(raw)) == "" {
+		return nil, fmt.Errorf("kubeconfig %q is empty", resolved)
+	}
+	return raw, nil
+}
+
+// expandKubeconfigPath resolves ${VAR} and a leading ~ in a kubeconfig path.
+func expandKubeconfigPath(path string) (string, error) {
+	expanded := os.ExpandEnv(path)
+	if !strings.HasPrefix(expanded, "~") {
+		return expanded, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory for %q: %w", path, err)
+	}
+	if expanded == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, strings.TrimPrefix(expanded, "~/")), nil
 }
 
 func buildKubeconfig(raw []byte, server, path string) (*rest.Config, error) {

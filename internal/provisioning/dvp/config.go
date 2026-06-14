@@ -16,14 +16,30 @@ limitations under the License.
 
 package dvp
 
-type Config struct {
-	SSHUser    string `env:"E2E_DVP_SSH_USER,required"`
-	SSHHost    string `env:"E2E_DVP_SSH_HOST,required"`
-	SSHKeyPath string `env:"E2E_DVP_SSH_KEY_PATH,required"`
+import (
+	"fmt"
+	"os"
+)
 
-	SSHJumpHost    string `env:"E2E_DVP_SSH_JUMP_HOST"`
-	SSHJumpUser    string `env:"E2E_DVP_SSH_JUMP_USER"`
-	SSHJumpKeyPath string `env:"E2E_DVP_SSH_JUMP_KEY_PATH"`
+type Config struct {
+	SSHUser       string `env:"E2E_DVP_BASE_CLUSTER_SSH_USER,required"`
+	SSHHost       string `env:"E2E_DVP_BASE_CLUSTER_SSH_HOST,required"`
+	SSHKeyPath    string `env:"E2E_DVP_BASE_CLUSTER_SSH_KEY_PATH,required"`
+	SSHPassphrase string `env:"E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE"`
+
+	SSHJumpHost    string `env:"E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST"`
+	SSHJumpUser    string `env:"E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER"`
+	SSHJumpKeyPath string `env:"E2E_DVP_BASE_CLUSTER_SSH_JUMP_KEY_PATH"`
+
+	KubeConfigPath string `env:"E2E_DVP_BASE_CLUSTER_KUBE_CONFIG_PATH,required"`
+}
+
+func (c *Config) SetPassphrase() error {
+	err := os.Setenv("SSH_PASSPHRASE", c.SSHPassphrase)
+	if err != nil {
+		return fmt.Errorf("failed to set SSH_PASSPHRASE: %w", err)
+	}
+	return nil
 }
 
 // baseEndpoint builds the SSH endpoint for the DVP base cluster control-plane,

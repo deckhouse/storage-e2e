@@ -67,10 +67,10 @@ type clusterConnection struct {
 }
 
 // openClusterConnection connects to a (possibly closed) cluster over SSH,
-// reads its kubeconfig from the control-plane node, forwards the API server
-// through a local SSH tunnel, and returns a kubeconfig already pointing at that
-// tunnel. On any failure all partially-acquired resources are released.
-func openClusterConnection(ctx context.Context, ep sshEndpoint, kubeconfigDir string) (*clusterConnection, error) {
+// forwards the API server through a local SSH tunnel, loads the user-supplied
+// kubeconfig from kubeconfigSrcPath, and returns a kubeconfig already pointing
+// at that tunnel. On any failure all partially-acquired resources are released.
+func openSSHTonnelToCluster(ctx context.Context, ep sshEndpoint, kubeconfigDir, kubeconfigSrcPath string) (*clusterConnection, error) {
 	sshClient, err := ep.dial()
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %s@%s: %w", ep.User, ep.Host, err)
@@ -86,10 +86,10 @@ func openClusterConnection(ctx context.Context, ep sshEndpoint, kubeconfigDir st
 		return nil, fmt.Errorf("establish API server tunnel: %w", err)
 	}
 
-	raw, err := fetchKubeconfig(ctx, sshClient)
+	raw, err := readKubeconfig(kubeconfigSrcPath)
 	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("fetch kubeconfig from %s@%s: %w", ep.User, ep.Host, err)
+		return nil, fmt.Errorf("load base cluster kubeconfig: %w", err)
 	}
 
 	path, err := kubeconfigFilePath(kubeconfigDir, ep.Host)

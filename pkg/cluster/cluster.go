@@ -43,7 +43,6 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/commander"
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/internal/logger"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
@@ -316,19 +315,14 @@ func CreateTestCluster(
 	logger.StepComplete(2, "Connected to base cluster successfully")
 
 	logger.Step(3, "Verifying virtualization module is Ready")
-	// Step 3: Verify virtualization module is Ready
-	moduleCtx, cancel := context.WithTimeout(ctx, config.ModuleCheckTimeout)
-	module, err := deckhouse.GetModule(moduleCtx, baseClusterResources.Kubeconfig, "virtualization")
-	cancel()
-	if err != nil {
+	// Step 3: Verify virtualization module is Ready.
+	// Poll until the module converges instead of taking a single snapshot —
+	// the one-shot phase check was flaky because the module can briefly report
+	// a non-Ready phase right after we connect to the base cluster.
+	if err := kubernetes.WaitForModuleReady(ctx, baseClusterResources.Kubeconfig, "virtualization", config.ModuleCheckTimeout); err != nil {
 		baseClusterResources.SSHClient.Close()
 		baseClusterResources.TunnelInfo.StopFunc()
-		return nil, fmt.Errorf("failed to get virtualization module: %w", err)
-	}
-	if module.Status.Phase != "Ready" {
-		baseClusterResources.SSHClient.Close()
-		baseClusterResources.TunnelInfo.StopFunc()
-		return nil, fmt.Errorf("virtualization module is not Ready (phase: %s)", module.Status.Phase)
+		return nil, fmt.Errorf("virtualization module is not Ready: %w", err)
 	}
 	logger.StepComplete(3, "Virtualization module is Ready")
 

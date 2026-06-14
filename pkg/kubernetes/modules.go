@@ -25,6 +25,7 @@ import (
 
 	"k8s.io/client-go/rest"
 
+	deckhousev1alpha1 "github.com/deckhouse/deckhouse/deckhouse-controller/pkg/apis/deckhouse.io/v1alpha1"
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
@@ -571,37 +572,86 @@ func WaitForModulesReady(ctx context.Context, kubeconfig *rest.Config, clusterDe
 	return nil
 }
 
-// WaitForModuleReady waits for a module to reach the Ready phase
-// It continues waiting even if the module is temporarily in Error phase, as modules can recover.
-// Only fails if the timeout is exceeded and the module is still not Ready.
+// moduleReadyPollInterval is how often WaitForModuleReady re-reads the Module
+// status while waiting for it to converge to the Ready phase.
+const moduleReadyPollInterval = 2 * time.Second
+
+// WaitForModuleReady polls a Deckhouse Module until it reaches the Ready phase.
+//
+// Reliability notes (this replaces an earlier one-shot phase check that was
+// flaky during cluster creation):
+//   - The whole wait is bounded by a derived context deadline, so persistent
+//     GetModule failures (dropped SSH tunnel, API hiccup) also time out instead
+//     of hanging until the parent context is cancelled.
+//   - Transient GetModule errors and intermediate phases (Downloading,
+//     Installing, Reconciling, and even Error — modules can recover) are
+//     tolerated; only the timeout is terminal.
+//   - On timeout the error carries the last observed phase and the IsReady
+//     condition message so a stuck module is diagnosable from logs alone.
 func WaitForModuleReady(ctx context.Context, kubeconfig *rest.Config, moduleName string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	ticker := time.NewTicker(2 * time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var lastPhase, lastCondition string
+
+	// ready re-reads the module and reports whether it has converged, recording
+	// the latest phase/condition for diagnostics on timeout.
+	ready := func() bool {
+		module, err := deckhouse.GetModule(ctx, kubeconfig, moduleName)
+		if err != nil {
+			// Module may not be registered yet, or the API/tunnel had a
+			// transient failure. Keep waiting until the context deadline.
+			lastPhase = ""
+			logger.Debug("Waiting for module %s: not retrievable yet: %v", moduleName, err)
+			return false
+		}
+		lastPhase = module.Status.Phase
+		lastCondition = moduleReadyConditionMessage(module)
+		return module.Status.Phase == deckhousev1alpha1.ModulePhaseReady
+	}
+
+	// Check once up front so an already-Ready module returns without paying the
+	// first poll interval.
+	if ready() {
+		return nil
+	}
+
+	ticker := time.NewTicker(moduleReadyPollInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("timeout waiting for module %s to become ready after %v (last phase %q%s): %w",
+				moduleName, timeout, lastPhase, moduleConditionSuffix(lastCondition), ctx.Err())
 		case <-ticker.C:
-			module, err := deckhouse.GetModule(ctx, kubeconfig, moduleName)
-			if err != nil {
-				// Module doesn't exist yet, continue waiting
-				continue
-			}
-
-			if module.Status.Phase == "Ready" {
+			if ready() {
 				return nil
-			}
-
-			// Check timeout only after checking the phase
-			// This ensures we wait the full timeout period even if module is in Error phase
-			if time.Now().After(deadline) {
-				if module.Status.Phase == "Error" {
-					return fmt.Errorf("timeout waiting for module %s to be ready: module is still in Error phase after %v", moduleName, timeout)
-				}
-				return fmt.Errorf("timeout waiting for module %s to be ready: module is in %s phase after %v", moduleName, module.Status.Phase, timeout)
 			}
 		}
 	}
+}
+
+// moduleReadyConditionMessage extracts a human-readable summary of the module's
+// IsReady condition for diagnostics. Returns "" when the condition is absent.
+func moduleReadyConditionMessage(module *deckhouse.Module) string {
+	for _, cond := range module.Status.Conditions {
+		if cond.Type != deckhousev1alpha1.ModuleConditionIsReady {
+			continue
+		}
+		if cond.Reason != "" || cond.Message != "" {
+			return fmt.Sprintf("IsReady=%s reason=%q message=%q", cond.Status, cond.Reason, cond.Message)
+		}
+		return fmt.Sprintf("IsReady=%s", cond.Status)
+	}
+	return ""
+}
+
+// moduleConditionSuffix formats a condition summary as a ", <summary>" suffix,
+// or "" when there is nothing to report.
+func moduleConditionSuffix(condition string) string {
+	if condition == "" {
+		return ""
+	}
+	return ", " + condition
 }

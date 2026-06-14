@@ -24,6 +24,7 @@ import (
 	"github.com/caarlos0/env/v11"
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
+	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
 
 // dvpProvider provisions clusters using the DVP (Deckhouse Virtualization
@@ -39,6 +40,10 @@ type dvpProvider struct {
 func NewDVPProvider(logger *slog.Logger, config *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {
 	dvpConf := &Config{}
 	if err := env.Parse(dvpConf); err != nil {
+		return nil, err
+	}
+	err := dvpConf.SetPassphrase()
+	if err != nil {
 		return nil, err
 	}
 
@@ -63,15 +68,12 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"workers", len(clusterDef.Workers),
 	)
 
-	// Step 2: connect to the (closed) DVP base cluster — open an SSH tunnel to
-	// its API server and load its kubeconfig. The connection lives only for the
-	// duration of Bootstrap and is closed on return; it is NOT shared with
-	// Remove, which runs in a separate process/CI job and opens its own.
 	p.logger.Info("connecting to DVP base cluster",
 		"host", p.dvpConf.SSHHost,
 		"jumpHost", p.dvpConf.SSHJumpHost,
+		"kubeconfigSource", p.dvpConf.KubeConfigPath,
 	)
-	conn, err := openClusterConnection(ctx, p.dvpConf.baseEndpoint(), config.E2ETempDir)
+	conn, err := openSSHTonnelToCluster(ctx, p.dvpConf.baseEndpoint(), config.E2ETempDir, p.dvpConf.KubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("connect to DVP base cluster: %w", err)
 	}
@@ -84,6 +86,14 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"kubeconfig", conn.KubeconfigPath,
 		"apiServer", conn.Kubeconfig.Host,
 	)
+
+	p.logger.Info("waiting for virtualization module to become ready",
+		"timeout", config.ModuleCheckTimeout,
+	)
+	if err := kubernetes.WaitForModuleReady(ctx, conn.Kubeconfig, "virtualization", config.ModuleCheckTimeout); err != nil {
+		return fmt.Errorf("virtualization module not ready: %w", err)
+	}
+	p.logger.Info("virtualization module is ready")
 
 	return nil
 }
