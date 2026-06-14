@@ -14,12 +14,15 @@
  * limitations under the License.
  */
 
-package clusterprovider
+package registry
 
 import (
 	"fmt"
 	"log/slog"
 	"sync"
+
+	"github.com/deckhouse/storage-e2e/internal/provisioning/dvp"
+	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
 
 // DefaultRegistry is the package-level registry strategies self-register into.
@@ -29,7 +32,7 @@ var DefaultRegistry = NewRegistry()
 // lazily — only for the strategy selected at runtime — so unselected strategies
 // never read their env. Validate on the resulting Provider stays a pure check
 // (no loading, no I/O).
-type Constructor func(logger *slog.Logger, config *ClusterConfig) (Provider, error)
+type Constructor func(logger *slog.Logger, config *clusterprovider.ClusterConfig) (clusterprovider.Provider, error)
 
 // Registry maps strategy names to their Constructor.
 type Registry struct {
@@ -37,9 +40,11 @@ type Registry struct {
 	constructors map[string]Constructor
 }
 
-// NewRegistry returns an empty Registry.
+// NewRegistry returns a Registry.
 func NewRegistry() *Registry {
-	return &Registry{constructors: make(map[string]Constructor)}
+	return &Registry{constructors: map[string]Constructor{
+		clusterprovider.ModeDVP: dvp.NewDVPProvider,
+	}}
 }
 
 // Register adds a Constructor under name. A later registration with the same
@@ -51,7 +56,7 @@ func (r *Registry) Register(name string, c Constructor) {
 }
 
 // Get returns the Constructor registered under name.
-func (r *Registry) Get(name ProviderMode) (Constructor, error) {
+func (r *Registry) Get(name clusterprovider.ProviderMode) (Constructor, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.constructors[name.String()]

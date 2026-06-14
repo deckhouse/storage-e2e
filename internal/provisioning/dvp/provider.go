@@ -26,10 +26,6 @@ import (
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
 
-func init() {
-	clusterprovider.DefaultRegistry.Register(clusterprovider.ModeDVP, NewDVPProvider)
-}
-
 // dvpProvider provisions clusters using the DVP (Deckhouse Virtualization
 // Platform) strategy.
 type dvpProvider struct {
@@ -38,8 +34,8 @@ type dvpProvider struct {
 	logger  *slog.Logger
 }
 
-// NewDVPProvider builds a dvpProvider, loading the DVP-specific env. Registered
-// as the dvp strategy's Constructor.
+// NewDVPProvider builds a dvpProvider, loading the DVP-specific env. It is wired
+// into the provider Registry by internal/provisioning/register.
 func NewDVPProvider(logger *slog.Logger, config *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {
 	dvpConf := &Config{}
 	if err := env.Parse(dvpConf); err != nil {
@@ -65,6 +61,28 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"path", p.cfg.ClusterBootstrapConfigPath,
 		"masters", len(clusterDef.Masters),
 		"workers", len(clusterDef.Workers),
+	)
+
+	// Step 2: connect to the (closed) DVP base cluster — open an SSH tunnel to
+	// its API server and load its kubeconfig. The connection lives only for the
+	// duration of Bootstrap and is closed on return; it is NOT shared with
+	// Remove, which runs in a separate process/CI job and opens its own.
+	p.logger.Info("connecting to DVP base cluster",
+		"host", p.dvpConf.SSHHost,
+		"jumpHost", p.dvpConf.SSHJumpHost,
+	)
+	conn, err := openClusterConnection(ctx, p.dvpConf.baseEndpoint(), config.E2ETempDir)
+	if err != nil {
+		return fmt.Errorf("connect to DVP base cluster: %w", err)
+	}
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			p.logger.Warn("close DVP base cluster connection", "err", cerr)
+		}
+	}()
+	p.logger.Info("connected to DVP base cluster",
+		"kubeconfig", conn.KubeconfigPath,
+		"apiServer", conn.Kubeconfig.Host,
 	)
 
 	return nil

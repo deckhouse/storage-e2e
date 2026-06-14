@@ -143,11 +143,22 @@ func StartTunnel(ctx context.Context, sshClient *ssh.Client, localPort, remotePo
 	return stop, nil
 }
 
-// EstablishSSHTunnel establishes an SSH tunnel with port forwarding from remote node to local port on the client
-// It automatically finds a free local port to avoid conflicts when running parallel tests.
-// Uses retry logic for transient connection errors.
-// Returns the tunnel info, local port and error if the tunnel fails to start
+// EstablishSSHTunnel establishes an SSH tunnel with port forwarding from remote node to local port on the client.
+//
+// Deprecated: use SSHClient.OpenTunnel instead. The tunnel logic now lives on
+// the client so every SSH consumer gets free-port allocation and retry without
+// calling a free function. This wrapper is kept for backward compatibility and
+// simply delegates to sshClient.OpenTunnel.
 func EstablishSSHTunnel(ctx context.Context, sshClient SSHClient, remotePort string) (*TunnelInfo, error) {
+	return sshClient.OpenTunnel(ctx, remotePort)
+}
+
+// openTunnel establishes an SSH tunnel with port forwarding from a remote node
+// to a local port on the client. It automatically finds a free local port to
+// avoid conflicts when running parallel tests and retries on transient
+// connection errors. It works with any SSHClient implementation, so both the
+// direct and jump-host clients delegate their OpenTunnel method here.
+func openTunnel(ctx context.Context, sshClient SSHClient, remotePort string) (*TunnelInfo, error) {
 	// Parse remote port to integer
 	remotePortInt, err := strconv.Atoi(remotePort)
 	if err != nil {

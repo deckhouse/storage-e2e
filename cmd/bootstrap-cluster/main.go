@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/deckhouse/storage-e2e/internal/logger"
+	"github.com/deckhouse/storage-e2e/pkg/clusterprovider/registry"
+
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
 
@@ -18,7 +20,7 @@ func main() {
 		log.Fatal("failed to initialize config - ", err)
 	}
 
-	newProvider, registryGetErr := clusterprovider.DefaultRegistry.Get(cfg.ClusterProvider)
+	newProvider, registryGetErr := registry.DefaultRegistry.Get(cfg.ClusterProvider)
 	if registryGetErr != nil {
 		log.Fatal("failed to get provider", registryGetErr)
 	}
