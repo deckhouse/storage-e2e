@@ -21,8 +21,6 @@ import (
 	"errors"
 	"fmt"
 
-	"k8s.io/client-go/rest"
-
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 )
 
@@ -51,26 +49,19 @@ func (e sshEndpoint) dial() (ssh.SSHClient, error) {
 	return ssh.NewClient(e.User, e.Host, e.KeyPath)
 }
 
-// clusterConnection is a live SSH tunnel to a cluster's API server together
-// with the kubeconfig that targets it through that tunnel. Close releases both
-// the tunnel and the SSH connection.
+// clusterConnection owns a live SSH tunnel to a cluster's API server and the
+// underlying SSH connection. Close releases both. It does not own the derived
+// kubeconfig; see loadKubeconfigViaTunnel for that.
 type clusterConnection struct {
 	ssh    ssh.SSHClient
 	tunnel *ssh.TunnelInfo
-
-	// Kubeconfig is a client-go config whose server already points at the local
-	// end of the tunnel; ready to use once openClusterConnection returns.
-	Kubeconfig *rest.Config
-	// KubeconfigPath is the on-disk kubeconfig (server rewritten to the local
-	// tunnel port, mode 0600) for tooling such as kubectl/dhctl.
-	KubeconfigPath string
 }
 
-// openClusterConnection connects to a (possibly closed) cluster over SSH,
-// forwards the API server through a local SSH tunnel, loads the user-supplied
-// kubeconfig from kubeconfigSrcPath, and returns a kubeconfig already pointing
-// at that tunnel. On any failure all partially-acquired resources are released.
-func openSSHTonnelToCluster(ctx context.Context, ep sshEndpoint, kubeconfigDir, kubeconfigSrcPath string) (*clusterConnection, error) {
+// openTunnel connects to a (possibly closed) cluster over SSH and forwards its
+// API server through a local SSH tunnel. The returned connection owns the SSH
+// client and the tunnel; the caller must Close it (e.g. via defer) once done.
+// On any failure all partially-acquired resources are released.
+func openTunnel(ctx context.Context, ep sshEndpoint) (*clusterConnection, error) {
 	sshClient, err := ep.dial()
 	if err != nil {
 		return nil, fmt.Errorf("ssh dial %s@%s: %w", ep.User, ep.Host, err)
@@ -85,26 +76,6 @@ func openSSHTonnelToCluster(ctx context.Context, ep sshEndpoint, kubeconfigDir, 
 		_ = conn.Close()
 		return nil, fmt.Errorf("establish API server tunnel: %w", err)
 	}
-
-	raw, err := readKubeconfig(kubeconfigSrcPath)
-	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("load base cluster kubeconfig: %w", err)
-	}
-
-	path, err := kubeconfigFilePath(kubeconfigDir, ep.Host)
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-
-	server := fmt.Sprintf("https://127.0.0.1:%d", conn.tunnel.LocalPort)
-	conn.Kubeconfig, err = buildKubeconfig(raw, server, path)
-	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("build kubeconfig: %w", err)
-	}
-	conn.KubeconfigPath = path
 
 	return conn, nil
 }

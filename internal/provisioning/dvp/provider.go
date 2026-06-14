@@ -73,24 +73,31 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"jumpHost", p.dvpConf.SSHJumpHost,
 		"kubeconfigSource", p.dvpConf.KubeConfigPath,
 	)
-	conn, err := openSSHTonnelToCluster(ctx, p.dvpConf.baseEndpoint(), config.E2ETempDir, p.dvpConf.KubeConfigPath)
+	conn, err := openTunnel(ctx, p.dvpConf.baseEndpoint())
 	if err != nil {
-		return fmt.Errorf("connect to DVP base cluster: %w", err)
+		return fmt.Errorf("open tunnel to DVP base cluster: %w", err)
 	}
 	defer func() {
 		if cerr := conn.Close(); cerr != nil {
 			p.logger.Warn("close DVP base cluster connection", "err", cerr)
 		}
 	}()
+
+	kubeconfig, kubeconfigPath, err := loadKubeconfigViaTunnel(
+		conn.tunnel.LocalPort, config.E2ETempDir, p.dvpConf.SSHHost, p.dvpConf.KubeConfigPath,
+	)
+	if err != nil {
+		return fmt.Errorf("build kubeconfig for DVP base cluster: %w", err)
+	}
 	p.logger.Info("connected to DVP base cluster",
-		"kubeconfig", conn.KubeconfigPath,
-		"apiServer", conn.Kubeconfig.Host,
+		"kubeconfig", kubeconfigPath,
+		"apiServer", kubeconfig.Host,
 	)
 
 	p.logger.Info("waiting for virtualization module to become ready",
 		"timeout", config.ModuleCheckTimeout,
 	)
-	if err := kubernetes.WaitForModuleReady(ctx, conn.Kubeconfig, "virtualization", config.ModuleCheckTimeout); err != nil {
+	if err := kubernetes.WaitForModuleReady(ctx, kubeconfig, "virtualization", config.ModuleCheckTimeout); err != nil {
 		return fmt.Errorf("virtualization module not ready: %w", err)
 	}
 	p.logger.Info("virtualization module is ready")

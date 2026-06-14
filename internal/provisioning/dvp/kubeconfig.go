@@ -61,6 +61,30 @@ func expandKubeconfigPath(path string) (string, error) {
 	return filepath.Join(home, strings.TrimPrefix(expanded, "~/")), nil
 }
 
+// loadKubeconfigViaTunnel reads the user-supplied base cluster kubeconfig from
+// kubeconfigSrcPath, rewrites its API server to the local end of an SSH tunnel
+// (127.0.0.1:localPort), writes the result under kubeconfigDir (named after
+// host), and returns the ready-to-use client config along with the on-disk
+// path. It owns no live resources, so there is nothing to release.
+func loadKubeconfigViaTunnel(localPort int, kubeconfigDir, host, kubeconfigSrcPath string) (*rest.Config, string, error) {
+	raw, err := readKubeconfig(kubeconfigSrcPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("load base cluster kubeconfig: %w", err)
+	}
+
+	path, err := kubeconfigFilePath(kubeconfigDir, host)
+	if err != nil {
+		return nil, "", err
+	}
+
+	server := fmt.Sprintf("https://127.0.0.1:%d", localPort)
+	cfg, err := buildKubeconfig(raw, server, path)
+	if err != nil {
+		return nil, "", fmt.Errorf("build kubeconfig: %w", err)
+	}
+	return cfg, path, nil
+}
+
 func buildKubeconfig(raw []byte, server, path string) (*rest.Config, error) {
 	apiCfg, err := clientcmd.Load(raw)
 	if err != nil {
