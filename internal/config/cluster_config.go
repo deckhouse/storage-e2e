@@ -23,28 +23,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// LoadClusterDefinition reads, parses, and validates a cluster topology
-// definition from the YAML file at the given path.
-//
-// The path is taken as-is: callers are expected to provide an explicit
-// (absolute or cwd-relative) path rather than relying on the loader to guess
-// the location of the file.
 func LoadClusterDefinition(path string) (*ClusterDefinition, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read cluster config %q: %w", path, err)
 	}
 
-	// ClusterDefinition has a custom UnmarshalYAML that accepts both a
-	// top-level "clusterDefinition:" key and a bare document.
 	var def ClusterDefinition
 	if err := yaml.Unmarshal(data, &def); err != nil {
 		return nil, fmt.Errorf("parse cluster config %q: %w", path, err)
 	}
 
-	// Resolve ${NAME} references in modulePullOverride from the environment
-	// before validation, so CI can pin per-build image tags without editing
-	// the YAML. Validation then only ever sees resolved, literal tags.
 	if err := ResolveModulePullOverrides(&def, os.LookupEnv); err != nil {
 		return nil, fmt.Errorf("resolve cluster config %q: %w", path, err)
 	}
@@ -56,12 +45,6 @@ func LoadClusterDefinition(path string) (*ClusterDefinition, error) {
 	return &def, nil
 }
 
-// Validate checks that the cluster definition contains the minimum topology and
-// DKP parameters required to bootstrap a cluster.
-//
-// It does not inspect modulePullOverride: ${NAME} references are resolved
-// separately by ResolveModulePullOverrides at load time, so Validate stays a
-// pure, environment-independent check.
 func (c *ClusterDefinition) Validate() error {
 	if len(c.Masters) == 0 {
 		return fmt.Errorf("at least one master node is required")
