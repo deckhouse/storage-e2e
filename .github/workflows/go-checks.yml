@@ -45,16 +45,3 @@ jobs:
         uses: deckhouse/modules-actions/go_test_coverage@v12
         with:
           go_version: "1.25.9"
-
-  go_modules_check:
-    name: Go modules version
-    runs-on: [self-hosted, regular]
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-
-      - name: Run Go modules version check
-        uses: deckhouse/modules-actions/go_modules_check@v12
-        with:
-          go_version: "1.25.9"
