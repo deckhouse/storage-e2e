@@ -25,37 +25,27 @@ import (
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
 
-// DefaultRegistry is the package-level registry strategies self-register into.
 var DefaultRegistry = NewRegistry()
 
-// Constructor builds a Provider, loading its own strategy-specific env. It runs
-// lazily — only for the strategy selected at runtime — so unselected strategies
-// never read their env. Validate on the resulting Provider stays a pure check
-// (no loading, no I/O).
 type Constructor func(logger *slog.Logger, config *clusterprovider.ClusterConfig) (clusterprovider.Provider, error)
 
-// Registry maps strategy names to their Constructor.
 type Registry struct {
 	mu           sync.RWMutex
 	constructors map[string]Constructor
 }
 
-// NewRegistry returns a Registry.
 func NewRegistry() *Registry {
 	return &Registry{constructors: map[string]Constructor{
 		clusterprovider.ModeDVP: dvp.NewDVPProvider,
 	}}
 }
 
-// Register adds a Constructor under name. A later registration with the same
-// name overwrites the earlier one.
 func (r *Registry) Register(name string, c Constructor) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.constructors[name] = c
 }
 
-// Get returns the Constructor registered under name.
 func (r *Registry) Get(name clusterprovider.ProviderMode) (Constructor, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
