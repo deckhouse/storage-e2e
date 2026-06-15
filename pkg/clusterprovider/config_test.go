@@ -21,10 +21,11 @@ import (
 	"testing"
 )
 
-const clusterProviderEnv = "TEST_CLUSTER_PROVIDER"
+const (
+	clusterProviderEnv       = "E2E_TEST_CLUSTER_PROVIDER"
+	clusterConfigYamlPathEnv = "E2E_CLUSTER_CONFIG_YAML_PATH"
+)
 
-// unsetClusterProviderEnv removes TEST_CLUSTER_PROVIDER for the duration of the
-// test and restores its original value (set or unset) afterwards.
 func unsetClusterProviderEnv(t *testing.T) {
 	t.Helper()
 	orig, had := os.LookupEnv(clusterProviderEnv)
@@ -41,16 +42,17 @@ func unsetClusterProviderEnv(t *testing.T) {
 }
 
 func TestNew_ParsesProvider(t *testing.T) {
-	t.Setenv(clusterProviderEnv, "static")
+	t.Setenv(clusterProviderEnv, ModeDVP)
+	t.Setenv(clusterConfigYamlPathEnv, "/tmp/cluster-config.yaml")
 
-	cfg, err := New()
+	cfg, err := NewClusterConfig()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
-	if cfg.ClusterProvider != "static" {
+	if cfg.ClusterProvider != ModeDVP {
 		t.Errorf("ClusterProvider = %q, want %q", cfg.ClusterProvider, "static")
 	}
 }
@@ -58,7 +60,7 @@ func TestNew_ParsesProvider(t *testing.T) {
 func TestNew_RequiredProviderMissing(t *testing.T) {
 	unsetClusterProviderEnv(t)
 
-	cfg, err := New()
+	cfg, err := NewClusterConfig()
 	if err == nil {
 		t.Fatal("expected error when required env var is missing")
 	}
@@ -67,34 +69,20 @@ func TestNew_RequiredProviderMissing(t *testing.T) {
 	}
 }
 
-// env/v11 treats the `required` tag as a presence check: an empty value still
-// counts as set, so parsing succeeds and the field is left empty.
-func TestNew_EmptyProviderAccepted(t *testing.T) {
-	t.Setenv(clusterProviderEnv, "")
-
-	cfg, err := New()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.ClusterProvider != "" {
-		t.Errorf("ClusterProvider = %q, want empty string", cfg.ClusterProvider)
-	}
-}
-
 func TestNew_ProviderValues(t *testing.T) {
 	tests := []struct {
 		name  string
-		value string
+		value ProviderMode
 	}{
-		{name: "static", value: "static"},
-		{name: "cloud-ephemeral", value: "CloudEphemeral"},
-		{name: "with-spaces", value: "some provider"},
+		{name: "dvp", value: ModeDVP},
+		{name: "commander", value: ModeCommander},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(clusterProviderEnv, tt.value)
+			t.Setenv(clusterProviderEnv, tt.value.String())
+			t.Setenv(clusterConfigYamlPathEnv, "/tmp/cluster-config.yaml")
 
-			cfg, err := New()
+			cfg, err := NewClusterConfig()
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

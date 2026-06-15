@@ -25,7 +25,7 @@ type ClusterConfig struct {
 	ClusterBootstrapConfigPath string       `env:"E2E_CLUSTER_CONFIG_YAML_PATH,required"`
 }
 
-func New() (*ClusterConfig, error) {
+func NewClusterConfig() (*ClusterConfig, error) {
 	cfg := &ClusterConfig{}
 	parseErr := env.Parse(cfg)
 	if parseErr != nil {

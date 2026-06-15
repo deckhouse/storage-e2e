@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	cfg, err := clusterprovider.New()
+	cfg, err := clusterprovider.NewClusterConfig()
 	if err != nil {
 		log.Fatal("failed to initialize config - ", err)
 	}
