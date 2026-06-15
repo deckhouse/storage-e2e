@@ -149,6 +149,13 @@ func loadClusterConfigFromPath(configPath string) (*config.ClusterDefinition, er
 		return nil, fmt.Errorf("failed to parse YAML config: %w", err)
 	}
 
+	// Apply per-module modulePullOverride env overrides (e.g.
+	// SDS_ELASTIC_MODULE_PULL_OVERRIDE) before validation, logging each one so
+	// the running image tag's source is unambiguous.
+	for _, ch := range config.ApplyModulePullOverrideEnv(&clusterDef) {
+		logger.Info("%s", ch.LogLine())
+	}
+
 	if err := config.ValidateModulePullOverrides(&clusterDef); err != nil {
 		return nil, err
 	}

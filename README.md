@@ -94,8 +94,6 @@ Testkit-specific env variables:
 - `CSI_CEPH_OSD_STORAGE_CLASS` — pre-existing block-mode StorageClass used to
   back Rook OSD PVCs. When empty, a `sds-local-volume` Thick SC is
   auto-provisioned via `EnsureDefaultStorageClass`.
-- `CSI_CEPH_MODULE_PULL_OVERRIDE` — image tag for `csi-ceph`'s
-  ModulePullOverride (dev registries only, e.g. when testing a PR build).
 
 #### `modulePullOverride` in `cluster_config.yml`
 
@@ -110,7 +108,32 @@ dkpParameters:
       modulePullOverride: pr131
 ```
 
-`${VAR}` placeholders in `modulePullOverride` are rejected at config load time.
+`${VAR}` placeholders **inside** `modulePullOverride` are rejected at config
+load time — the static file stays literal and readable.
+
+##### Per-module env override (for CI)
+
+To point the module-under-test at a CI image without editing the committed
+YAML, set the per-module env var `<MODULE>_MODULE_PULL_OVERRIDE` (the module
+name upper-cased, `-`/`.` → `_`). It overrides the static value at load time;
+unset modules keep their YAML default. Examples:
+
+- `csi-ceph` → `CSI_CEPH_MODULE_PULL_OVERRIDE`
+- `sds-elastic` → `SDS_ELASTIC_MODULE_PULL_OVERRIDE`
+
+```bash
+SDS_ELASTIC_MODULE_PULL_OVERRIDE=pr123 go test ./tests/
+```
+
+Each applied override is logged at load time, naming both the static tag and
+the env var that takes precedence, e.g.:
+
+```
+modulePullOverride[sds-elastic]: cluster_config.yml pins tag "main", but SDS_ELASTIC_MODULE_PULL_OVERRIDE="pr123" is set — using tag "pr123" for this test run
+```
+
+A single global tag (e.g. `MODULE_IMAGE_TAG`) is intentionally **not** used:
+configs with several dev modules would be ambiguous. Use one var per module.
 
 ### csi-all-stress-tests
 
