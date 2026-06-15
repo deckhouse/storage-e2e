@@ -22,34 +22,10 @@ import (
 	"strings"
 )
 
-// EnvLookup resolves a variable by name and reports whether it is set. It
-// mirrors os.LookupEnv so the standard environment can be injected directly,
-// while tests can supply a map-backed source without mutating the process
-// environment.
 type EnvLookup func(name string) (value string, ok bool)
 
-// envRefPattern matches a single ${NAME} reference. Only the braced form with
-// shell-identifier characters is recognized, so a tag containing a bare '$'
-// is never rewritten and substitution intent is always explicit. The same
-// pattern drives both detection and replacement, so a reference can never be
-// detected one way and substituted another.
 var envRefPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
-// ResolveModulePullOverrides substitutes ${NAME} references in every module's
-// ModulePullOverride using lookup, letting CI point modules at per-build image
-// tags without editing the YAML:
-//
-//	modules:
-//	  - name: csi-ceph
-//	    modulePullOverride: "${CSI_CEPH_TAG}"
-//
-// Each module may reference its own variable, and a field may contain several
-// references. All problems across all modules are reported together:
-//   - a reference to a variable that lookup does not provide, and
-//   - a residual "${" left after substitution (a malformed reference such as
-//     ${bad-name}), which guarantees no placeholder ever reaches the cluster.
-//
-// Modules without references are left untouched.
 func ResolveModulePullOverrides(def *ClusterDefinition, lookup EnvLookup) error {
 	if def == nil {
 		return nil

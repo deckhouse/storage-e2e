@@ -21,8 +21,6 @@ import (
 	"testing"
 )
 
-// lookupFrom returns an EnvLookup backed by the given map, so tests stay
-// hermetic and never touch the process environment.
 func lookupFrom(env map[string]string) EnvLookup {
 	return func(name string) (string, bool) {
 		v, ok := env[name]
