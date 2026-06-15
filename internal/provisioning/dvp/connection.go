@@ -24,12 +24,8 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 )
 
-// apiServerRemotePort is the port the cluster API server listens on. It is
-// forwarded to an ephemeral local port through the SSH tunnel.
 const apiServerRemotePort = "6445"
 
-// sshEndpoint describes how to reach a host over SSH. When Jump is non-nil the
-// connection is routed through it (jump -> target); otherwise it is direct.
 type sshEndpoint struct {
 	User    string
 	Host    string
@@ -37,8 +33,6 @@ type sshEndpoint struct {
 	Jump    *sshEndpoint
 }
 
-// dial opens an SSH connection to the endpoint, transparently routing through a
-// jump host when one is configured.
 func (e sshEndpoint) dial() (ssh.SSHClient, error) {
 	if e.Jump != nil {
 		return ssh.NewClientWithJumpHost(
@@ -49,18 +43,11 @@ func (e sshEndpoint) dial() (ssh.SSHClient, error) {
 	return ssh.NewClient(e.User, e.Host, e.KeyPath)
 }
 
-// clusterConnection owns a live SSH tunnel to a cluster's API server and the
-// underlying SSH connection. Close releases both. It does not own the derived
-// kubeconfig; see loadKubeconfigViaTunnel for that.
 type clusterConnection struct {
 	ssh    ssh.SSHClient
 	tunnel *ssh.TunnelInfo
 }
 
-// openTunnel connects to a (possibly closed) cluster over SSH and forwards its
-// API server through a local SSH tunnel. The returned connection owns the SSH
-// client and the tunnel; the caller must Close it (e.g. via defer) once done.
-// On any failure all partially-acquired resources are released.
 func openTunnel(ctx context.Context, ep sshEndpoint) (*clusterConnection, error) {
 	sshClient, err := ep.dial()
 	if err != nil {
@@ -69,8 +56,6 @@ func openTunnel(ctx context.Context, ep sshEndpoint) (*clusterConnection, error)
 
 	conn := &clusterConnection{ssh: sshClient}
 
-	// The tunnel's lifetime is bound to ctx: it stops on ctx cancellation
-	// (e.g. the Bootstrap deadline) or when Close is called explicitly.
 	conn.tunnel, err = sshClient.OpenTunnel(ctx, apiServerRemotePort)
 	if err != nil {
 		_ = conn.Close()
@@ -80,8 +65,6 @@ func openTunnel(ctx context.Context, ep sshEndpoint) (*clusterConnection, error)
 	return conn, nil
 }
 
-// Close stops the API server tunnel and closes the SSH connection, joining any
-// errors. It is safe to call on a nil or partially-initialised connection.
 func (c *clusterConnection) Close() error {
 	if c == nil {
 		return nil

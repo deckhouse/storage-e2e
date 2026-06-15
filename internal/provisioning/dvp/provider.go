@@ -27,16 +27,12 @@ import (
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
 
-// dvpProvider provisions clusters using the DVP (Deckhouse Virtualization
-// Platform) strategy.
 type dvpProvider struct {
 	cfg     *clusterprovider.ClusterConfig
 	dvpConf *Config
 	logger  *slog.Logger
 }
 
-// NewDVPProvider builds a dvpProvider, loading the DVP-specific env. It is wired
-// into the provider Registry by internal/provisioning/register.
 func NewDVPProvider(logger *slog.Logger, config *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {
 	dvpConf := &Config{}
 	if err := env.Parse(dvpConf); err != nil {

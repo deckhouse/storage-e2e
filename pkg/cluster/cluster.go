@@ -315,10 +315,6 @@ func CreateTestCluster(
 	logger.StepComplete(2, "Connected to base cluster successfully")
 
 	logger.Step(3, "Verifying virtualization module is Ready")
-	// Step 3: Verify virtualization module is Ready.
-	// Poll until the module converges instead of taking a single snapshot —
-	// the one-shot phase check was flaky because the module can briefly report
-	// a non-Ready phase right after we connect to the base cluster.
 	if err := kubernetes.WaitForModuleReady(ctx, baseClusterResources.Kubeconfig, "virtualization", config.ModuleCheckTimeout); err != nil {
 		baseClusterResources.SSHClient.Close()
 		baseClusterResources.TunnelInfo.StopFunc()

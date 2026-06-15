@@ -28,10 +28,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// readKubeconfig loads the user-supplied base cluster kubeconfig from disk.
-// The path may contain ~ and ${VAR} placeholders, which are expanded here.
 func readKubeconfig(path string) ([]byte, error) {
-	resolved, err := expandKubeconfigPath(path)
+	resolved, err := expandUserPath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -45,8 +43,7 @@ func readKubeconfig(path string) ([]byte, error) {
 	return raw, nil
 }
 
-// expandKubeconfigPath resolves ${VAR} and a leading ~ in a kubeconfig path.
-func expandKubeconfigPath(path string) (string, error) {
+func expandUserPath(path string) (string, error) {
 	expanded := os.ExpandEnv(path)
 	if !strings.HasPrefix(expanded, "~") {
 		return expanded, nil
@@ -61,11 +58,6 @@ func expandKubeconfigPath(path string) (string, error) {
 	return filepath.Join(home, strings.TrimPrefix(expanded, "~/")), nil
 }
 
-// loadKubeconfigViaTunnel reads the user-supplied base cluster kubeconfig from
-// kubeconfigSrcPath, rewrites its API server to the local end of an SSH tunnel
-// (127.0.0.1:localPort), writes the result under kubeconfigDir (named after
-// host), and returns the ready-to-use client config along with the on-disk
-// path. It owns no live resources, so there is nothing to release.
 func loadKubeconfigViaTunnel(localPort int, kubeconfigDir, host, kubeconfigSrcPath string) (*rest.Config, string, error) {
 	raw, err := readKubeconfig(kubeconfigSrcPath)
 	if err != nil {
