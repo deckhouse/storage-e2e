@@ -20,7 +20,7 @@ linters:
     - nilerr         # return nil after a non-nil error check, and vice versa
 
     # Public API / style hygiene.
-    - revive         # broad style linter; flags missing docs on exported symbols
+    - revive         # broad style linter; flags missing docs on exported pkg/ symbols
     - unparam        # unused function parameters/results (cleaner public API)
     - unconvert      # remove unnecessary type conversions
     - predeclared    # don't shadow predeclared identifiers (e.g. error, len)
@@ -50,6 +50,8 @@ linters:
         - fieldalignment   # too noisy; not worth the churn for a test library
     revive:
       rules:
+        # Doc comments are enforced on exported symbols, but only for the public
+        # pkg/ API (see exclusions below). internal/ favors self-documenting code.
         - name: exported
           arguments:
             - disableStutteringCheck
@@ -104,6 +106,12 @@ linters:
           - revive
         text: "should not use dot imports"
         source: 'ginkgo|gomega'
+      # Doc comments are only required for the public pkg/ API; relax the
+      # exported/package-comments revive rules everywhere under internal/.
+      - path: internal/
+        linters:
+          - revive
+        text: "should have comment or be unexported|comment on exported .* should be of the form|should have a package comment"
 
 formatters:
   enable:

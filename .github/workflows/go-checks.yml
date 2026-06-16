@@ -56,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Required by actions/upload-code-coverage (GitHub Code Quality coverage,
+      # public preview). Without it the upload step fails with insufficient scope.
       code-quality: write
     steps:
       - name: Checkout repository

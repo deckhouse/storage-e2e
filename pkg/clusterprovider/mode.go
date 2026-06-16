@@ -18,13 +18,18 @@ package clusterprovider
 
 import "fmt"
 
+// ProviderMode identifies which cluster provider implementation to use.
 type ProviderMode string
 
+// Supported provider modes.
 const (
 	ModeDVP       = "dvp"
 	ModeCommander = "commander"
 )
 
+// UnmarshalText parses a ProviderMode from its textual form, rejecting any
+// value outside the supported set. It satisfies encoding.TextUnmarshaler so the
+// mode can be populated directly from environment variables.
 func (m *ProviderMode) UnmarshalText(text []byte) error {
 	v := ProviderMode(text)
 	switch v {
@@ -36,6 +41,7 @@ func (m *ProviderMode) UnmarshalText(text []byte) error {
 	}
 }
 
+// String returns the provider mode as a plain string.
 func (m ProviderMode) String() string {
 	return string(m)
 }
