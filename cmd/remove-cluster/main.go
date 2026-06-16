@@ -13,25 +13,25 @@ func main() {
 	slogger := logger.GetLogger()
 	cfg, err := clusterprovider.NewClusterConfig()
 	if err != nil {
-		slogger.Error("failed to initialize config - ", err)
+		slogger.Error("failed to initialize config", "error", err)
 		return
 	}
 
 	newProvider, registryGetErr := registry.DefaultRegistry.Get(cfg.ClusterProvider)
 	if registryGetErr != nil {
-		slogger.Error("failed to get provider", registryGetErr)
+		slogger.Error("failed to get provider", "error", registryGetErr)
 		return
 	}
 
 	clusterProvider, err := newProvider(slogger, cfg)
 	if err != nil {
-		slogger.Error("failed to build provider", err)
+		slogger.Error("failed to build provider", "error", err)
 		return
 	}
 
 	teardownErr := clusterProvider.Remove(context.Background())
 	if teardownErr != nil {
-		slogger.Error("failed to tear down cluster", teardownErr)
+		slogger.Error("failed to tear down cluster", "error", teardownErr)
 		return
 	}
 }

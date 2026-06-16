@@ -113,6 +113,10 @@ linters:
           - revive
         text: "should have comment or be unexported|comment on exported .* should be of the form|should have a package comment"
 
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
 formatters:
   enable:
     - gofmt
