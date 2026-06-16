@@ -1,5 +1,7 @@
 # E2E Tests
 
+![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/fastrapier/9da59ba8cd10aa883e7b143a68a82c06/raw/storage-e2e-coverage.json)
+
 End-to-end tests for Deckhouse storage components.
 
 ## Quick Start
