@@ -118,3 +118,67 @@ jobs:
             coverage.html
             coverage.xml
           if-no-files-found: ignore
+
+  # Standalone coverage summary via irongut/CodeCoverageSummary.
+  # Lives next to the native GitHub Code Quality integration in `unit-tests`
+  # and reuses the `coverage` artifact, so it does not re-run the test suite.
+  coverage-summary:
+    name: Coverage summary (CCS)
+    needs: unit-tests
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage
+
+      - name: Code Coverage Summary
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: coverage.xml
+          badge: true
+          format: markdown
+          # Go coverage has no real branch data, so branch rate is noise here.
+          hide_branch_rate: true
+          hide_complexity: true
+          indicators: true
+          output: both
+          thresholds: '60 80'
+          # Flip to true once thresholds are agreed to gate PRs on coverage.
+          fail_below_min: false
+
+      - name: Write coverage to job summary
+        if: always()
+        run: cat code-coverage-results.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          recreate: true
+          path: code-coverage-results.md
+
+      - name: Extract coverage percent (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          pct=$(grep -E '^total:' coverage.txt | grep -Eo '[0-9]+(\.[0-9]+)?' | tail -n1)
+          echo "COVERAGE_PCT=${pct}" >> "$GITHUB_ENV"
+
+      - name: Publish coverage badge to gist (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          # Create a PAT with the `gist` scope and add it as the GIST_SECRET repo secret.
+          auth: ${{ secrets.GIST_SECRET }}
+          # Replace with the id of a gist you own (the part after your username in the gist URL).
+          gistID: REPLACE_WITH_GIST_ID
+          filename: storage-e2e-coverage.json
+          label: coverage
+          message: ${{ env.COVERAGE_PCT }}%
+          valColorRange: ${{ env.COVERAGE_PCT }}
+          minColorRange: 50
+          maxColorRange: 90
