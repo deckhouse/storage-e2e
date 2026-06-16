@@ -119,9 +119,6 @@ jobs:
             coverage.xml
           if-no-files-found: ignore
 
-  # Standalone coverage summary via irongut/CodeCoverageSummary.
-  # Lives next to the native GitHub Code Quality integration in `unit-tests`
-  # and reuses the `coverage` artifact, so it does not re-run the test suite.
   coverage-summary:
     name: Coverage summary (CCS)
     needs: unit-tests
@@ -142,13 +139,11 @@ jobs:
           filename: coverage.xml
           badge: true
           format: markdown
-          # Go coverage has no real branch data, so branch rate is noise here.
           hide_branch_rate: true
           hide_complexity: true
           indicators: true
           output: both
           thresholds: '60 80'
-          # Flip to true once thresholds are agreed to gate PRs on coverage.
           fail_below_min: false
 
       - name: Write coverage to job summary
@@ -172,10 +167,8 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: schneegans/dynamic-badges-action@v1.7.0
         with:
-          # Create a PAT with the `gist` scope and add it as the GIST_SECRET repo secret.
           auth: ${{ secrets.GIST_SECRET }}
-          # Replace with the id of a gist you own (the part after your username in the gist URL).
-          gistID: REPLACE_WITH_GIST_ID
+          gistID: 9da59ba8cd10aa883e7b143a68a82c06
           filename: storage-e2e-coverage.json
           label: coverage
           message: ${{ env.COVERAGE_PCT }}%
