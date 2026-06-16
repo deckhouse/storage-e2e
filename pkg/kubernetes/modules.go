@@ -18,6 +18,7 @@ package kubernetes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -622,6 +623,13 @@ func WaitForModuleReady(ctx context.Context, kubeconfig *rest.Config, moduleName
 	for {
 		select {
 		case <-ctx.Done():
+			// Distinguish our derived deadline (a genuine module timeout) from a
+			// canceled parent context (e.g. the test was aborted), so logs aren't
+			// misleading about why the wait ended.
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return fmt.Errorf("canceled while waiting for module %s to become ready (last phase %q%s): %w",
+					moduleName, lastPhase, moduleConditionSuffix(lastCondition), ctx.Err())
+			}
 			return fmt.Errorf("timeout waiting for module %s to become ready after %v (last phase %q%s): %w",
 				moduleName, timeout, lastPhase, moduleConditionSuffix(lastCondition), ctx.Err())
 		case <-ticker.C:

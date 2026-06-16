@@ -16,7 +16,7 @@ func main() {
 
 	cfg, err := clusterprovider.NewClusterConfig()
 	if err != nil {
-		slogger.Error("failed to initialize config - ", err)
+		slogger.Error("failed to initialize config", "err", err)
 		return
 	}
 
@@ -27,7 +27,7 @@ func main() {
 
 	clusterProvider, err := newProvider(slogger, cfg)
 	if err != nil {
-		slogger.Error("failed to build provider", err)
+		slogger.Error("failed to build provider", "err", err)
 		return
 	}
 
@@ -36,7 +36,7 @@ func main() {
 
 	bootstrapErr := clusterProvider.Bootstrap(bootstrapCtx)
 	if bootstrapErr != nil {
-		slogger.Error("failed to bootstrap cluster", bootstrapErr)
+		slogger.Error("failed to bootstrap cluster", "err", bootstrapErr)
 		return
 	}
 }
