@@ -29,7 +29,7 @@ func main() {
 		return
 	}
 
-	teardownErr := clusterProvider.Remove(context.TODO())
+	teardownErr := clusterProvider.Remove(context.Background())
 	if teardownErr != nil {
 		slogger.Error("failed to tear down cluster", teardownErr)
 		return

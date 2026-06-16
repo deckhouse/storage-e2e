@@ -37,8 +37,10 @@ type Config struct {
 }
 
 func (c *Config) SetPassphrase() error {
-	err := os.Setenv("SSH_PASSPHRASE", c.SSHPassphrase)
-	if err != nil {
+	if c.SSHPassphrase == "" {
+		return nil
+	}
+	if err := os.Setenv("SSH_PASSPHRASE", c.SSHPassphrase); err != nil {
 		return fmt.Errorf("failed to set SSH_PASSPHRASE: %w", err)
 	}
 	return nil

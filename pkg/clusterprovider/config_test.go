@@ -53,7 +53,7 @@ func TestNew_ParsesProvider(t *testing.T) {
 		t.Fatal("expected non-nil config")
 	}
 	if cfg.ClusterProvider != ModeDVP {
-		t.Errorf("ClusterProvider = %q, want %q", cfg.ClusterProvider, "static")
+		t.Errorf("ClusterProvider = %q, want %q", cfg.ClusterProvider, ModeDVP)
 	}
 }
 
