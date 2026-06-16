@@ -1,0 +1,115 @@
+# golangci-lint configuration (schema v2, golangci-lint v2.12.x).
+# This repository is imported as a library by other repos, so the linter set
+# leans on error-handling, exported-API hygiene, and security checks.
+version: "2"
+
+run:
+  timeout: 5m
+  # Lint test files too — public test helpers are part of the shipped API.
+  tests: true
+
+linters:
+  # "standard" = errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    # Error handling — critical for a library consumed elsewhere.
+    - errorlint      # find problems with Go 1.13+ error wrapping (%w, errors.Is/As)
+    - bodyclose      # ensure HTTP response bodies are closed
+    - noctx          # ensure context is passed to network/HTTP calls
+    - contextcheck   # detect dropped/incorrect context propagation
+    - nilerr         # return nil after a non-nil error check, and vice versa
+
+    # Public API / style hygiene.
+    - revive         # broad style linter; flags missing docs on exported symbols
+    - unparam        # unused function parameters/results (cleaner public API)
+    - unconvert      # remove unnecessary type conversions
+    - predeclared    # don't shadow predeclared identifiers (e.g. error, len)
+    - usestdlibvars  # use stdlib constants instead of magic strings
+
+    # Correctness / robustness.
+    - gocritic       # opinionated bug/style/performance diagnostics
+    - prealloc       # suggest slice preallocation where it helps
+    - makezero       # catch append to non-zero-length make() slices
+    - durationcheck  # catch suspicious time.Duration multiplications
+    - reassign       # detect reassignment of imported package variables
+
+    # Security — matters because callers run this in their pipelines.
+    - gosec
+
+    # Cosmetic but cheap wins.
+    - misspell
+    - whitespace
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment   # too noisy; not worth the churn for a test library
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+        - name: package-comments
+        - name: error-strings
+        - name: error-return
+        - name: var-declaration
+        - name: indent-error-flow
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: time-naming
+        - name: errorf
+        - name: increment-decrement
+        - name: range
+        - name: receiver-naming
+        - name: unexported-return
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - hugeParam        # caught better by govet/fieldalignment tradeoffs
+        - rangeValCopy
+    gosec:
+      excludes:
+        - G115             # integer overflow conversion — extremely noisy in k8s code
+    misspell:
+      locale: US
+    staticcheck:
+      checks:
+        - all
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Test files: relax noise that doesn't matter for tests.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - unparam
+          - revive
+      # Ginkgo/Gomega dot-imports are idiomatic for the suite files.
+      - linters:
+          - revive
+        text: "should not use dot imports"
+        source: 'ginkgo|gomega'
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/deckhouse/storage-e2e
