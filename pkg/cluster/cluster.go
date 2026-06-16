@@ -315,10 +315,10 @@ func CreateTestCluster(
 	logger.StepComplete(2, "Connected to base cluster successfully")
 
 	logger.Step(3, "Verifying virtualization module is Ready")
-	if err := kubernetes.WaitForModuleReady(ctx, baseClusterResources.Kubeconfig, "virtualization", config.ModuleCheckTimeout); err != nil {
+	if waitErr := kubernetes.WaitForModuleReady(ctx, baseClusterResources.Kubeconfig, "virtualization", config.ModuleCheckTimeout); waitErr != nil {
 		baseClusterResources.SSHClient.Close()
 		baseClusterResources.TunnelInfo.StopFunc()
-		return nil, fmt.Errorf("virtualization module is not Ready: %w", err)
+		return nil, fmt.Errorf("virtualization module is not Ready: %w", waitErr)
 	}
 	logger.StepComplete(3, "Virtualization module is Ready")
 

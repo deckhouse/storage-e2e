@@ -1,13 +1,7 @@
-// Command remove-cluster is the CI-only entrypoint that tears a cluster down.
-// It is a thin wrapper: load ClusterConfig, resolve the strategy's Constructor
-// from the provider Registry, build the Provider, then run the idempotent
-// Remove (which derives target resources from config, not from bootstrap
-// artifacts).
 package main
 
 import (
 	"context"
-	"log"
 
 	"github.com/deckhouse/storage-e2e/internal/logger"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider/registry"
@@ -16,24 +10,28 @@ import (
 )
 
 func main() {
+	slogger := logger.GetLogger()
 	cfg, err := clusterprovider.NewClusterConfig()
 	if err != nil {
-		log.Fatal("failed to initialize config - ", err)
+		slogger.Error("failed to initialize config - ", err)
+		return
 	}
 
 	newProvider, registryGetErr := registry.DefaultRegistry.Get(cfg.ClusterProvider)
 	if registryGetErr != nil {
-		log.Fatal("failed to get provider", registryGetErr)
+		slogger.Error("failed to get provider", registryGetErr)
+		return
 	}
 
-	slogger := logger.GetLogger()
 	clusterProvider, err := newProvider(slogger, cfg)
 	if err != nil {
-		log.Fatal("failed to build provider", err)
+		slogger.Error("failed to build provider", err)
+		return
 	}
 
 	teardownErr := clusterProvider.Remove(context.TODO())
 	if teardownErr != nil {
-		log.Fatal("failed to tear down cluster", teardownErr)
+		slogger.Error("failed to tear down cluster", teardownErr)
+		return
 	}
 }

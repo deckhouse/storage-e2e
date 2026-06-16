@@ -23,9 +23,9 @@ import (
 	"sync"
 	"time"
 
+	deckhousev1alpha1 "github.com/deckhouse/deckhouse/deckhouse-controller/pkg/apis/deckhouse.io/v1alpha1"
 	"k8s.io/client-go/rest"
 
-	deckhousev1alpha1 "github.com/deckhouse/deckhouse/deckhouse-controller/pkg/apis/deckhouse.io/v1alpha1"
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
@@ -582,7 +582,7 @@ const moduleReadyPollInterval = 2 * time.Second
 // flaky during cluster creation):
 //   - The whole wait is bounded by a derived context deadline, so persistent
 //     GetModule failures (dropped SSH tunnel, API hiccup) also time out instead
-//     of hanging until the parent context is cancelled.
+//     of hanging until the parent context is canceled.
 //   - Transient GetModule errors and intermediate phases (Downloading,
 //     Installing, Reconciling, and even Error — modules can recover) are
 //     tolerated; only the timeout is terminal.

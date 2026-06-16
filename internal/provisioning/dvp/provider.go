@@ -22,6 +22,7 @@ import (
 	"log/slog"
 
 	"github.com/caarlos0/env/v11"
+
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
@@ -33,7 +34,7 @@ type dvpProvider struct {
 	logger  *slog.Logger
 }
 
-func NewDVPProvider(logger *slog.Logger, config *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {
+func NewDVPProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {
 	dvpConf := &Config{}
 	if err := env.Parse(dvpConf); err != nil {
 		return nil, err
@@ -44,7 +45,7 @@ func NewDVPProvider(logger *slog.Logger, config *clusterprovider.ClusterConfig) 
 	}
 
 	return &dvpProvider{
-		cfg:     config,
+		cfg:     cfg,
 		dvpConf: dvpConf,
 		logger:  logger,
 	}, nil

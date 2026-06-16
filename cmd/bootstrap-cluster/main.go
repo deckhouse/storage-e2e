@@ -1,6 +1,3 @@
-// Command bootstrap-cluster is the CI-only entrypoint that provisions a
-// cluster. It is a thin wrapper: load ClusterConfig, resolve the strategy's
-// Constructor from the provider Registry, build the Provider, then Bootstrap.
 package main
 
 import (
@@ -15,9 +12,12 @@ import (
 )
 
 func main() {
+	slogger := logger.GetLogger()
+
 	cfg, err := clusterprovider.NewClusterConfig()
 	if err != nil {
-		log.Fatal("failed to initialize config - ", err)
+		slogger.Error("failed to initialize config - ", err)
+		return
 	}
 
 	newProvider, registryGetErr := registry.DefaultRegistry.Get(cfg.ClusterProvider)
@@ -25,16 +25,18 @@ func main() {
 		log.Fatal("failed to get provider", registryGetErr)
 	}
 
-	slogger := logger.GetLogger()
 	clusterProvider, err := newProvider(slogger, cfg)
 	if err != nil {
-		log.Fatal("failed to build provider", err)
+		slogger.Error("failed to build provider", err)
+		return
 	}
 
 	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), time.Minute*45)
 	defer bootstrapCancel()
+
 	bootstrapErr := clusterProvider.Bootstrap(bootstrapCtx)
 	if bootstrapErr != nil {
-		log.Fatal("failed to bootstrap cluster", bootstrapErr)
+		slogger.Error("failed to bootstrap cluster", bootstrapErr)
+		return
 	}
 }

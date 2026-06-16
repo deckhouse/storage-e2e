@@ -86,8 +86,8 @@ func buildKubeconfig(raw []byte, server, path string) (*rest.Config, error) {
 		cluster.Server = server
 	}
 
-	if err := clientcmd.WriteToFile(*apiCfg, path); err != nil {
-		return nil, fmt.Errorf("write kubeconfig %q: %w", path, err)
+	if writeErr := clientcmd.WriteToFile(*apiCfg, path); writeErr != nil {
+		return nil, fmt.Errorf("write kubeconfig %q: %w", path, writeErr)
 	}
 
 	restCfg, err := clientcmd.NewDefaultClientConfig(*apiCfg, &clientcmd.ConfigOverrides{}).ClientConfig()
