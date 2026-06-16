@@ -23,21 +23,17 @@ on:
 permissions:
   contents: read
 
-# third_party/ and go.work are local-only (gitignored). Force module mode so CI
-# builds strictly from go.mod and never tries to resolve the local workspace.
 env:
   GOWORK: "off"
 
 jobs:
   lint:
-    name: Lint (new code only)
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Full history is required so golangci-lint can diff against the
-          # merge-base with the target branch and report only new issues.
           fetch-depth: 0
 
       - name: Set up Go
@@ -50,17 +46,20 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          # Report only issues introduced by this change relative to main,
-          # so the existing backlog does not block PRs.
           only-new-issues: true
           args: --timeout=5m
 
   unit-tests:
     name: Unit tests + coverage
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      code-quality: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -68,8 +67,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Only library packages are tested here. tests/* are Ginkgo e2e suites that
-      # require real infrastructure (SSH/VMs/base cluster) and must not run here.
       - name: Run unit tests with coverage
         run: |
           go test -race -covermode=atomic \
@@ -94,6 +91,20 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Convert coverage to Cobertura XML
+        if: always()
+        run: |
+          go install github.com/boumenot/gocover-cobertura@latest
+          "$(go env GOPATH)/bin/gocover-cobertura" < coverage.out > coverage.xml
+
+      - name: Upload coverage report
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage.xml
+          language: Go
+          label: code-coverage/go
+
       - name: Upload coverage artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -103,4 +114,5 @@ jobs:
             coverage.out
             coverage.txt
             coverage.html
+            coverage.xml
           if-no-files-found: ignore
