@@ -100,7 +100,7 @@ func buildKubeconfig(raw []byte, server, path string) (*rest.Config, error) {
 }
 
 func kubeconfigFilePath(dir, host string) (string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create kubeconfig dir %q: %w", dir, err)
 	}
 	return filepath.Join(dir, fmt.Sprintf("kubeconfig-%s.yml", host)), nil
