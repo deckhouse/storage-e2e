@@ -51,11 +51,19 @@ storage-e2e/
 │   │       └── vm_block_device.go
 │   │
 │   ├── infrastructure/            # Infrastructure layer
-│   │   └── ssh/                  # SSH operations
+│   │   └── ssh/                  # SSH operations (legacy)
 │   │       ├── client.go
 │   │       ├── interface.go
 │   │       ├── tunnel.go
-│   │       └── types.go
+│   │       ├── types.go
+│   │       └── v2/               # Self-healing SSH client (Dialer/Route + Tunnel)
+│   │           ├── client.go     # New, Client, Close + package docs
+│   │           ├── conn.go       # connection core: snapshot/refresh/keepalive + withConn
+│   │           ├── dialer.go     # Dialer interface, Route, chain closer
+│   │           ├── endpoint.go   # Endpoint, auth, host/key resolution
+│   │           ├── errors.go     # transient classification, ExitError
+│   │           ├── options.go    # functional options
+│   │           └── tunnel.go     # Tunnel, accept loop
 │   │
 │   └── logger/                    # Structured logging
 │       ├── logger.go             # Logger implementation
@@ -473,10 +481,18 @@ internal/kubernetes/               # Internal Kubernetes clients
 
 ```
 infrastructure/ssh/
-├── client.go           # SSH client implementation (Exec, ExecCapture, tunnels)
-├── interface.go        # SSH client interface
-├── tunnel.go           # Port forwarding and tunneling
-└── types.go            # SSH-related types
+├── client.go           # SSH client implementation (Exec, ExecCapture, tunnels) [legacy]
+├── interface.go        # SSH client interface [legacy]
+├── tunnel.go           # Port forwarding and tunneling [legacy]
+├── types.go            # SSH-related types [legacy]
+└── v2/                 # Self-healing SSH client (see below)
+    ├── client.go       # New, Client, Close + package docs
+    ├── conn.go         # connection core: snapshot/refresh/keepalive + withConn executor
+    ├── dialer.go       # Dialer interface, Route, chain closer
+    ├── endpoint.go     # Endpoint, auth, host/key resolution
+    ├── errors.go       # transient classification, ExitError
+    ├── options.go      # functional options
+    └── tunnel.go       # Tunnel, accept loop
 ```
 
 **Responsibilities**:
@@ -493,6 +509,48 @@ infrastructure/ssh/
 - Connection pooling and reuse
 - `ExecCapture` keeps stdout and stderr separate while preserving retry/reconnect behavior
 - Proper resource cleanup
+
+#### 3.4.1 Self-healing SSH client (`internal/infrastructure/ssh/v2/`)
+
+A ground-up rewrite that lives in parallel with the legacy package (no consumers
+migrated yet). It separates **how we connect** (directly or via jump hosts) from
+**what we do over the connection** (currently only tunneling), and hides every
+reconnect from callers.
+
+**Design**:
+
+- `Dialer` is the injection point: `Dial(ctx) (*ssh.Client, io.Closer, error)` +
+  `Describe()`. `Route(first Endpoint, more ...Endpoint)` builds the built-in
+  implementation; the last hop is always the target, so the `(first, more...)`
+  signature guarantees at least one hop at compile time. The returned `io.Closer`
+  tears down the whole chain (target + every jump + ssh-agent connections).
+- `Endpoint` describes a single host: `User`, `Addr` (`host` or `host:port`,
+  default `:22`), `KeyPath` (`~` expanded), optional `Passphrase`
+  (falls back to `SSH_PASSPHRASE` then ssh-agent), optional per-hop `HostKey`.
+- The unexported `conn` core owns the current `*ssh.Client`, its chain `Closer`,
+  and a generation counter under a mutex. `snapshot` reads them; `refresh`
+  re-dials via `singleflight` keyed on the failed generation so concurrent
+  reconnects collapse into one and a stale generation never tears down a freshly
+  healed link. The slow `Dial` runs outside the lock on a detached context
+  (`context.WithoutCancel` + timeout) so one caller's cancellation can't abort
+  the shared flight.
+- A single generic executor `withConn[T]` runs an operation against the live
+  client and heals on transient failures (bounded by `WithRetries`); the tunnel
+  uses it today and `Run`/`Upload` are designed to reuse it unchanged.
+- Optional keepalive (`WithKeepalive`) probes the link and heals through the same
+  `refresh` path; every heal is logged at WARN.
+
+**Public API v1**: `New(ctx, Dialer, ...Option)`, `Client.Tunnel(ctx, remotePort)`
+(self-healing local forward on a free `127.0.0.1` port; `Tunnel.LocalAddr`,
+`Tunnel.Close`), `Client.Close`. Options: `WithKeepalive`, `WithRetries`,
+`WithLogger`, `WithHostKeyCallback`, `WithInsecureIgnoreHostKey` (host key
+defaults to `InsecureIgnoreHostKey` — a conscious default for ephemeral e2e VMs).
+
+**Extension points (designed, not yet implemented)**: `Run` (transparent retry
+only when the session fails to open; mid-flight drops heal but surface the error
+to avoid double side effects; opt-in `Idempotent` for true retry) and `Upload`.
+Transient-error classification uses `errors.Is`/`errors.As` against standard
+types — never error-string matching.
 
 ### 3.5 Logger Module (`internal/logger/`)
 
