@@ -18,17 +18,16 @@ package clusterprovider
 
 import (
 	"github.com/caarlos0/env/v11"
+	"github.com/deckhouse/storage-e2e/internal/provisioning/dvp/config"
 )
 
-// ClusterConfig holds the provider-agnostic settings needed to select and
-// drive a cluster provider, populated from environment variables.
 type ClusterConfig struct {
 	ClusterProvider            ProviderMode `env:"E2E_TEST_CLUSTER_PROVIDER,required"`
 	ClusterBootstrapConfigPath string       `env:"E2E_CLUSTER_CONFIG_YAML_PATH,required"`
+
+	DVP config.ClusterConfig
 }
 
-// NewClusterConfig reads the cluster provider configuration from the
-// environment, returning an error if required variables are missing or invalid.
 func NewClusterConfig() (*ClusterConfig, error) {
 	cfg := &ClusterConfig{}
 	parseErr := env.Parse(cfg)

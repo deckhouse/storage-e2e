@@ -55,7 +55,6 @@ func openTunnel(ctx context.Context, ep sshEndpoint) (*clusterConnection, error)
 	}
 
 	conn := &clusterConnection{ssh: sshClient}
-
 	conn.tunnel, err = sshClient.OpenTunnel(ctx, apiServerRemotePort)
 	if err != nil {
 		_ = conn.Close()

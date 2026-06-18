@@ -21,33 +21,24 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/caarlos0/env/v11"
-
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
-	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
 
 type dvpProvider struct {
-	cfg     *clusterprovider.ClusterConfig
-	dvpConf *Config
-	logger  *slog.Logger
+	cfg    *clusterprovider.ClusterConfig
+	logger *slog.Logger
 }
 
 func NewDVPProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {
-	dvpConf := &Config{}
-	if err := env.Parse(dvpConf); err != nil {
-		return nil, err
-	}
-	err := dvpConf.SetPassphrase()
+	err := cfg.DVP.Validate()
 	if err != nil {
 		return nil, err
 	}
 
 	return &dvpProvider{
-		cfg:     cfg,
-		dvpConf: dvpConf,
-		logger:  logger,
+		cfg:    cfg,
+		logger: logger,
 	}, nil
 }
 
@@ -65,50 +56,40 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"workers", len(clusterDef.Workers),
 	)
 
-	p.logger.Info("connecting to DVP base cluster",
-		"host", p.dvpConf.SSHHost,
-		"jumpHost", p.dvpConf.SSHJumpHost,
-		"kubeconfigSource", p.dvpConf.KubeConfigPath,
-	)
-	conn, err := openTunnel(ctx, p.dvpConf.baseEndpoint())
-	if err != nil {
-		return fmt.Errorf("open tunnel to DVP base cluster: %w", err)
-	}
-	defer func() {
-		if cerr := conn.Close(); cerr != nil {
-			p.logger.Warn("close DVP base cluster connection", "err", cerr)
-		}
-	}()
-
-	kubeconfig, kubeconfigPath, err := loadKubeconfigViaTunnel(
-		conn.tunnel.LocalPort, config.E2ETempDir, p.dvpConf.SSHHost, p.dvpConf.KubeConfigPath,
-	)
-	if err != nil {
-		return fmt.Errorf("build kubeconfig for DVP base cluster: %w", err)
-	}
-	p.logger.Info("connected to DVP base cluster",
-		"kubeconfig", kubeconfigPath,
-		"apiServer", kubeconfig.Host,
-	)
-
 	p.logger.Info("waiting for virtualization module to become ready",
 		"timeout", config.ModuleCheckTimeout,
 	)
-	if err := kubernetes.WaitForModuleReady(ctx, kubeconfig, "virtualization", config.ModuleCheckTimeout); err != nil {
-		return fmt.Errorf("virtualization module not ready: %w", err)
-	}
+	//if err := kubernetes.WaitForModuleReady(ctx, kubeconfig, "virtualization", config.ModuleCheckTimeout); err != nil {
+	//	return fmt.Errorf("virtualization module not ready: %w", err)
+	//}
 	p.logger.Info("virtualization module is ready")
 
 	p.logger.Info("ensuring test namespace exists",
-		"namespace", p.dvpConf.Namespace,
+		"namespace", p.cfg.DVP.Namespace,
 		"timeout", config.NamespaceTimeout,
 	)
-	nsCtx, cancel := context.WithTimeout(ctx, config.NamespaceTimeout)
-	defer cancel()
-	if _, err := kubernetes.CreateNamespaceIfNotExists(nsCtx, kubeconfig, p.dvpConf.Namespace); err != nil {
-		return fmt.Errorf("ensure namespace %q: %w", p.dvpConf.Namespace, err)
-	}
-	p.logger.Info("test namespace is ready", "namespace", p.dvpConf.Namespace)
+	//nsCtx, cancel := context.WithTimeout(ctx, config.NamespaceTimeout)
+	//defer cancel()
+	//if _, err := kubernetes.CreateNamespaceIfNotExists(nsCtx, kubeconfig, p.cfg.DVP.Namespace); err != nil {
+	//	return fmt.Errorf("ensure namespace %q: %w", p.cfg.DVP.Namespace, err)
+	//}
+	//p.logger.Info("test namespace is ready", "namespace", p.cfg.DVP.Namespace)
+	//
+	//virtClient, err := virtualization.NewClient(ctx, kubeconfig)
+	//if err != nil {
+	//	return fmt.Errorf("create virtualization client: %w", err)
+	//}
+	//
+	//provisioner := vm.NewProvisioner(vm.NewClient(virtClient), p.logger, p.provisionerConfig(sshPublicKey))
+	//
+	//p.logger.Info("provisioning virtual machines", "namespace", p.cfg.DVP.Namespace, "timeout", config.VMCreationTimeout)
+	//provisionCtx, provisionCancel := context.WithTimeout(ctx, config.VMCreationTimeout)
+	//defer provisionCancel()
+	//setupVMName, err := provisioner.Provision(provisionCtx, clusterDef)
+	//if err != nil {
+	//	return fmt.Errorf("provision virtual machines: %w", err)
+	//}
+	//p.logger.Info("virtual machines provisioned", "setupVM", setupVMName)
 
 	return nil
 }
