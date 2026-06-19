@@ -12,23 +12,20 @@ import (
 )
 
 func main() {
-	slogger := logger.GetLogger()
 
 	cfg, err := clusterprovider.NewClusterConfig()
 	if err != nil {
-		slogger.Error("failed to initialize config", "err", err)
-		return
+		log.Fatal("failed to initialize config", "err", err)
 	}
 
 	newProvider, registryGetErr := registry.DefaultRegistry.Get(cfg.ClusterProvider)
 	if registryGetErr != nil {
 		log.Fatal("failed to get provider", registryGetErr)
 	}
-
+	slogger := logger.GetLogger()
 	clusterProvider, err := newProvider(slogger, cfg)
 	if err != nil {
-		slogger.Error("failed to build provider", "err", err)
-		return
+		log.Fatal("failed to build provider", "err", err)
 	}
 
 	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), time.Minute*45)
@@ -36,7 +33,6 @@ func main() {
 
 	bootstrapErr := clusterProvider.Bootstrap(bootstrapCtx)
 	if bootstrapErr != nil {
-		slogger.Error("failed to bootstrap cluster", "err", bootstrapErr)
-		return
+		log.Fatal("failed to bootstrap cluster", "err", bootstrapErr)
 	}
 }
