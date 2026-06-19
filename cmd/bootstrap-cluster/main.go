@@ -12,7 +12,6 @@ import (
 )
 
 func main() {
-
 	cfg, err := clusterprovider.NewClusterConfig()
 	if err != nil {
 		log.Fatal("failed to initialize config", "err", err)
@@ -29,9 +28,8 @@ func main() {
 	}
 
 	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), time.Minute*45)
-	defer bootstrapCancel()
-
 	bootstrapErr := clusterProvider.Bootstrap(bootstrapCtx)
+	bootstrapCancel()
 	if bootstrapErr != nil {
 		log.Fatal("failed to bootstrap cluster", "err", bootstrapErr)
 	}
