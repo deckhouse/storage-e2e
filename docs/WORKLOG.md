@@ -108,3 +108,11 @@ All notable changes to this repository are documented here. New entries are appe
 ## 2026-06-08
 
 - **Add** `pkg/config/config_test.go`: unit tests for `config.New` covering provider parsing, missing required `TEST_CLUSTER_PROVIDER` (error), empty-value handling, and table-driven provider values.
+
+---
+
+## 2026-06-19
+
+- **Bugfix** `internal/config.ResolveModulePullOverrides`: detect malformed `${...}` on the original string (stripping
+  valid refs first) instead of the resolved value, avoiding a false "malformed" error when an env value itself contains
+  `${...}`.

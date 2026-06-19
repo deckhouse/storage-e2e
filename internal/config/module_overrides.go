@@ -48,7 +48,7 @@ func ResolveModulePullOverrides(def *ClusterDefinition, lookup EnvLookup) error 
 			return value
 		})
 
-		if strings.Contains(resolved, "${") {
+		if strings.Contains(envRefPattern.ReplaceAllString(original, ""), "${") {
 			problems = append(problems, fmt.Sprintf(
 				"module %q has malformed modulePullOverride %q (only ${NAME} with letters, digits, and underscores is supported)",
 				m.Name, original,
