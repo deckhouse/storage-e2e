@@ -65,8 +65,6 @@ func TestConnRefreshStaleGenerationDoesNotReconnect(t *testing.T) {
 	d := &serverDialer{addr: srv.addr()}
 	c := newTestConn(t, d, 0)
 
-	// Pretend we failed on generation 0, but the live connection is already at
-	// generation 1 — nobody should reconnect a healthy link.
 	client, gen, err := c.refresh(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -92,7 +90,6 @@ func TestConnRefreshDeduplicatesConcurrentReconnects(t *testing.T) {
 		t.Fatalf("setup dial count = %d, want 1", d.dialCount())
 	}
 
-	// Gate the next dial so all concurrent refreshers pile into one flight.
 	gate := make(chan struct{})
 	d.setGate(gate)
 
@@ -114,8 +111,6 @@ func TestConnRefreshDeduplicatesConcurrentReconnects(t *testing.T) {
 	}
 
 	close(start)
-	// Give the goroutines time to coalesce in singleflight before releasing the
-	// single dial. Polling the dial count avoids a fixed sleep race.
 	waitFor(t, 2*time.Second, func() bool { return d.dialCount() == 2 })
 	close(gate)
 	wg.Wait()
@@ -226,7 +221,6 @@ func TestWithConnExhaustsRetries(t *testing.T) {
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("err = %v, want wrapped io.EOF", err)
 	}
-	// retries=2 means: initial attempt + 2 heals = 3 op calls.
 	if calls != 3 {
 		t.Fatalf("op calls = %d, want 3", calls)
 	}
@@ -255,7 +249,6 @@ func TestKeepaliveHealsDroppedConnection(t *testing.T) {
 	d := &serverDialer{addr: srv.addr()}
 	_ = newTestConn(t, d, 100*time.Millisecond)
 
-	// Kill the live transport; the keepalive probe should notice and heal.
 	srv.dropConns()
 
 	waitFor(t, 5*time.Second, func() bool { return d.dialCount() >= 2 })
@@ -264,8 +257,6 @@ func TestKeepaliveHealsDroppedConnection(t *testing.T) {
 	}
 }
 
-// waitFor polls cond until it is true or the timeout elapses. It is an eventual
-// assertion with a bound, not a fixed sleep.
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

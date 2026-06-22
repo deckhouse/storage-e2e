@@ -60,8 +60,6 @@ func TestIsTransient(t *testing.T) {
 	}
 }
 
-// timeoutErr is a net.Error that reports a timeout but is not a syscall errno,
-// exercising the net.Error/Timeout() branch of the classifier.
 type timeoutErr struct{}
 
 func (timeoutErr) Error() string   { return "i/o timeout" }

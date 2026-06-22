@@ -30,16 +30,10 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// quietLogger returns a logger that discards output, keeping test logs clean.
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// testServer is an in-process SSH server on 127.0.0.1 used by tests. It accepts
-// any client (NoClientAuth), answers keepalive global requests, and serves
-// "direct-tcpip" channels by dialing the requested address and proxying bytes —
-// enough to exercise tunnels end to end. dropConns force-closes live transports
-// to simulate a dropped session.
 type testServer struct {
 	ln        net.Listener
 	cfg       *ssh.ServerConfig
@@ -123,7 +117,6 @@ func (s *testServer) handleConn(nConn net.Conn) {
 	}
 }
 
-// directTCPIPMsg is the extra data layout of a direct-tcpip channel open.
 type directTCPIPMsg struct {
 	DestAddr string
 	DestPort uint32
@@ -163,8 +156,6 @@ func handleDirectTCPIP(newCh ssh.NewChannel) {
 	}()
 }
 
-// dropConns force-closes all live transport connections, simulating a session
-// drop (a Wi-Fi flap on the developer's laptop).
 func (s *testServer) dropConns() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -182,9 +173,6 @@ func (s *testServer) Close() {
 	})
 }
 
-// serverDialer is a test Dialer that connects to a testServer. It counts dials
-// and can gate each dial on a channel to make reconnect concurrency
-// deterministic.
 type serverDialer struct {
 	addr string
 
@@ -227,7 +215,6 @@ func (d *serverDialer) setGate(gate chan struct{}) {
 	d.mu.Unlock()
 }
 
-// newEchoServer starts a TCP echo server on 127.0.0.1 and returns its port.
 func newEchoServer(t *testing.T) int {
 	t.Helper()
 	var lc net.ListenConfig

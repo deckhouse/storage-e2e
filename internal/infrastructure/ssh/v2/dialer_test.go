@@ -77,7 +77,6 @@ func TestRouteHopsAndDescribe(t *testing.T) {
 	}
 }
 
-// recordCloser records the order in which it is closed and can fail on demand.
 type recordCloser struct {
 	id    int
 	order *[]int

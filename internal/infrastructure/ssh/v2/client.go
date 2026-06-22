@@ -41,19 +41,12 @@ import (
 	"log/slog"
 )
 
-// Client is a self-healing SSH client over a Dialer-provided connection. It is
-// safe for concurrent use; reconnects are transparent to callers.
 type Client struct {
 	conn    *conn
 	retries int
 	log     *slog.Logger
 }
 
-// New connects immediately over d, starts keepalive when enabled, and returns a
-// ready Client. The context bounds the initial connection. If d implements the
-// internal host-key defaulter (as the built-in Route does), the resolved
-// host-key option is pushed into it so per-hop Endpoint.HostKey values take
-// precedence over the Client-level default.
 func New(ctx context.Context, d Dialer, opts ...Option) (*Client, error) {
 	if d == nil {
 		return nil, errors.New("ssh: nil dialer")
@@ -76,9 +69,6 @@ func New(ctx context.Context, d Dialer, opts ...Option) (*Client, error) {
 	return &Client{conn: core, retries: o.retries, log: o.log}, nil
 }
 
-// Close tears down the connection and its whole chain and stops keepalive. It is
-// idempotent and safe for concurrent use. Open tunnels keep their listeners; the
-// caller should Close those separately.
 func (c *Client) Close() error {
 	return c.conn.Close()
 }

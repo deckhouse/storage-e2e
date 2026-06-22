@@ -36,7 +36,6 @@ func newTestClient(t *testing.T, d Dialer, keepalive time.Duration) *Client {
 	return c
 }
 
-// dialTimeout dials addr with a bounded context, satisfying the noctx linter.
 func dialTimeout(addr string, timeout time.Duration) (net.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -44,7 +43,6 @@ func dialTimeout(addr string, timeout time.Duration) (net.Conn, error) {
 	return d.DialContext(ctx, "tcp", addr)
 }
 
-// roundtrip writes payload to addr and reads the echoed reply back.
 func roundtrip(t *testing.T, addr, payload string) string {
 	t.Helper()
 	conn, err := dialTimeout(addr, 3*time.Second)
@@ -121,11 +119,8 @@ func TestTunnelHealsAfterDroppedSession(t *testing.T) {
 		t.Fatalf("echo before drop = %q, want before", got)
 	}
 
-	// Simulate the SSH session dying mid-test.
 	srv.dropConns()
 
-	// The next forwarded connection must transparently heal the session and
-	// keep serving. Retry the roundtrip until it works within a bound.
 	var lastErr error
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
@@ -182,7 +177,6 @@ func TestTunnelCloseIsIdempotentAndStopsListener(t *testing.T) {
 		t.Fatalf("second Close: %v", err)
 	}
 
-	// The listener must be gone after Close.
 	waitFor(t, 2*time.Second, func() bool {
 		conn, err := dialTimeout(addr, 200*time.Millisecond)
 		if err != nil {

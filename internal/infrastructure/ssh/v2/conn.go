@@ -29,19 +29,11 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// conn is the connection core shared by every high-level operation. It owns the
-// current *ssh.Client together with the Closer for its whole chain and a
-// monotonically increasing generation counter. All reconnect logic lives here so
-// callers (Tunnel today, Run/Upload later) never see a reconnect: they ask for
-// the live client, run their operation, and on a transient failure call withConn
-// which heals the connection underneath them.
 type conn struct {
 	dialer      Dialer
 	log         *slog.Logger
 	dialTimeout time.Duration
 
-	// flight deduplicates concurrent reconnects keyed by the failed generation,
-	// preventing a reconnect storm from tearing down a freshly healed link.
 	flight singleflight.Group
 
 	mu     sync.Mutex
@@ -50,14 +42,10 @@ type conn struct {
 	gen    uint64
 	closed bool
 
-	// keepalive lifecycle.
 	kaCancel context.CancelFunc
 	wg       sync.WaitGroup
 }
 
-// newConn establishes the initial connection and, when keepalive > 0, starts the
-// background keepalive goroutine. The initial dial uses the caller's context so
-// startup honors their deadline and cancellation.
 func newConn(ctx context.Context, d Dialer, o options) (*conn, error) {
 	client, closer, err := d.Dial(ctx)
 	if err != nil {
@@ -74,35 +62,21 @@ func newConn(ctx context.Context, d Dialer, o options) (*conn, error) {
 	}
 
 	if o.keepalive > 0 {
-		// Keepalive must outlive the caller's setup context: the connection
-		// stays alive until Close, not until the New call returns. A fresh root
-		// context canceled by Close is therefore correct here.
 		kaCtx, cancel := context.WithCancel(context.Background())
 		c.kaCancel = cancel
 		c.wg.Add(1)
-		//nolint:contextcheck // intentional: keepalive lifetime is bound to Close, not the setup context.
 		go c.keepaliveLoop(kaCtx, o.keepalive)
 	}
 
 	return c, nil
 }
 
-// snapshot returns the current client and its generation under the lock. The
-// generation lets callers tell refresh which connection failed them, so a
-// concurrent heal is not duplicated.
 func (c *conn) snapshot() (client *ssh.Client, gen uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.client, c.gen
 }
 
-// refresh re-establishes the connection that failed at generation failedGen and
-// returns the now-current client and generation. Concurrent callers that failed
-// on the same generation are collapsed into a single dial via singleflight; a
-// caller whose failedGen is already stale (someone else healed first) gets the
-// current client back without dialing. The actual Dial runs outside the lock and
-// on a detached context with its own timeout, so one caller's cancellation can
-// never abort the shared reconnect that others are waiting on.
 func (c *conn) refresh(ctx context.Context, failedGen uint64) (*ssh.Client, uint64, error) {
 	key := strconv.FormatUint(failedGen, 10)
 
@@ -117,7 +91,6 @@ func (c *conn) refresh(ctx context.Context, failedGen uint64) (*ssh.Client, uint
 			c.mu.Unlock()
 			return nil, errClosed
 		}
-		// Someone already healed past failedGen — reuse the live client.
 		if c.gen != failedGen {
 			cur := healed{client: c.client, gen: c.gen}
 			c.mu.Unlock()
@@ -125,8 +98,6 @@ func (c *conn) refresh(ctx context.Context, failedGen uint64) (*ssh.Client, uint
 		}
 		c.mu.Unlock()
 
-		// Detach from the caller's context so one cancellation does not abort the
-		// shared flight, but still bound the dial with our own timeout.
 		dialCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.dialTimeout)
 		defer cancel()
 
@@ -148,11 +119,9 @@ func (c *conn) refresh(ctx context.Context, failedGen uint64) (*ssh.Client, uint
 		newGen := c.gen
 		c.mu.Unlock()
 
-		// Tear down the dead chain outside the lock.
 		if old != nil {
 			_ = old.Close()
 		}
-		// Self-healing must be loud, not silent.
 		c.log.Warn("ssh: connection re-established",
 			"route", c.dialer.Describe(), "generation", newGen)
 
@@ -168,11 +137,6 @@ func (c *conn) refresh(ctx context.Context, failedGen uint64) (*ssh.Client, uint
 	return r.client, r.gen, nil
 }
 
-// keepaliveLoop periodically probes the connection. A failed probe is not just a
-// reason to exit: it routes through refresh so the link is proactively healed via
-// the same single path as a failed operation. Keepalive only narrows the window
-// in which a dead connection is noticed; the authoritative "heal now" signal is
-// still a failed operation.
 func (c *conn) keepaliveLoop(ctx context.Context, interval time.Duration) {
 	defer c.wg.Done()
 
@@ -204,15 +168,12 @@ func (c *conn) keepaliveLoop(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// isClosed reports whether Close has been called.
 func (c *conn) isClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.closed
 }
 
-// Close tears down the connection and its whole chain and stops the keepalive
-// goroutine. It is idempotent and safe for concurrent use.
 func (c *conn) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -239,17 +200,6 @@ func (c *conn) Close() error {
 	return nil
 }
 
-// withConn runs op against the live client and heals the connection on transient
-// failures, retrying up to retries times. It is the single reconnect-aware
-// executor that every high-level operation builds on, so the reconnect policy
-// lives in exactly one place. op MUST be safe to invoke more than once; callers
-// whose operation is not idempotent (e.g. a command that already started running)
-// must classify their own mid-flight failures as non-transient before they reach
-// here.
-//
-// It is a generic free function rather than a method because Go methods cannot
-// have type parameters; T lets callers return a typed result (a net.Conn for a
-// tunnel dial, a session for Run, …) without boxing.
 func withConn[T any](ctx context.Context, c *conn, retries int, op func(context.Context, *ssh.Client) (T, error)) (T, error) {
 	var zero T
 
@@ -267,7 +217,6 @@ func withConn[T any](ctx context.Context, c *conn, retries int, op func(context.
 			return result, nil
 		}
 
-		// An explicit cancellation outranks any transient classification.
 		if ctx.Err() != nil {
 			return zero, ctx.Err()
 		}

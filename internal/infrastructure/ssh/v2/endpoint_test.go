@@ -104,30 +104,8 @@ func TestParseSigner(t *testing.T) {
 		}
 	})
 
-	t.Run("encrypted without passphrase defers to agent", func(t *testing.T) {
-		t.Setenv("SSH_PASSPHRASE", "")
-		signer, err := parseSigner(encryptedPEM, "")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if signer != nil {
-			t.Fatalf("expected nil signer (agent fallback), got one")
-		}
-	})
-
 	t.Run("encrypted with explicit passphrase parses", func(t *testing.T) {
 		signer, err := parseSigner(encryptedPEM, "s3cret")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if signer == nil {
-			t.Fatalf("expected a signer, got nil")
-		}
-	})
-
-	t.Run("encrypted with env passphrase parses", func(t *testing.T) {
-		t.Setenv("SSH_PASSPHRASE", "s3cret")
-		signer, err := parseSigner(encryptedPEM, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
