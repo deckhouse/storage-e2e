@@ -61,7 +61,7 @@ storage-e2e/
 │   │           ├── conn.go       # connection core: snapshot/refresh/keepalive + withConn
 │   │           ├── dialer.go     # Dialer interface, Route, chain closer
 │   │           ├── endpoint.go   # Endpoint, auth, host/key resolution
-│   │           ├── errors.go     # transient classification, ExitError
+│   │           ├── errors.go     # transient classification
 │   │           ├── options.go    # functional options
 │   │           └── tunnel.go     # Tunnel, accept loop
 │   │
@@ -490,7 +490,7 @@ infrastructure/ssh/
     ├── conn.go         # connection core: snapshot/refresh/keepalive + withConn executor
     ├── dialer.go       # Dialer interface, Route, chain closer
     ├── endpoint.go     # Endpoint, auth, host/key resolution
-    ├── errors.go       # transient classification, ExitError
+    ├── errors.go       # transient classification
     ├── options.go      # functional options
     └── tunnel.go       # Tunnel, accept loop
 ```

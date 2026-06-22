@@ -19,7 +19,6 @@ package ssh
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"syscall"
@@ -65,16 +64,3 @@ func isTransient(err error) bool {
 
 	return false
 }
-
-type ExitError struct {
-	Cmd      string
-	ExitCode int
-	Stderr   string
-	Err      error
-}
-
-func (e *ExitError) Error() string {
-	return fmt.Sprintf("ssh: command %q exited with code %d", e.Cmd, e.ExitCode)
-}
-
-func (e *ExitError) Unwrap() error { return e.Err }

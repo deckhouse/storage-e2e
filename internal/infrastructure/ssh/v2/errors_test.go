@@ -47,7 +47,6 @@ func TestIsTransient(t *testing.T) {
 		{name: "context canceled", err: context.Canceled, want: false},
 		{name: "context deadline", err: context.DeadlineExceeded, want: false},
 		{name: "plain error", err: errors.New("boom"), want: false},
-		{name: "exit error", err: &ExitError{Cmd: "false", ExitCode: 1}, want: false},
 	}
 
 	for _, tc := range tests {
@@ -65,21 +64,3 @@ type timeoutErr struct{}
 func (timeoutErr) Error() string   { return "i/o timeout" }
 func (timeoutErr) Timeout() bool   { return true }
 func (timeoutErr) Temporary() bool { return true }
-
-func TestExitErrorUnwrap(t *testing.T) {
-	t.Parallel()
-
-	underlying := errors.New("session: exited")
-	exit := &ExitError{Cmd: "do-thing", ExitCode: 2, Stderr: "nope", Err: underlying}
-
-	if !errors.Is(exit, underlying) {
-		t.Fatalf("errors.Is should find the wrapped error")
-	}
-	var target *ExitError
-	if !errors.As(error(exit), &target) {
-		t.Fatalf("errors.As should match *ExitError")
-	}
-	if target.ExitCode != 2 {
-		t.Fatalf("ExitCode = %d, want 2", target.ExitCode)
-	}
-}
