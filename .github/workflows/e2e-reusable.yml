@@ -3,6 +3,7 @@
 # pipeline_mode:
 #   create-and-test — mocked create-cluster + run-tests (full e2e flow from module side)
 #   teardown-only   — mocked teardown-cluster
+#   noop            — all jobs echo "mocked"; used for CI self-testing in storage-e2e itself
 
 name: Storage E2E (reusable)
 
@@ -15,7 +16,7 @@ on:
   workflow_call:
     inputs:
       pipeline_mode:
-        description: "create-and-test | teardown-only"
+        description: "create-and-test | teardown-only | noop"
         type: string
         required: true
       pr_number:
@@ -54,6 +55,11 @@ on:
         type: string
         required: false
         default: "3h30m"
+      test_suite:
+        description: "Go test function name to run (passed to -run). Default matches sds-node-configurator."
+        type: string
+        required: false
+        default: "TestSdsNodeConfigurator"
       storage_e2e_ref:
         description: "Git ref of storage-e2e for checkout"
         type: string
@@ -134,7 +140,7 @@ env:
 
 jobs:
   create-cluster:
-    if: inputs.pipeline_mode == 'create-and-test'
+    if: inputs.pipeline_mode == 'create-and-test' || inputs.pipeline_mode == 'noop'
     name: create-cluster
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     steps:
@@ -145,7 +151,7 @@ jobs:
           echo "PR: ${{ inputs.pr_number }}"
 
   run-tests:
-    if: inputs.pipeline_mode == 'create-and-test' && needs.create-cluster.result == 'success'
+    if: (inputs.pipeline_mode == 'create-and-test' && needs.create-cluster.result == 'success') || inputs.pipeline_mode == 'noop'
     name: run-tests
     needs: create-cluster
     timeout-minutes: 240
@@ -160,7 +166,14 @@ jobs:
       checks: write
       contents: read
     steps:
+      - name: run-tests (noop)
+        if: inputs.pipeline_mode == 'noop'
+        run: |
+          echo "run-tests is mocked (pipeline_mode: noop)"
+          echo "PR: ${{ inputs.pr_number }}, module: ${{ inputs.module_slug }}"
+
       - name: Prepare workspace for checkout (self-hosted)
+        if: inputs.pipeline_mode != 'noop'
         run: |
           set -euo pipefail
           WS="${GITHUB_WORKSPACE}"
@@ -175,11 +188,13 @@ jobs:
           done
 
       - name: Checkout repository
+        if: inputs.pipeline_mode != 'noop'
         uses: actions/checkout@v4
         with:
           clean: false
 
       - name: Checkout storage-e2e
+        if: inputs.pipeline_mode != 'noop'
         uses: actions/checkout@v4
         with:
           repository: deckhouse/storage-e2e
@@ -188,6 +203,7 @@ jobs:
           clean: false
 
       - name: Setup Go
+        if: inputs.pipeline_mode != 'noop'
         uses: actions/setup-go@v5
         with:
           go-version-file: ${{ inputs.module_path }}/go.mod
@@ -196,6 +212,7 @@ jobs:
             storage-e2e/go.sum
 
       - name: Setup test environment
+        if: inputs.pipeline_mode != 'noop'
         run: |
           E2E_SSH_KEY_PATH=$(mktemp /tmp/e2e_ssh_key.XXXXXX)
           E2E_SSH_PUB_PATH=$(mktemp /tmp/e2e_ssh_pub.XXXXXX)
@@ -229,6 +246,7 @@ jobs:
           E2E_CLUSTER_KUBECONFIG: ${{ secrets.E2E_CLUSTER_KUBECONFIG }}
 
       - name: Run E2E tests (build_dev-compatible flow)
+        if: inputs.pipeline_mode != 'noop'
         id: run_tests
         working-directory: ${{ inputs.module_path }}
         env:
@@ -339,7 +357,7 @@ jobs:
           E2E_GO_TEST_TIMEOUT="3h30m"
           echo "Ginkgo label filter: ${E2E_GINKGO_LABEL_FILTER}"
           echo "go test -timeout: ${E2E_GO_TEST_TIMEOUT} (Ginkgo suite: ${E2E_TEST_TIMEOUT})"
-          go test -v -count=1 -timeout "${E2E_GO_TEST_TIMEOUT}" "${{ inputs.test_package }}" -run '^TestSdsNodeConfigurator$' \
+          go test -v -count=1 -timeout "${E2E_GO_TEST_TIMEOUT}" "${{ inputs.test_package }}" -run '^${{ inputs.test_suite }}$' \
             -ginkgo.label-filter="${E2E_GINKGO_LABEL_FILTER}" 2>&1 | tee "${GITHUB_WORKSPACE}/e2e-test-output.log"
           TEST_EXIT_CODE=${PIPESTATUS[0]}
           echo "${TEST_EXIT_CODE}" > "${GITHUB_WORKSPACE}/e2e-test-exit-code.txt"
@@ -347,7 +365,7 @@ jobs:
 
       - name: Upload E2E logs
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && inputs.pipeline_mode != 'noop'
         with:
           name: e2e-test-logs-${{ inputs.module_slug }}-${{ github.run_id }}
           path: ${{ github.workspace }}/e2e-test-output.log
@@ -355,7 +373,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Cleanup test resources
-        if: always()
+        if: always() && inputs.pipeline_mode != 'noop'
         env:
           SSH_HOST: ${{ secrets.E2E_SSH_HOST }}
           SSH_USER: ${{ secrets.E2E_SSH_USER }}
@@ -386,7 +404,7 @@ jobs:
           fi
 
       - name: Cleanup temp credentials
-        if: always()
+        if: always() && inputs.pipeline_mode != 'noop'
         run: rm -f "${E2E_SSH_KEY_PATH}" "${E2E_SSH_PUB_PATH}" "${E2E_KUBECONFIG_PATH}" 2>/dev/null || true
 
   teardown-cluster:

@@ -126,3 +126,5 @@ All notable changes to this repository are documented here. New entries are appe
 - **Add** `.github/scripts/e2e-prepare-env.sh`, `.github/scripts/e2e-prepare-workspace.sh`: helper scripts for secrets materialisation and self-hosted runner workspace cleanup.
 - **Add** `docs/CI.md`: documents the reusable workflow design, inputs, secrets, and run-tests flow.
 - **Update** `README.md`: add CI section linking to `docs/CI.md`.
+- **Update** `.github/workflows/e2e-reusable.yml`: add `noop` pipeline_mode (all jobs echo mocked, no real steps run); add `test_suite` input (default `TestSdsNodeConfigurator`) to decouple hardcoded suite name from workflow.
+- **Add** `.github/workflows/e2e-self-test.yml`: self-test caller that triggers the reusable workflow in `noop` mode on PRs touching CI files.
