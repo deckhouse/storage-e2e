@@ -225,7 +225,7 @@ func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
 		sshAuthorizedKey: p.cfg.SSHPublicKey,
 		withDocker:       pl.withDocker,
 	})
-
+	// TODO: San-stand требует уникального имени хоста в рамках стенда у виртуалки
 	machine, err := buildVirtualMachine(vmParams{
 		Namespace:    p.cfg.Namespace,
 		Name:         pl.node.Hostname,

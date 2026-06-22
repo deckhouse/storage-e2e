@@ -91,7 +91,7 @@ func buildCloudInit(opts cloudInitOptions) string {
 
 	runcmd := []string{
 		"systemctl restart ssh",
-		fmt.Sprintf("hostnamectl set-hostname %s", opts.hostname),
+		fmt.Sprintf("hostnamectl set-hostname %s", opts.hostname), // TODO: hostname должно быть уникальным
 		"systemctl daemon-reload",
 		"systemctl enable --now qemu-guest-agent.service",
 	}
