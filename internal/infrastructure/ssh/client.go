@@ -421,6 +421,12 @@ func (c *client) StartTunnel(ctx context.Context, localPort, remotePort string) 
 	return runTunnelLoop(ctx, localPort, dialer)
 }
 
+// OpenTunnel establishes a tunnel forwarding remotePort to a free local port,
+// retrying on transient connection errors. See openTunnel for details.
+func (c *client) OpenTunnel(ctx context.Context, remotePort string) (*TunnelInfo, error) {
+	return openTunnel(ctx, c, remotePort)
+}
+
 // Exec executes a command on the remote host with automatic retry and reconnection
 func (c *client) Exec(ctx context.Context, cmd string) (string, error) {
 	var output string
@@ -923,6 +929,13 @@ func (c *jumpHostClient) StartTunnel(ctx context.Context, localPort, remotePort 
 		reconnect: c.reconnect,
 	}
 	return runTunnelLoop(ctx, localPort, dialer)
+}
+
+// OpenTunnel establishes a tunnel forwarding remotePort to a free local port
+// through the jump host, retrying on transient connection errors. See
+// openTunnel for details.
+func (c *jumpHostClient) OpenTunnel(ctx context.Context, remotePort string) (*TunnelInfo, error) {
+	return openTunnel(ctx, c, remotePort)
 }
 
 // tunnelDialer abstracts the per-tunnel concerns that runTunnelLoop needs to

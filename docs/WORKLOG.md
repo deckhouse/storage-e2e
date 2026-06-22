@@ -108,3 +108,14 @@ All notable changes to this repository are documented here. New entries are appe
 ## 2026-06-08
 
 - **Add** `pkg/config/config_test.go`: unit tests for `config.New` covering provider parsing, missing required `TEST_CLUSTER_PROVIDER` (error), empty-value handling, and table-driven provider values.
+
+---
+
+## 2026-06-19
+
+- **Bugfix** `internal/config.ResolveModulePullOverrides`: detect malformed `${...}` on the original string (stripping
+  valid refs first) instead of the resolved value, avoiding a false "malformed" error when an env value itself contains
+  `${...}`.
+- **Add** `pkg/clusterprovider/registry/registry_test.go`: table/unit tests for `Registry` covering `NewRegistry`
+  seeding the built-in DVP provider, `Get` for registered/unregistered modes, `Register` add + replace semantics,
+  `DefaultRegistry` contents, and a race-detector concurrency test for `Register`/`Get`

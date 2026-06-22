@@ -14,20 +14,19 @@
  * limitations under the License.
  */
 
-package config
+// Package clusterprovider defines the provider abstraction used to bootstrap
+// and tear down test clusters, along with the provider mode and env-based
+// configuration shared by concrete provider implementations.
+package clusterprovider
 
-import "github.com/caarlos0/env/v11"
+import (
+	"context"
+)
 
-type ClusterConfig struct {
-	ClusterProvider string `env:"TEST_CLUSTER_PROVIDER,required"`
-}
-
-func New() (*ClusterConfig, error) {
-	cfg := &ClusterConfig{}
-	parseErr := env.Parse(cfg)
-	if parseErr != nil {
-		return nil, parseErr
-	}
-
-	return cfg, nil
+// Provider provisions and removes a test cluster for a specific backend
+// (for example DVP). Implementations are expected to be idempotent.
+type Provider interface {
+	Name() string
+	Bootstrap(ctx context.Context) error
+	Remove(ctx context.Context) error
 }
