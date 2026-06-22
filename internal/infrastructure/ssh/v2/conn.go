@@ -152,8 +152,11 @@ func (c *conn) keepaliveLoop(ctx context.Context, interval time.Duration) {
 			if client == nil {
 				continue
 			}
-			if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err == nil {
+			if err := probeKeepalive(ctx, client, interval); err == nil {
 				continue
+			}
+			if ctx.Err() != nil {
+				return
 			}
 			c.log.Warn("ssh: keepalive failed, healing connection",
 				"route", c.dialer.Describe())
@@ -165,6 +168,26 @@ func (c *conn) keepaliveLoop(ctx context.Context, interval time.Duration) {
 					"route", c.dialer.Describe(), "err", err)
 			}
 		}
+	}
+}
+
+func probeKeepalive(ctx context.Context, client *ssh.Client, timeout time.Duration) error {
+	errc := make(chan error, 1)
+	go func() {
+		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+		errc <- err
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("ssh: keepalive probe timed out after %s", timeout)
+	case err := <-errc:
+		return err
 	}
 }
 

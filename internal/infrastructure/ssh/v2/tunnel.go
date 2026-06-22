@@ -41,6 +41,9 @@ type Tunnel struct {
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 	closeErr  error
+
+	lnCloseOnce sync.Once
+	lnCloseErr  error
 }
 
 func (c *Client) Tunnel(ctx context.Context, remotePort int) (*Tunnel, error) {
@@ -85,14 +88,22 @@ func (t *Tunnel) LocalAddr() string {
 func (t *Tunnel) Close() error {
 	t.closeOnce.Do(func() {
 		t.cancel()
-		t.closeErr = t.listener.Close()
+		t.closeErr = t.closeListener()
 		t.wg.Wait()
 	})
 	return t.closeErr
 }
 
+func (t *Tunnel) closeListener() error {
+	t.lnCloseOnce.Do(func() {
+		t.lnCloseErr = t.listener.Close()
+	})
+	return t.lnCloseErr
+}
+
 func (t *Tunnel) serve(ctx context.Context, core *conn, retries int, log *slog.Logger) {
 	defer t.wg.Done()
+	defer func() { _ = t.closeListener() }()
 
 	for {
 		select {
