@@ -1,9 +1,0 @@
-# gitleaks finding fingerprints to ignore (format: commit:file:rule:startline).
-#
-# False positive: base64("user:token") == "dXNlcjp0b2tlbg==" is a table-driven
-# unit-test fixture in TestBase64Encode, not a real credential. The finding is
-# anchored to commit 5f1edc2, which first introduced the line *before* the
-# inline `gitleaks:allow` comment was added (in a later commit). A diff scan
-# walks the whole PR commit range, so the later inline suppression cannot hide
-# the earlier commit — we ignore it here by fingerprint instead.
-5f1edc2ea49b6f107c55faeaa630bae63fe749f0:internal/kubernetes/commander/client_test.go:generic-api-key:75
