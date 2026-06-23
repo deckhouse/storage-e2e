@@ -190,7 +190,7 @@ func TestGenerateRandomSuffix(t *testing.T) {
 	t.Run("uses only lowercase alphanumerics", func(t *testing.T) {
 		got := GenerateRandomSuffix(64)
 		for _, r := range got {
-			if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 				t.Fatalf("invalid character %q in suffix %q", r, got)
 			}
 		}

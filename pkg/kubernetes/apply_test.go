@@ -50,15 +50,13 @@ tag: ${` + setOK + `}`
 	})
 
 	t.Run("ignores non-matching tokens", func(t *testing.T) {
-		// `$VAR` (no braces) and `${1foo}` (starts with digit) must be ignored.
+		// `$VAR` (no braces) and `${1foo}` (starts with digit) must be ignored;
+		// only the well-formed `${valid_NAME}` should be reported. Force the var
+		// empty (empty -> treated as unset); highly unlikely to collide.
+		t.Setenv("valid_NAME", "")
 		got := FindUnsetEnvVars(`a: $PLAIN
 b: ${1invalid}
 c: ${valid_NAME}`)
-		// $PLAIN and ${1invalid} should not show up. ${valid_NAME} should.
-		// Note: this var should remain unset (highly unlikely to collide).
-		t.Setenv("valid_NAME", "") // ensure unset (empty -> treated as unset)
-		// re-evaluate now that we forced empty
-		got = FindUnsetEnvVars(`c: ${valid_NAME}`)
 		if !reflect.DeepEqual(got, []string{"valid_NAME"}) {
 			t.Fatalf("got %v, want [valid_NAME]", got)
 		}

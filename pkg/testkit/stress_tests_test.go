@@ -250,9 +250,9 @@ func TestDefaultConfig_RespectsEnvOverrides(t *testing.T) {
 func withConfigSnapshot(t *testing.T) func() {
 	t.Helper()
 	snap := struct {
-		PVCSize, PodsCount                                                       string
-		PVCSizeAfterResize, PVCSizeAfterResizeStage2                             string
-		SnapshotsPerPVC, MaxAttempts, Interval, Cleanup                          string
+		PVCSize, PodsCount                              string
+		PVCSizeAfterResize, PVCSizeAfterResizeStage2    string
+		SnapshotsPerPVC, MaxAttempts, Interval, Cleanup string
 	}{
 		PVCSize:                  config.StressTestPVCSize,
 		PodsCount:                config.StressTestPodsCount,

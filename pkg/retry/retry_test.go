@@ -32,7 +32,7 @@ import (
 
 // statusErr constructs a *apierrors.StatusError with the given HTTP code and
 // optional RetryAfterSeconds, mirroring how apiserver decodes failures.
-func statusErr(code int32, retryAfterSec int32) *apierrors.StatusError {
+func statusErr(code, retryAfterSec int32) *apierrors.StatusError {
 	st := metav1.Status{
 		Status: metav1.StatusFailure,
 		Code:   code,
@@ -296,7 +296,7 @@ func TestDo_FailsAfterMaxRetriesExhausted(t *testing.T) {
 
 func TestDo_ContextCancelBeforeAttempt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already cancelled
+	cancel() // already canceled
 
 	var calls int32
 	_, err := Do(ctx, fastCfg(5), "op", func() (int, error) {
@@ -307,7 +307,7 @@ func TestDo_ContextCancelBeforeAttempt(t *testing.T) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
 	if atomic.LoadInt32(&calls) != 0 {
-		t.Errorf("fn must not be called when ctx already cancelled, got %d calls", calls)
+		t.Errorf("fn must not be called when ctx already canceled, got %d calls", calls)
 	}
 }
 
@@ -338,7 +338,7 @@ func TestDo_ContextCancelDuringWait(t *testing.T) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
 	if atomic.LoadInt32(&calls) != 1 {
-		t.Errorf("got %d calls, want 1 (cancelled during first wait)", calls)
+		t.Errorf("got %d calls, want 1 (canceled during first wait)", calls)
 	}
 	if elapsed >= cfg.InitialWait {
 		t.Errorf("Do returned too late (%v >= InitialWait %v); cancel did not abort wait", elapsed, cfg.InitialWait)

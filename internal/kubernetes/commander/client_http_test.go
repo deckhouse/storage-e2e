@@ -47,7 +47,7 @@ type recordedRequest struct {
 
 // captureHandler returns an http.Handler that records every incoming request
 // into *out and calls fn to write the response. fn may inspect r to vary the
-// behaviour per call.
+// behavior per call.
 func captureHandler(out *[]recordedRequest, fn http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -77,11 +77,11 @@ func mustClient(t *testing.T, baseURL, token string, opts ClientOptions) *Client
 
 func TestSetAuthHeaders_AllMethods(t *testing.T) {
 	cases := []struct {
-		name        string
-		method      AuthMethod
-		user        string
-		token       string
-		assertReq   func(t *testing.T, r recordedRequest)
+		name      string
+		method    AuthMethod
+		user      string
+		token     string
+		assertReq func(t *testing.T, r recordedRequest)
 	}{
 		{
 			name:   "default = X-Auth-Token",
