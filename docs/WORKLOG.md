@@ -139,3 +139,9 @@ All notable changes to this repository are documented here. New entries are appe
 - **Add** `pkg/clusterprovider/registry/registry_test.go`: table/unit tests for `Registry` covering `NewRegistry`
   seeding the built-in DVP provider, `Get` for registered/unregistered modes, `Register` add + replace semantics,
   `DefaultRegistry` contents, and a race-detector concurrency test for `Register`/`Get`
+
+---
+
+## 2026-06-23
+
+- **Add** `gitleaks.toml`: content-based allowlist (`[extend] useDefault=true` + `regexTarget="line"` regex for `dXNlcjp0b2tlbg==`) for the base64 test fixture in `internal/kubernetes/commander/client_test.go`. Replaces the commit-pinned `.gitleaksignore` fingerprint, which broke after rebasing `unit-tests` onto `main` (the introducing commit's SHA changed `5f1edc2`→`35e9bc7`). The regex allowlist survives history rewrites.
