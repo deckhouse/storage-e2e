@@ -146,3 +146,9 @@ All notable changes to this repository are documented here. New entries are appe
 
 - **Add** `gitleaks.toml`: content-based allowlist (`[extend] useDefault=true` + `regexTarget="line"` regex for `dXNlcjp0b2tlbg==`) for the base64 test fixture in `internal/kubernetes/commander/client_test.go`. Replaces the commit-pinned `.gitleaksignore` fingerprint, which broke after rebasing `unit-tests` onto `main` (the introducing commit's SHA changed `5f1edc2`→`35e9bc7`). The regex allowlist survives history rewrites.
 - **Bugfix** lint fixes in unit-test files surfaced by `main`'s golangci-lint config (after rebase): `pkg/retry/retry_test.go` (gocritic paramTypeCombine on `statusErr`, `cancelled`→`canceled` misspellings), `internal/kubernetes/commander/client_http_test.go` (`behaviour`→`behavior`, gofmt), `pkg/testkit/stress_tests_test.go` (gofmt), `pkg/kubernetes/apply_test.go` (dropped ineffectual `got` assignment in `FindUnsetEnvVars` test), `pkg/cluster/vms_test.go` (staticcheck QF1001 De Morgan simplification).
+
+---
+
+## 2026-06-24
+
+- **Remove** `.github/workflows/unit-tests.yml` per PR #20 review: `main`'s `.github/workflows/go-checks.yml` already runs lint + race-enabled unit tests + coverage publishing, so the dedicated workflow was a duplicate. Updated the `Makefile` header comment to point at `go-checks.yml` instead of the removed workflow.

@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Convenience targets for local development. CI runs the same commands so
-# `make test` locally is equivalent to the CI unit-test job.
+# Convenience targets for local development. These mirror the checks run by the
+# `Go checks` CI workflow (.github/workflows/go-checks.yml): `make test` / `cover`
+# are equivalent to the CI "Unit tests + coverage" job.
 #
 # Unit tests deliberately exclude ./tests/... (e2e suites that require real
 # VMs/clusters/SSH). Use `make e2e` for hints on running individual suites.
