@@ -1,0 +1,19 @@
+title = "storage-e2e gitleaks config"
+
+# Keep all of gitleaks' built-in rules; we only add allowlist entries on top.
+[extend]
+useDefault = true
+
+# Allowlisted test fixtures that look like secrets but are not.
+#
+# Unlike a .gitleaksignore fingerprint (which is pinned to a commit SHA and
+# therefore breaks whenever the branch is rebased), a content-based allowlist
+# survives history rewrites.
+[allowlist]
+description = "Test fixtures that are not real credentials"
+regexTarget = "line"
+regexes = [
+  # base64("user:token") asserted in TestBase64Encode
+  # (internal/kubernetes/commander/client_test.go).
+  '''dXNlcjp0b2tlbg==''',
+]

@@ -12,14 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Gitleaks Pull Request Scan
+name: Gitleaks
 
+# Gitleaks runs only on pull requests. The upstream action's diff mode checks
+# out refs/pull/<N>/merge and scans just the PR range; it relies on
+# github.event.number, which exists only for pull_request events. (A push-event
+# run produces an empty refspec — `+refs/pull//merge:...` — and `git fetch`
+# fails, so we deliberately do not trigger on push.)
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+
 permissions:
   contents: read
   pull-requests: read
+
+# Cancel superseded runs on the same PR ref so rapid-fire pushes don't pile up.
+concurrency:
+  group: gitleaks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   gitleaks_scan:
