@@ -1,0 +1,33 @@
+name: E2E self-test
+
+# Smoke-tests the reusable E2E workflow (noop mode — no cluster, no tests).
+# Runs on PRs that touch CI workflow files or go.mod/go.sum.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/e2e-reusable.yml'
+      - '.github/scripts/**'
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-self-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    uses: ./.github/workflows/e2e-reusable.yml
+    with:
+      pipeline_mode: noop
+      pr_number: ${{ github.event.pull_request.number || '0' }}
+      module_slug: storage-e2e
+      module_path: .
+      cluster_provider: alwaysCreateNew
+      cluster_config: e2e/tests/cluster_config.yaml
+      test_package: ./tests/test-template/
+      test_suite: TestTemplate
+      skip_storage_e2e_replace: true
+      runner_labels: '["self-hosted","regular"]'
+    secrets: inherit

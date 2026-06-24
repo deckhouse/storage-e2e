@@ -140,6 +140,16 @@ All notable changes to this repository are documented here. New entries are appe
   seeding the built-in DVP provider, `Get` for registered/unregistered modes, `Register` add + replace semantics,
   `DefaultRegistry` contents, and a race-detector concurrency test for `Register`/`Get`
 
+## 2026-06-22
+
+- **Add** `.github/workflows/e2e-reusable.yml`: reusable three-job E2E pipeline (`create-cluster` mocked, `run-tests` mirrors `build_dev` flow, `teardown-cluster` mocked); SSH tunnel, `go mod replace`, Ginkgo label filter, 90m minimum suite timeout.
+- **Add** `.github/scripts/e2e-prepare-env.sh`, `.github/scripts/e2e-prepare-workspace.sh`: helper scripts for secrets materialisation and self-hosted runner workspace cleanup.
+- **Add** `docs/CI.md`: documents the reusable workflow design, inputs, secrets, and run-tests flow.
+- **Update** `README.md`: add CI section linking to `docs/CI.md`.
+- **Update** `.github/workflows/e2e-reusable.yml`: add `noop` pipeline_mode (all jobs echo mocked, no real steps run); add `test_suite` input (default `TestSdsNodeConfigurator`) to decouple hardcoded suite name from workflow.
+- **Add** `.github/workflows/e2e-self-test.yml`: self-test caller that triggers the reusable workflow in `noop` mode on PRs touching CI files.
+- **Update** `.github/workflows/e2e-reusable.yml`: add `skip_storage_e2e_replace` boolean input; gate `checkout storage-e2e`, `go mod edit -replace`, and `setup-go` (with dual-path cache) on this flag so storage-e2e can call the workflow without circular self-reference.
+- **Update** `.github/workflows/e2e-self-test.yml`: set `skip_storage_e2e_replace: true`, `test_package: ./tests/test-template/`, `test_suite: TestTemplate`.
 ---
 
 ## 2026-06-23

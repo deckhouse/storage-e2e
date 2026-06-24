@@ -4,6 +4,10 @@
 
 End-to-end tests for Deckhouse storage components.
 
+## CI (reusable workflow)
+
+See [docs/CI.md](docs/CI.md) for the reusable E2E pipeline (`create-cluster` → `run-tests` → `teardown-cluster`) and how to call it from a module repo.
+
 ## Quick Start
 
 1. Create test with script: `cd tests && ./create-test.sh <your-test-name>`
