@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 func readKubeconfig(path string) ([]byte, error) {
@@ -58,57 +57,7 @@ func expandUserPath(path string) (string, error) {
 	return filepath.Join(home, strings.TrimPrefix(expanded, "~/")), nil
 }
 
-func loadKubeconfigViaTunnel(localPort int, kubeconfigDir, host, kubeconfigSrcPath string) (*rest.Config, string, error) {
-	raw, err := readKubeconfig(kubeconfigSrcPath)
-	if err != nil {
-		return nil, "", fmt.Errorf("load base cluster kubeconfig: %w", err)
-	}
-
-	path, err := kubeconfigFilePath(kubeconfigDir, host)
-	if err != nil {
-		return nil, "", err
-	}
-
-	server := fmt.Sprintf("https://127.0.0.1:%d", localPort)
-	cfg, err := buildKubeconfig(raw, server, path)
-	if err != nil {
-		return nil, "", fmt.Errorf("build kubeconfig: %w", err)
-	}
-	return cfg, path, nil
-}
-
-func buildKubeconfig(raw []byte, server, path string) (*rest.Config, error) {
-	apiCfg, err := clientcmd.Load(raw)
-	if err != nil {
-		return nil, fmt.Errorf("parse kubeconfig: %w", err)
-	}
-	for _, cluster := range apiCfg.Clusters {
-		cluster.Server = server
-	}
-
-	if writeErr := clientcmd.WriteToFile(*apiCfg, path); writeErr != nil {
-		return nil, fmt.Errorf("write kubeconfig %q: %w", path, writeErr)
-	}
-
-	restCfg, err := clientcmd.NewDefaultClientConfig(*apiCfg, &clientcmd.ConfigOverrides{}).ClientConfig()
-
-	if err != nil {
-		return nil, fmt.Errorf("build rest config: %w", err)
-	}
-	configureTunnelTimeouts(restCfg)
-	return restCfg, nil
-}
-
-func kubeconfigFilePath(dir, host string) (string, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("create kubeconfig dir %q: %w", dir, err)
-	}
-	return filepath.Join(dir, fmt.Sprintf("kubeconfig-%s.yml", host)), nil
-}
-
 func configureTunnelTimeouts(cfg *rest.Config) {
-	cfg.Timeout = 2 * time.Minute
-
 	prev := cfg.WrapTransport
 	cfg.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
 		if prev != nil {

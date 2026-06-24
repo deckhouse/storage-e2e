@@ -20,10 +20,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/caarlos0/env/v11"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
+	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
@@ -39,10 +44,6 @@ func NewDVPProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (cl
 	if err := env.Parse(dvpConf); err != nil {
 		return nil, err
 	}
-	err := dvpConf.SetPassphrase()
-	if err != nil {
-		return nil, err
-	}
 
 	return &dvpProvider{
 		cfg:     cfg,
@@ -52,6 +53,63 @@ func NewDVPProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (cl
 }
 
 func (p *dvpProvider) Name() string { return clusterprovider.ModeDVP }
+
+func (p *dvpProvider) buildSshClient(ctx context.Context) (*ssh.Client, error) {
+	var dialer ssh.Dialer
+	if p.dvpConf.HasJumpHost() {
+		dialer = ssh.Route(ssh.Endpoint{
+			User:       p.dvpConf.SSHJumpUser,
+			Addr:       p.dvpConf.SSHJumpHost,
+			KeyPath:    p.dvpConf.SSHJumpKeyPath,
+			Passphrase: p.dvpConf.SSHJumpPassphrase,
+		}, ssh.Endpoint{
+			User:       p.dvpConf.SSHUser,
+			Addr:       p.dvpConf.SSHHost,
+			KeyPath:    p.dvpConf.SSHKeyPath,
+			Passphrase: p.dvpConf.SSHPassphrase,
+		})
+	} else {
+		dialer = ssh.Route(ssh.Endpoint{
+			User:       p.dvpConf.SSHUser,
+			Addr:       p.dvpConf.SSHHost,
+			KeyPath:    p.dvpConf.SSHKeyPath,
+			Passphrase: p.dvpConf.SSHPassphrase,
+		})
+	}
+
+	sshClient, sshNewErr := ssh.New(ctx, dialer)
+	if sshNewErr != nil {
+		return nil, fmt.Errorf("creating ssh client: %w", sshNewErr)
+	}
+	return sshClient, nil
+}
+
+func (p *dvpProvider) buildRestConfig(tun *ssh.Tunnel) (*rest.Config, error) {
+	rawKubeconfig, readErr := readKubeconfig(p.dvpConf.KubeConfigPath)
+	if readErr != nil {
+		return nil, fmt.Errorf("reading kubeconfig: %w", readErr)
+	}
+
+	apiCfg, err := clientcmd.Load(rawKubeconfig)
+	overrides := &clientcmd.ConfigOverrides{
+		ClusterInfo: clientcmdapi.Cluster{
+			Server: tun.LocalAddr(),
+		},
+		Timeout: (2 * time.Minute).String(),
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("parsing kubeconfig: %w", err)
+	}
+
+	restConfig, clientConfigErr := clientcmd.NewDefaultClientConfig(*apiCfg, overrides).ClientConfig()
+	if clientConfigErr != nil {
+		return nil, fmt.Errorf("creating client config: %w", clientConfigErr)
+	}
+
+	configureTunnelTimeouts(restConfig)
+	return restConfig, nil
+}
 
 func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	clusterDef, err := config.LoadClusterDefinition(p.cfg.ClusterBootstrapConfigPath)
@@ -70,26 +128,28 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"jumpHost", p.dvpConf.SSHJumpHost,
 		"kubeconfigSource", p.dvpConf.KubeConfigPath,
 	)
-	conn, err := openTunnel(ctx, p.dvpConf.baseEndpoint())
-	if err != nil {
-		return fmt.Errorf("open tunnel to DVP base cluster: %w", err)
+
+	sshClient, sshNewErr := p.buildSshClient(ctx)
+	if sshNewErr != nil {
+		return fmt.Errorf("creating ssh client: %w", sshNewErr)
+	}
+
+	tun, tunErr := sshClient.OpenTunnel(ctx, apiServerRemotePort)
+
+	if tunErr != nil {
+		return fmt.Errorf("creating tunnel: %w", tunErr)
 	}
 	defer func() {
-		if cerr := conn.Close(); cerr != nil {
-			p.logger.Warn("close DVP base cluster connection", "err", cerr)
+		tunCloseErr := tun.Close()
+		if tunCloseErr != nil {
+			p.logger.Warn("failed to close tunnel", "err", tunCloseErr)
 		}
 	}()
 
-	kubeconfig, kubeconfigPath, err := loadKubeconfigViaTunnel(
-		conn.tunnel.LocalPort, config.E2ETempDir, p.dvpConf.SSHHost, p.dvpConf.KubeConfigPath,
-	)
-	if err != nil {
-		return fmt.Errorf("build kubeconfig for DVP base cluster: %w", err)
+	kubeconfig, buildRestConfErr := p.buildRestConfig(tun)
+	if buildRestConfErr != nil {
+		return fmt.Errorf("creating rest config: %w", buildRestConfErr)
 	}
-	p.logger.Info("connected to DVP base cluster",
-		"kubeconfig", kubeconfigPath,
-		"apiServer", kubeconfig.Host,
-	)
 
 	p.logger.Info("waiting for virtualization module to become ready",
 		"timeout", config.ModuleCheckTimeout,

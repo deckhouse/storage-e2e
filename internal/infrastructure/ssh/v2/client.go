@@ -30,7 +30,7 @@ limitations under the License.
 //
 //	c, _ := ssh.New(ctx, ssh.Route(jumpEp, targetEp))
 //	defer c.Close()
-//	t, _ := c.Tunnel(ctx, 6443)
+//	t, _ := c.OpenTunnel(ctx, 6443)
 //	defer t.Close()
 //	rest := &rest.Config{Host: "https://" + t.LocalAddr()}
 package ssh

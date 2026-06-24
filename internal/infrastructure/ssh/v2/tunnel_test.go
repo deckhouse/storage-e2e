@@ -81,9 +81,9 @@ func TestTunnelForwardsTraffic(t *testing.T) {
 	d := &serverDialer{addr: srv.addr()}
 	c := newTestClient(t, d, 0)
 
-	tun, err := c.Tunnel(context.Background(), echoPort)
+	tun, err := c.OpenTunnel(context.Background(), echoPort)
 	if err != nil {
-		t.Fatalf("Tunnel: %v", err)
+		t.Fatalf("OpenTunnel: %v", err)
 	}
 	defer tun.Close()
 
@@ -109,9 +109,9 @@ func TestTunnelHealsAfterDroppedSession(t *testing.T) {
 	d := &serverDialer{addr: srv.addr()}
 	c := newTestClient(t, d, 0)
 
-	tun, err := c.Tunnel(context.Background(), echoPort)
+	tun, err := c.OpenTunnel(context.Background(), echoPort)
 	if err != nil {
-		t.Fatalf("Tunnel: %v", err)
+		t.Fatalf("OpenTunnel: %v", err)
 	}
 	defer tun.Close()
 
@@ -164,9 +164,9 @@ func TestTunnelCloseIsIdempotentAndStopsListener(t *testing.T) {
 	d := &serverDialer{addr: srv.addr()}
 	c := newTestClient(t, d, 0)
 
-	tun, err := c.Tunnel(context.Background(), echoPort)
+	tun, err := c.OpenTunnel(context.Background(), echoPort)
 	if err != nil {
-		t.Fatalf("Tunnel: %v", err)
+		t.Fatalf("OpenTunnel: %v", err)
 	}
 	addr := tun.LocalAddr()
 
@@ -199,9 +199,9 @@ func TestTunnelStopsWhenContextCancelled(t *testing.T) {
 	c := newTestClient(t, d, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	tun, err := c.Tunnel(ctx, echoPort)
+	tun, err := c.OpenTunnel(ctx, echoPort)
 	if err != nil {
-		t.Fatalf("Tunnel: %v", err)
+		t.Fatalf("OpenTunnel: %v", err)
 	}
 	defer tun.Close()
 

@@ -46,7 +46,7 @@ type Tunnel struct {
 	lnCloseErr  error
 }
 
-func (c *Client) Tunnel(ctx context.Context, remotePort int) (*Tunnel, error) {
+func (c *Client) OpenTunnel(ctx context.Context, remotePort int) (*Tunnel, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("tunnel setup: %w", err)
 	}
