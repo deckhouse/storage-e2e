@@ -60,6 +60,11 @@ on:
         type: string
         required: false
         default: "TestSdsNodeConfigurator"
+      skip_storage_e2e_replace:
+        description: "Skip checkout + go mod replace of storage-e2e. Set true when the caller IS storage-e2e (avoids self-referencing replace)."
+        type: boolean
+        required: false
+        default: false
       storage_e2e_ref:
         description: "Git ref of storage-e2e for checkout"
         type: string
@@ -194,7 +199,7 @@ jobs:
           clean: false
 
       - name: Checkout storage-e2e
-        if: inputs.pipeline_mode != 'noop'
+        if: inputs.pipeline_mode != 'noop' && !inputs.skip_storage_e2e_replace
         uses: actions/checkout@v4
         with:
           repository: deckhouse/storage-e2e
@@ -203,13 +208,20 @@ jobs:
           clean: false
 
       - name: Setup Go
-        if: inputs.pipeline_mode != 'noop'
+        if: inputs.pipeline_mode != 'noop' && !inputs.skip_storage_e2e_replace
         uses: actions/setup-go@v5
         with:
           go-version-file: ${{ inputs.module_path }}/go.mod
           cache-dependency-path: |
             ${{ inputs.module_path }}/go.sum
             storage-e2e/go.sum
+
+      - name: Setup Go (self-hosted storage-e2e)
+        if: inputs.pipeline_mode != 'noop' && inputs.skip_storage_e2e_replace
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ inputs.module_path }}/go.mod
+          cache-dependency-path: ${{ inputs.module_path }}/go.sum
 
       - name: Setup test environment
         if: inputs.pipeline_mode != 'noop'
@@ -270,7 +282,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
-          go mod edit -replace=github.com/deckhouse/storage-e2e=${{ github.workspace }}/storage-e2e
+          if [ "${{ inputs.skip_storage_e2e_replace }}" != "true" ]; then
+            go mod edit -replace=github.com/deckhouse/storage-e2e=${{ github.workspace }}/storage-e2e
+          fi
 
           E2E_SSH_TUNNEL_PID=""
           e2e_stop_ssh_tunnel() {
