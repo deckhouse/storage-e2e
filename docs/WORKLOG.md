@@ -4,6 +4,12 @@ All notable changes to this repository are documented here. New entries are appe
 
 ---
 
+## 2026-06-07
+
+- **Update** `.github/workflows/unit-tests.yml`: integrate GitHub native code coverage (per-push) — add `code-quality: write` + `pull-requests: read` permissions, convert `coverage.out` to Cobertura XML via `boumenot/gocover-cobertura`, and publish with `actions/upload-code-coverage@v1`; coverage artifact now also includes `coverage.xml`
+
+---
+
 ## 2026-05-06
 
 - **Add** `UploadPrivate` on `ssh.SSHClient` (`internal/infrastructure/ssh`): SFTP `Chmod` immediately after `Create`, before payload copy; `uploadOverSFTPOnce`, `uploadWithSFTPRetries`, `jumpUploadWithSFTPRetries`; passphrase `BootstrapCluster` uses it with `install -d -m 0700` staging (`pkg/cluster/setup.go`); ARCHITECTURE mentions ssh uploads
@@ -105,6 +111,20 @@ All notable changes to this repository are documented here. New entries are appe
 
 ---
 
+## 2026-06-03
+
+- **Add** `.github/workflows/unit-tests.yml`: mandatory CI workflow that builds, vets and runs unit tests on every push (any branch) and on PRs to `main`; uses `go-version-file: go.mod`, `-race -shuffle=on -covermode=atomic`, uploads `coverage.out` artifact, scoped to `./internal/... ./pkg/...` so e2e suites stay off CI.
+- **Add** `Makefile`: `test` / `cover` / `vet` / `build` / `e2e` / `clean` targets mirroring the CI commands; `.gitignore` for `coverage.out` / `coverage.html`.
+- **Add** Wave 1 unit tests (`pkg/retry/retry_test.go`, `pkg/kubernetes/{apply,modules,poll}_test.go`, `pkg/cluster/vms_test.go`, `pkg/testkit/stress_tests_test.go`, `internal/config/types_yaml_test.go`, `internal/kubernetes/commander/client_test.go`, `internal/logger/level_test.go`): hermetic table-driven coverage of `retry.Do/IsRetryable/IsSSHConnectionError/WithRetryAfter`, YAML doc splitting/env-var scanning, module graph + topo sort + cycle detection, `cluster/vms` pure helpers, `commander` mappers / base64 / `NewClientWithOptions` validation, `stress-tests.Config.Validate` / `DefaultConfig`, `LevelToString` round-trip, `ClusterNode`/`ClusterDefinition` YAML unmarshal validation.
+- **Add** Wave 2 httptest tests (`internal/kubernetes/commander/client_http_test.go`): drives the Commander HTTP client (`GetClusterByID`, `ListClustersAPI` array/items/data/garbage, `GetClusterByName`, `CreateClusterFromTemplate`, `DeleteClusterByID`, `GetClusterKubeconfigByID` + cluster-details fallback, `GetRegistryByName`, `GetClusterConnectionInfo` precedence + defaults) and all five `setAuthHeaders` paths via a real `httptest.Server`.
+- **Update** `docs/TESTS_IMPLEMENTATION_PLAN.md`: triggers changed from `push → main` to push-on-any-branch + `pull_request → main`; status header refreshed; rollout phases marked Done/Pending; exact `gh api` branch-protection command documented.
+- **Update** `.github/workflows/gitleaks-scan-on-pr.yml` → renamed to `.github/workflows/gitleaks.yml`: workflow `name` shortened to `Gitleaks`, added `push: {}` trigger so secret scanning runs on every push (any branch), not only on PRs; added cancel-in-progress concurrency group.
+- **Update** `.github/workflows/gitleaks.yml`: split into two jobs gated by `github.event_name` — `gitleaks_diff` (`scan_mode: diff`) for `pull_request`, `gitleaks_full` (`scan_mode: full`) for `push`; fixes `fatal: invalid refspec '+refs/pull//merge:...'` that broke push runs because the upstream action's diff mode needs `github.event.number`. Both jobs share check name `Gitleaks scan`.
+- **Update** `.github/workflows/gitleaks.yml`: reverted to `pull_request`-only (single `gitleaks_scan` job, `scan_mode: diff`); dropped the `push` trigger because the upstream action's diff mode needs `github.event.number` and fails on push with `fatal: invalid refspec '+refs/pull//merge:...'`.
+- **Add** `.gitleaksignore`: ignores the `generic-api-key` false positive on `internal/kubernetes/commander/client_test.go:75` (base64 test fixture) by fingerprint at commit `5f1edc2`; the diff scan flags the introducing commit, so the later inline `gitleaks:allow` could not suppress it.
+
+---
+
 ## 2026-06-08
 
 - **Add** `pkg/config/config_test.go`: unit tests for `config.New` covering provider parsing, missing required `TEST_CLUSTER_PROVIDER` (error), empty-value handling, and table-driven provider values.
@@ -130,3 +150,15 @@ All notable changes to this repository are documented here. New entries are appe
 - **Add** `.github/workflows/e2e-self-test.yml`: self-test caller that triggers the reusable workflow in `noop` mode on PRs touching CI files.
 - **Update** `.github/workflows/e2e-reusable.yml`: add `skip_storage_e2e_replace` boolean input; gate `checkout storage-e2e`, `go mod edit -replace`, and `setup-go` (with dual-path cache) on this flag so storage-e2e can call the workflow without circular self-reference.
 - **Update** `.github/workflows/e2e-self-test.yml`: set `skip_storage_e2e_replace: true`, `test_package: ./tests/test-template/`, `test_suite: TestTemplate`.
+---
+
+## 2026-06-23
+
+- **Add** `gitleaks.toml`: content-based allowlist (`[extend] useDefault=true` + `regexTarget="line"` regex for `dXNlcjp0b2tlbg==`) for the base64 test fixture in `internal/kubernetes/commander/client_test.go`. Replaces the commit-pinned `.gitleaksignore` fingerprint, which broke after rebasing `unit-tests` onto `main` (the introducing commit's SHA changed `5f1edc2`→`35e9bc7`). The regex allowlist survives history rewrites.
+- **Bugfix** lint fixes in unit-test files surfaced by `main`'s golangci-lint config (after rebase): `pkg/retry/retry_test.go` (gocritic paramTypeCombine on `statusErr`, `cancelled`→`canceled` misspellings), `internal/kubernetes/commander/client_http_test.go` (`behaviour`→`behavior`, gofmt), `pkg/testkit/stress_tests_test.go` (gofmt), `pkg/kubernetes/apply_test.go` (dropped ineffectual `got` assignment in `FindUnsetEnvVars` test), `pkg/cluster/vms_test.go` (staticcheck QF1001 De Morgan simplification).
+
+---
+
+## 2026-06-24
+
+- **Remove** `.github/workflows/unit-tests.yml` per PR #20 review: `main`'s `.github/workflows/go-checks.yml` already runs lint + race-enabled unit tests + coverage publishing, so the dedicated workflow was a duplicate. Updated the `Makefile` header comment to point at `go-checks.yml` instead of the removed workflow.
