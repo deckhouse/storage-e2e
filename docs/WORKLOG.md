@@ -204,3 +204,13 @@ All notable changes to this repository are documented here. New entries are appe
 - **Bugfix** restore the `hack/deckhouse-stub` `go.mod` and `replace` block in `go.mod` that were dropped during the
   `deckhouse v1.74.0 → v1.76.0` bump (GoLand `go list -m -u all` failed on unpublished submodules); added the new
   `go_lib/configtools/conversion` submodule introduced in v1.76.0 to the replace block.
+- **Update** `.github/scripts/e2e-run-tests.sh`: in the consumer-module branch, back up `go.mod`/`go.sum` and restore
+  them via a `trap ... EXIT` (preserving `$?`) so the persistent `clean: false` workspace is not left with a stale
+  absolute-path replace, and replaced `go mod tidy` with `go mod download` for deterministic, network-light runs;
+  extended `.github/scripts/tests/test-run-tests.sh` to assert `mod download` (not `mod tidy`) and that `go.mod` is
+  restored after the run.
+- **Add** `docs/superpowers/specs/2026-06-25-cluster-tool-images-design.md`: design for containerizing
+  `cmd/bootstrap-cluster` + `cmd/remove-cluster` into a single versioned `cluster-tool` image (dev-registry, semver on
+  release tags), consumed via an optional `cluster_tool_image` input in `e2e.yml` (image path for consumers, `go run`
+  kept for self-test); no `go:embed` refactor since the legacy `PrepareBootstrapConfig` template path is not on the
+  image's DVP bootstrap path.

@@ -3,6 +3,13 @@
 # builds against the checked-out storage-e2e, unless the module *is*
 # storage-e2e (self-test), in which case the replace is skipped.
 #
+# For consumer modules the original go.mod (and go.sum, if present) are backed
+# up before editing and restored via a trap on EXIT, so the working tree is not
+# left mutated on self-hosted runners (which check out with clean: false). After
+# applying the replace we run `go mod download` (only fetches what is already
+# pinned) instead of `go mod tidy`, keeping the run deterministic and avoiding
+# rewriting the dependency graph.
+#
 # No SSH tunnel is created here: the Go code establishes its own tunnel.
 #
 # Inputs (env):
@@ -30,8 +37,30 @@ if [ "$module_name" != "github.com/deckhouse/storage-e2e" ]; then
     echo "::error::E2E_STORAGE_E2E_DIR is required to replace storage-e2e for module ${module_name}"
     exit 1
   fi
+  # Back up go.mod/go.sum and restore them on exit so the persistent (clean:
+  # false) working tree is not left with a stale absolute-path replace. Restore
+  # inside the trap without clobbering the script's exit code ($?).
+  gomod_backup="$(mktemp)"
+  cp go.mod "$gomod_backup"
+  gosum_backup=""
+  if [ -f go.sum ]; then
+    gosum_backup="$(mktemp)"
+    cp go.sum "$gosum_backup"
+  fi
+  restore_gomod() {
+    rc=$?
+    cp "$gomod_backup" go.mod
+    rm -f "$gomod_backup"
+    if [ -n "$gosum_backup" ]; then
+      cp "$gosum_backup" go.sum
+      rm -f "$gosum_backup"
+    fi
+    return $rc
+  }
+  trap restore_gomod EXIT
+
   "$go_bin" mod edit -replace="github.com/deckhouse/storage-e2e=${E2E_STORAGE_E2E_DIR}"
-  "$go_bin" mod tidy
+  "$go_bin" mod download
 fi
 
 echo "Ginkgo label filter: ${label_filter}"
