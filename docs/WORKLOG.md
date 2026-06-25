@@ -175,3 +175,4 @@ All notable changes to this repository are documented here. New entries are appe
 - **Add** `.github/workflows/e2e.yml` reusable workflow: resolve → bootstrap → run-tests → teardown, label-gated, stable per-PR namespace.
 - **Add** `.github/templates/e2e-tests.yml` caller template for consumer modules.
 - **Remove** old CI (`e2e-reusable.yml`, `e2e-prepare-env.sh`, `e2e-prepare-workspace.sh`); **Refactor** `e2e-self-test.yml` into a thin caller of `e2e.yml`.
+- **Update** `e2e-self-test.yml`: pin `storage_e2e_ref` to PR head SHA so self-test dogfoods PR scripts/cmd.

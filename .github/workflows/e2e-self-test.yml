@@ -28,4 +28,5 @@ jobs:
       module_path: .
       test_package: ./tests/test-template/
       cluster_config: tests/test-template/cluster_config.yml
+      storage_e2e_ref: ${{ github.event.pull_request.head.sha }}
     secrets: inherit
