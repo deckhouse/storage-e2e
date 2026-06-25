@@ -162,3 +162,11 @@ All notable changes to this repository are documented here. New entries are appe
 ## 2026-06-24
 
 - **Remove** `.github/workflows/unit-tests.yml` per PR #20 review: `main`'s `.github/workflows/go-checks.yml` already runs lint + race-enabled unit tests + coverage publishing, so the dedicated workflow was a duplicate. Updated the `Makefile` header comment to point at `go-checks.yml` instead of the removed workflow.
+- **Update** `.github/workflows/e2e-reusable.yml`: replace mocked `create-cluster`/`teardown-cluster` jobs with real steps that check out the repo (+ storage-e2e when `skip_storage_e2e_replace=false`), set up Go, materialize `E2E_DVP_BASE_CLUSTER_*` SSH key/kubeconfig to temp files, and run `go run ./cmd/bootstrap-cluster` / `go run ./cmd/remove-cluster` with the DVP provider env. `noop` mode still echoes.
+
+---
+
+## 2026-06-25
+
+- **Add** `docs/superpowers/specs/2026-06-25-e2e-github-actions-ci-design.md`: design for a from-scratch reusable GitHub Actions e2e CI (resolve → bootstrap → run-tests → teardown), PR-label driven (`e2e/run` gate, `e2e/keep-cluster` skips teardown, `e2e/label:*` → Ginkgo filter), stable per-PR namespace, with a caller template for consumer modules.
+- **Add** `.github/scripts/e2e-resolve-labels.sh` + test: PR labels → keep_cluster/ginkgo_filter/namespace outputs.
