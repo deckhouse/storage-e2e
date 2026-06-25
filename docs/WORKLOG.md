@@ -182,3 +182,10 @@ All notable changes to this repository are documented here. New entries are appe
 - **Update** `.github/workflows/e2e.yml`: bump actions to latest (checkout v4→v7, setup-go v5→v6, upload-artifact v4→v7)
   and set `cache: false` on Setup Go (self-hosted runner caches Go in `runner.temp`, so setup-go's post-job cache save
   was slow and targeted the wrong dir).
+- **Add** `e2e/` as a separate Go module (`github.com/deckhouse/storage-e2e/e2e`) with a Ginkgo suite (
+  `e2e_suite_test.go`) and four label-tagged smoke specs (`e2e_test.go`: smoke/integration/regress/stress-test) to
+  exercise CI label routing; added `./e2e` to `go.work`. Does not use the (old) `pkg/storage-e2e` SDK yet; the cluster
+  is provisioned by the CI bootstrap job.
+- **Update** `.github/workflows/e2e-self-test.yml`: point self-test at the new `e2e` module (`module_path: e2e`,
+  `test_package: ./`, `cluster_config: e2e/cluster_config.yml`), so it now also exercises the `go mod replace` path.
+  Removed stray duplicate `e2e/tests/cluster_config.yaml`.

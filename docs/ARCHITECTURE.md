@@ -124,6 +124,12 @@ storage-e2e/
 │   │
 │   └── create-test.sh            # Script to create new tests from template
 │
+├── e2e/                           # Separate Go module: storage-e2e's own e2e suite
+│   ├── go.mod                    # module github.com/deckhouse/storage-e2e/e2e
+│   ├── e2e_suite_test.go         # Ginkgo runner (TestE2E)
+│   ├── e2e_test.go               # Labeled specs: smoke/integration/regress/stress-test
+│   └── cluster_config.yml        # Cluster definition for the self-test bootstrap
+│
 ├── cmd/                           # Pipeline entrypoints
 │   ├── bootstrap-cluster/        # `go run` target used by the CI bootstrap job
 │   └── remove-cluster/           # `go run` target used by the CI teardown job
@@ -154,6 +160,7 @@ storage-e2e/
 │
 ├── go.mod
 ├── go.sum
+├── go.work                        # Workspace: root module + ./e2e + third_party/deckhouse
 ├── README.md                      # Main documentation
 └── LICENSE
 ```
