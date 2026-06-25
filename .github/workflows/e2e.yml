@@ -104,12 +104,6 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
-      - name: Reset stale sparse-checkout (self-hosted runners)
-        run: |
-          git -C "${{ github.workspace }}" sparse-checkout disable 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --unset-all core.sparseCheckout 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
-
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
@@ -170,12 +164,6 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 240
     steps:
-      - name: Reset stale sparse-checkout (self-hosted runners)
-        run: |
-          git -C "${{ github.workspace }}" sparse-checkout disable 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --unset-all core.sparseCheckout 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
-
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
@@ -227,12 +215,6 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
-      - name: Reset stale sparse-checkout (self-hosted runners)
-        run: |
-          git -C "${{ github.workspace }}" sparse-checkout disable 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --unset-all core.sparseCheckout 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
-
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
