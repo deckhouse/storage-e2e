@@ -195,3 +195,12 @@ All notable changes to this repository are documented here. New entries are appe
   submodules (dhctl, egress-gateway-agent, go_lib/cloud-data, go_lib/dependency/{k8s/drain,vsphere}, go_lib/registry) at
   the stub, so `go list -m all` (IDE indexing) resolves without a local deckhouse clone. Builds/tests still use the real
   deckhouse module from the proxy.
+- **Bugfix** `.github/workflows/e2e.yml`: fix `cluster_config not found` on self-hosted runners. The `resolve`
+  job's non-cone sparse checkout of `.github/scripts` polluted the shared workspace-root `.git`
+  (`core.sparseCheckout=true` persists, actions/checkout#2249), so `bootstrap`'s `clean: false` re-checkout only
+  restored `.github/scripts` and dropped `e2e/cluster_config.yml`. Moved `resolve` to a dedicated `_se2e-scripts`
+  path with cone mode (no root pollution) and added a "Reset stale sparse-checkout" step before the module checkout
+  in bootstrap/run-tests/teardown so already-polluted runners self-heal.
+- **Bugfix** restore the `hack/deckhouse-stub` `go.mod` and `replace` block in `go.mod` that were dropped during the
+  `deckhouse v1.74.0 → v1.76.0` bump (GoLand `go list -m -u all` failed on unpublished submodules); added the new
+  `go_lib/configtools/conversion` submodule introduced in v1.76.0 to the replace block.

@@ -86,8 +86,8 @@ jobs:
         with:
           repository: deckhouse/storage-e2e
           ref: ${{ inputs.storage_e2e_ref }}
+          path: _se2e-scripts
           sparse-checkout: .github/scripts
-          sparse-checkout-cone-mode: false
 
       - name: Resolve labels
         id: resolve
@@ -96,7 +96,7 @@ jobs:
           E2E_MODULE_SLUG: ${{ inputs.module_slug }}
           E2E_PR_NUMBER: ${{ github.event.pull_request.number }}
           E2E_DEFAULT_LABEL_FILTER: ${{ inputs.label_filter }}
-        run: bash .github/scripts/e2e-resolve-labels.sh
+        run: bash _se2e-scripts/.github/scripts/e2e-resolve-labels.sh
 
   bootstrap:
     name: bootstrap
@@ -104,6 +104,12 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
+      - name: Reset stale sparse-checkout (self-hosted runners)
+        run: |
+          git -C "${{ github.workspace }}" sparse-checkout disable 2>/dev/null || true
+          git -C "${{ github.workspace }}" config --unset-all core.sparseCheckout 2>/dev/null || true
+          git -C "${{ github.workspace }}" config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
+
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
@@ -164,6 +170,12 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 240
     steps:
+      - name: Reset stale sparse-checkout (self-hosted runners)
+        run: |
+          git -C "${{ github.workspace }}" sparse-checkout disable 2>/dev/null || true
+          git -C "${{ github.workspace }}" config --unset-all core.sparseCheckout 2>/dev/null || true
+          git -C "${{ github.workspace }}" config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
+
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
@@ -215,6 +227,12 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
+      - name: Reset stale sparse-checkout (self-hosted runners)
+        run: |
+          git -C "${{ github.workspace }}" sparse-checkout disable 2>/dev/null || true
+          git -C "${{ github.workspace }}" config --unset-all core.sparseCheckout 2>/dev/null || true
+          git -C "${{ github.workspace }}" config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
+
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
