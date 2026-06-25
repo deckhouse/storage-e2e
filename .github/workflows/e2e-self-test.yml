@@ -20,7 +20,6 @@ on:
 
 jobs:
   e2e:
-    # Dogfood the reusable workflow against storage-e2e itself, gated by e2e/run.
     if: ${{ contains(github.event.pull_request.labels.*.name, 'e2e/run') }}
     uses: ./.github/workflows/e2e.yml
     with:

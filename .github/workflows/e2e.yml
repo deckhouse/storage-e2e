@@ -82,7 +82,7 @@ jobs:
       namespace: ${{ steps.resolve.outputs.namespace }}
     steps:
       - name: Checkout storage-e2e scripts (sparse)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: deckhouse/storage-e2e
           ref: ${{ inputs.storage_e2e_ref }}
@@ -105,12 +105,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout module repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           clean: false
 
       - name: Checkout storage-e2e
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: deckhouse/storage-e2e
           ref: ${{ inputs.storage_e2e_ref }}
@@ -118,10 +118,10 @@ jobs:
           clean: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: _storage-e2e/go.mod
-          cache-dependency-path: _storage-e2e/go.sum
+          cache: false
 
       - name: Prepare credentials
         env:
@@ -165,12 +165,12 @@ jobs:
     timeout-minutes: 240
     steps:
       - name: Checkout module repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           clean: false
 
       - name: Checkout storage-e2e
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: deckhouse/storage-e2e
           ref: ${{ inputs.storage_e2e_ref }}
@@ -178,10 +178,10 @@ jobs:
           clean: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: ${{ inputs.module_path }}/go.mod
-          cache-dependency-path: ${{ inputs.module_path }}/go.sum
+          cache: false
 
       - name: Run E2E tests
         id: run_tests
@@ -201,7 +201,7 @@ jobs:
 
       - name: Upload E2E logs
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-test-logs-${{ inputs.module_slug }}-pr${{ github.event.pull_request.number }}
           path: ${{ github.workspace }}/e2e-test-output.log
@@ -216,12 +216,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout module repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           clean: false
 
       - name: Checkout storage-e2e
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: deckhouse/storage-e2e
           ref: ${{ inputs.storage_e2e_ref }}
@@ -229,10 +229,10 @@ jobs:
           clean: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: _storage-e2e/go.mod
-          cache-dependency-path: _storage-e2e/go.sum
+          cache: false
 
       - name: Prepare credentials
         env:

@@ -179,3 +179,6 @@ All notable changes to this repository are documented here. New entries are appe
 - **Update** docs for the new CI: rewrote `docs/CI.md`, README CI section, ARCHITECTURE `.github/` + `cmd/` tree.
 - **Update** `docs/CI.md`: note that `test_timeout` is reserved and not yet consumed by the skeleton run-tests.
 - **Update** `e2e.yml`: clarify `test_timeout` input description as reserved/not-yet-wired.
+- **Update** `.github/workflows/e2e.yml`: bump actions to latest (checkout v4→v7, setup-go v5→v6, upload-artifact v4→v7)
+  and set `cache: false` on Setup Go (self-hosted runner caches Go in `runner.temp`, so setup-go's post-job cache save
+  was slow and targeted the wrong dir).
