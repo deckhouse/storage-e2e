@@ -1,8 +1,5 @@
 name: E2E self-test
 
-# Smoke-tests the reusable E2E workflow (noop mode — no cluster, no tests).
-# Runs on PRs that touch CI workflow files or go.mod/go.sum.
-
 on:
   pull_request:
     paths:
