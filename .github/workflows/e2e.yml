@@ -1,0 +1,265 @@
+# Copyright 2026 Flant JSC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: E2E
+
+on:
+  workflow_call:
+    inputs:
+      module_slug:
+        description: "Module slug used in the namespace (e.g. csi-ceph)"
+        type: string
+        required: true
+      module_path:
+        description: "Path to the Go module containing the tests"
+        type: string
+        required: false
+        default: "."
+      test_package:
+        description: "Go package to test"
+        type: string
+        required: false
+        default: "./tests/"
+      label_filter:
+        description: "Default Ginkgo filter when no e2e/label:* labels are present"
+        type: string
+        required: false
+        default: "!stress-test"
+      cluster_config:
+        description: "Path (relative to the module repo) to the cluster YAML definition"
+        type: string
+        required: true
+      storage_e2e_ref:
+        description: "Git ref of storage-e2e to checkout"
+        type: string
+        required: false
+        default: "main"
+      runner_labels:
+        description: "JSON array of runner labels"
+        type: string
+        required: false
+        default: '["self-hosted","regular"]'
+      test_timeout:
+        description: "Ginkgo suite timeout (also used as go test -timeout)"
+        type: string
+        required: false
+        default: "90m"
+
+concurrency:
+  group: e2e-${{ inputs.module_slug }}-pr${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GOWORK: "off"
+
+jobs:
+  resolve:
+    name: resolve
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    outputs:
+      keep_cluster: ${{ steps.resolve.outputs.keep_cluster }}
+      ginkgo_filter: ${{ steps.resolve.outputs.ginkgo_filter }}
+      namespace: ${{ steps.resolve.outputs.namespace }}
+    steps:
+      - name: Checkout storage-e2e scripts (sparse)
+        uses: actions/checkout@v4
+        with:
+          repository: deckhouse/storage-e2e
+          ref: ${{ inputs.storage_e2e_ref }}
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve labels
+        id: resolve
+        env:
+          E2E_PR_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          E2E_MODULE_SLUG: ${{ inputs.module_slug }}
+          E2E_PR_NUMBER: ${{ github.event.pull_request.number }}
+          E2E_DEFAULT_LABEL_FILTER: ${{ inputs.label_filter }}
+        run: bash .github/scripts/e2e-resolve-labels.sh
+
+  bootstrap:
+    name: bootstrap
+    needs: resolve
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout module repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Checkout storage-e2e
+        uses: actions/checkout@v4
+        with:
+          repository: deckhouse/storage-e2e
+          ref: ${{ inputs.storage_e2e_ref }}
+          path: _storage-e2e
+          clean: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: _storage-e2e/go.mod
+          cache-dependency-path: _storage-e2e/go.sum
+
+      - name: Prepare credentials
+        env:
+          E2E_SSH_PRIVATE_KEY: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY }}
+          E2E_CLUSTER_KUBECONFIG: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
+        run: bash _storage-e2e/.github/scripts/e2e-prepare-creds.sh
+
+      - name: Bootstrap cluster
+        working-directory: _storage-e2e
+        env:
+          GOMODCACHE: ${{ runner.temp }}/e2e-gomodcache
+          GOCACHE: ${{ runner.temp }}/e2e-gocache
+          GOPROXY: ${{ secrets.GOPROXY }}
+          E2E_TEST_CLUSTER_PROVIDER: ${{ secrets.E2E_TEST_CLUSTER_PROVIDER || 'dvp' }}
+          E2E_CLUSTER_CONFIG_YAML_PATH: ${{ github.workspace }}/${{ inputs.cluster_config }}
+          E2E_DVP_BASE_CLUSTER_SSH_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_USER }}
+          E2E_DVP_BASE_CLUSTER_SSH_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_HOST }}
+          E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE }}
+          E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST }}
+          E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER }}
+          E2E_DVP_BASE_CLUSTER_NAMESPACE: ${{ needs.resolve.outputs.namespace }}
+          LOG_LEVEL: ${{ vars.E2E_LOG_LEVEL || 'info' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${GOMODCACHE}" "${GOCACHE}"
+          if [ ! -f "${E2E_CLUSTER_CONFIG_YAML_PATH}" ]; then
+            echo "::error::cluster_config not found at ${E2E_CLUSTER_CONFIG_YAML_PATH}"
+            exit 1
+          fi
+          go run ./cmd/bootstrap-cluster
+
+      - name: Cleanup temp credentials
+        if: ${{ always() }}
+        run: rm -f "${E2E_DVP_BASE_CLUSTER_SSH_KEY_PATH:-}" "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_PATH:-}" 2>/dev/null || true
+
+  run-tests:
+    name: run-tests
+    needs: [resolve, bootstrap]
+    if: ${{ needs.bootstrap.result == 'success' }}
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 240
+    steps:
+      - name: Checkout module repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Checkout storage-e2e
+        uses: actions/checkout@v4
+        with:
+          repository: deckhouse/storage-e2e
+          ref: ${{ inputs.storage_e2e_ref }}
+          path: _storage-e2e
+          clean: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ inputs.module_path }}/go.mod
+          cache-dependency-path: ${{ inputs.module_path }}/go.sum
+
+      - name: Run E2E tests
+        id: run_tests
+        env:
+          GOMODCACHE: ${{ runner.temp }}/e2e-gomodcache
+          GOCACHE: ${{ runner.temp }}/e2e-gocache
+          GOPROXY: ${{ secrets.GOPROXY }}
+          E2E_MODULE_PATH: ${{ inputs.module_path }}
+          E2E_TEST_PACKAGE: ${{ inputs.test_package }}
+          E2E_GINKGO_LABEL_FILTER: ${{ needs.resolve.outputs.ginkgo_filter }}
+          E2E_STORAGE_E2E_DIR: ${{ github.workspace }}/_storage-e2e
+          E2E_GO_TEST_TIMEOUT: "3h30m"
+        run: |
+          set -euo pipefail
+          mkdir -p "${GOMODCACHE}" "${GOCACHE}"
+          bash _storage-e2e/.github/scripts/e2e-run-tests.sh
+
+      - name: Upload E2E logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-logs-${{ inputs.module_slug }}-pr${{ github.event.pull_request.number }}
+          path: ${{ github.workspace }}/e2e-test-output.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  teardown:
+    name: teardown
+    needs: [resolve, bootstrap, run-tests]
+    if: ${{ always() && needs.bootstrap.result == 'success' && needs.resolve.outputs.keep_cluster != 'true' }}
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout module repo
+        uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Checkout storage-e2e
+        uses: actions/checkout@v4
+        with:
+          repository: deckhouse/storage-e2e
+          ref: ${{ inputs.storage_e2e_ref }}
+          path: _storage-e2e
+          clean: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: _storage-e2e/go.mod
+          cache-dependency-path: _storage-e2e/go.sum
+
+      - name: Prepare credentials
+        env:
+          E2E_SSH_PRIVATE_KEY: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY }}
+          E2E_CLUSTER_KUBECONFIG: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
+        run: bash _storage-e2e/.github/scripts/e2e-prepare-creds.sh
+
+      - name: Remove cluster
+        working-directory: _storage-e2e
+        env:
+          GOMODCACHE: ${{ runner.temp }}/e2e-gomodcache
+          GOCACHE: ${{ runner.temp }}/e2e-gocache
+          GOPROXY: ${{ secrets.GOPROXY }}
+          E2E_TEST_CLUSTER_PROVIDER: ${{ secrets.E2E_TEST_CLUSTER_PROVIDER || 'dvp' }}
+          E2E_CLUSTER_CONFIG_YAML_PATH: ${{ github.workspace }}/${{ inputs.cluster_config }}
+          E2E_DVP_BASE_CLUSTER_SSH_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_USER }}
+          E2E_DVP_BASE_CLUSTER_SSH_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_HOST }}
+          E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE }}
+          E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST }}
+          E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER }}
+          E2E_DVP_BASE_CLUSTER_NAMESPACE: ${{ needs.resolve.outputs.namespace }}
+          LOG_LEVEL: ${{ vars.E2E_LOG_LEVEL || 'info' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${GOMODCACHE}" "${GOCACHE}"
+          go run ./cmd/remove-cluster
+
+      - name: Cleanup temp credentials
+        if: ${{ always() }}
+        run: rm -f "${E2E_DVP_BASE_CLUSTER_SSH_KEY_PATH:-}" "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_PATH:-}" 2>/dev/null || true
