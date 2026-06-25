@@ -1,11 +1,4 @@
-# Reusable E2E pipeline.
-#
-# pipeline_mode:
-#   create-and-test — create-cluster (cmd/bootstrap-cluster) + run-tests (full e2e flow from module side)
-#   teardown-only   — teardown-cluster (cmd/remove-cluster)
-#   noop            — all jobs echo "mocked"; used for CI self-testing in storage-e2e itself
-
-name: Storage E2E (reusable)
+name: Storage E2E tests
 
 concurrency:
   group: e2e-${{ inputs.module_slug }}-pr${{ inputs.pr_number }}
@@ -19,10 +12,6 @@ permissions:
 on:
   workflow_call:
     inputs:
-      pipeline_mode:
-        description: "create-and-test | teardown-only | noop"
-        type: string
-        required: true
       pr_number:
         description: "Pull request number (stable session/namespace key)"
         type: string
@@ -35,15 +24,6 @@ on:
         description: "Path to the module e2e Go module root"
         type: string
         required: true
-      cluster_provider:
-        description: "Cluster provider: alwaysCreateNew | alwaysUseExisting | commander"
-        type: string
-        required: true
-      cluster_config:
-        description: "Path to cluster_config.yml relative to repository root"
-        type: string
-        required: false
-        default: ""
       test_package:
         description: "Go package for run-tests"
         type: string
@@ -54,16 +34,6 @@ on:
         type: string
         required: false
         default: "!stress-test"
-      test_timeout:
-        description: "go test / ginkgo timeout (E2E_TEST_TIMEOUT)"
-        type: string
-        required: false
-        default: "3h30m"
-      test_suite:
-        description: "Go test function name to run (passed to -run). Default matches sds-node-configurator."
-        type: string
-        required: false
-        default: "TestSdsNodeConfigurator"
       skip_storage_e2e_replace:
         description: "Skip checkout + go mod replace of storage-e2e. Set true when the caller IS storage-e2e (avoids self-referencing replace)."
         type: boolean
@@ -83,8 +53,6 @@ on:
       run_tests_result:
         description: "Result of run-tests job"
         value: ${{ jobs.run-tests.result }}
-    # Secrets are passed by callers via `secrets: inherit`, so they are not enumerated here.
-    # Referenced secret names live inline in job/step env blocks below.
 
 defaults:
   run:
@@ -92,7 +60,7 @@ defaults:
 
 env:
   E2E_PR_NUMBER: ${{ inputs.pr_number }}
-  # Stable PR-scoped session cache (one entry per PR; concurrency group prevents parallel E2E on same PR).
+
   E2E_CACHE_KEY: e2e-pr-${{ inputs.pr_number }}-session
   TEST_CLUSTER_NAMESPACE: e2e-${{ inputs.module_slug }}-pr${{ inputs.pr_number }}
   TEST_CLUSTER_CREATE_MODE: ${{ secrets.E2E_TEST_CLUSTER_PROVIDER || inputs.cluster_provider }}
@@ -104,7 +72,6 @@ env:
   E2E_DVP_BASE_CLUSTER_SSH_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_USER }}
   E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST }}
   E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER }}
-  # API SSH tunnel: ProxyJump only when jump secret is set (do not fall back to SSH_HOST).
   E2E_TUNNEL_SSH_JUMP_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST }}
   E2E_TUNNEL_SSH_JUMP_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER }}
   LOG_LEVEL: ${{ vars.E2E_LOG_LEVEL || 'info' }}
@@ -113,19 +80,12 @@ env:
 
 jobs:
   create-cluster:
-    if: inputs.pipeline_mode == 'create-and-test' || inputs.pipeline_mode == 'noop'
     name: create-cluster
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
-      - name: create-cluster (noop)
-        if: inputs.pipeline_mode == 'noop'
-        run: |
-          echo "create-cluster is mocked (pipeline_mode: noop)"
-          echo "PR: ${{ inputs.pr_number }}, module: ${{ inputs.module_slug }}"
-
-      - name: Prepare workspace for checkout (self-hosted)
-        if: inputs.pipeline_mode != 'noop'
+      - name: Prepare workspace for checkout
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           WS="${GITHUB_WORKSPACE}"
@@ -140,29 +100,21 @@ jobs:
           done
 
       - name: Checkout repository
-        if: inputs.pipeline_mode != 'noop'
+        if: ${{ !inputs.dry_run }}
         uses: actions/checkout@v4
         with:
           clean: false
 
-      - name: Checkout storage-e2e
-        if: inputs.pipeline_mode != 'noop' && !inputs.skip_storage_e2e_replace
-        uses: actions/checkout@v4
-        with:
-          repository: deckhouse/storage-e2e
-          ref: ${{ inputs.storage_e2e_ref }}
-          path: storage-e2e
-          clean: false
 
       - name: Setup Go
-        if: inputs.pipeline_mode != 'noop'
+        if: ${{ !inputs.dry_run }}
         uses: actions/setup-go@v5
         with:
           go-version-file: ${{ inputs.skip_storage_e2e_replace && 'go.mod' || 'storage-e2e/go.mod' }}
           cache-dependency-path: ${{ inputs.skip_storage_e2e_replace && 'go.sum' || 'storage-e2e/go.sum' }}
 
       - name: Prepare credentials
-        if: inputs.pipeline_mode != 'noop'
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           E2E_SSH_KEY_PATH=$(mktemp /tmp/e2e_ssh_key.XXXXXX)
@@ -183,7 +135,7 @@ jobs:
           E2E_CLUSTER_KUBECONFIG: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
 
       - name: Bootstrap cluster
-        if: inputs.pipeline_mode != 'noop'
+        if: ${{ !inputs.dry_run }}
         working-directory: ${{ inputs.skip_storage_e2e_replace && '.' || 'storage-e2e' }}
         env:
           GOMODCACHE: ${{ runner.temp }}/e2e-gomodcache
@@ -207,13 +159,13 @@ jobs:
           go run ./cmd/bootstrap-cluster
 
       - name: Cleanup temp credentials
-        if: always() && inputs.pipeline_mode != 'noop'
+        if: ${{ always() && !inputs.dry_run }}
         run: rm -f "${E2E_SSH_KEY_PATH:-}" "${E2E_KUBECONFIG_PATH:-}" 2>/dev/null || true
 
   run-tests:
-    if: (inputs.pipeline_mode == 'create-and-test' && needs.create-cluster.result == 'success') || inputs.pipeline_mode == 'noop'
     name: run-tests
     needs: create-cluster
+    if: ${{ inputs.dry_run || needs.create-cluster.result == 'success' }}
     timeout-minutes: 240
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     env:
@@ -223,14 +175,8 @@ jobs:
       checks: write
       contents: read
     steps:
-      - name: run-tests (noop)
-        if: inputs.pipeline_mode == 'noop'
-        run: |
-          echo "run-tests is mocked (pipeline_mode: noop)"
-          echo "PR: ${{ inputs.pr_number }}, module: ${{ inputs.module_slug }}"
-
-      - name: Prepare workspace for checkout (self-hosted)
-        if: inputs.pipeline_mode != 'noop'
+      - name: Prepare workspace for checkout
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           WS="${GITHUB_WORKSPACE}"
@@ -245,13 +191,13 @@ jobs:
           done
 
       - name: Checkout repository
-        if: inputs.pipeline_mode != 'noop'
+        if: ${{ !inputs.dry_run }}
         uses: actions/checkout@v4
         with:
           clean: false
 
       - name: Checkout storage-e2e
-        if: inputs.pipeline_mode != 'noop' && !inputs.skip_storage_e2e_replace
+        if: ${{ !inputs.dry_run && !inputs.skip_storage_e2e_replace }}
         uses: actions/checkout@v4
         with:
           repository: deckhouse/storage-e2e
@@ -260,7 +206,7 @@ jobs:
           clean: false
 
       - name: Setup Go
-        if: inputs.pipeline_mode != 'noop' && !inputs.skip_storage_e2e_replace
+        if: ${{ !inputs.dry_run && !inputs.skip_storage_e2e_replace }}
         uses: actions/setup-go@v5
         with:
           go-version-file: ${{ inputs.module_path }}/go.mod
@@ -269,14 +215,14 @@ jobs:
             storage-e2e/go.sum
 
       - name: Setup Go (self-hosted storage-e2e)
-        if: inputs.pipeline_mode != 'noop' && inputs.skip_storage_e2e_replace
+        if: ${{ !inputs.dry_run && inputs.skip_storage_e2e_replace }}
         uses: actions/setup-go@v5
         with:
           go-version-file: ${{ inputs.module_path }}/go.mod
           cache-dependency-path: ${{ inputs.module_path }}/go.sum
 
       - name: Setup test environment
-        if: inputs.pipeline_mode != 'noop'
+        if: ${{ !inputs.dry_run }}
         run: |
           E2E_SSH_KEY_PATH=$(mktemp /tmp/e2e_ssh_key.XXXXXX)
           E2E_SSH_PUB_PATH=$(mktemp /tmp/e2e_ssh_pub.XXXXXX)
@@ -310,7 +256,7 @@ jobs:
           E2E_CLUSTER_KUBECONFIG: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
 
       - name: Run E2E tests (build_dev-compatible flow)
-        if: inputs.pipeline_mode != 'noop'
+        if: ${{ !inputs.dry_run }}
         id: run_tests
         working-directory: ${{ inputs.module_path }}
         env:
@@ -320,7 +266,6 @@ jobs:
           TEST_CLUSTER_CREATE_MODE: ${{ secrets.E2E_TEST_CLUSTER_CREATE_MODE || inputs.cluster_provider }}
           TEST_CLUSTER_NAMESPACE: e2e-${{ inputs.module_slug }}-pr${{ inputs.pr_number }}-${{ github.run_id }}
           TEST_CLUSTER_STORAGE_CLASS: ${{ secrets.E2E_TEST_CLUSTER_STORAGE_CLASS }}
-          TEST_CLUSTER_CLEANUP: ${{ secrets.E2E_TEST_CLUSTER_CLEANUP || 'false' }}
           DKP_LICENSE_KEY: ${{ secrets.E2E_DECKHOUSE_LICENSE }}
           REGISTRY_DOCKER_CFG: ${{ secrets.E2E_REGISTRY_DOCKER_CFG }}
           SSH_HOST: ${{ secrets.E2E_SSH_HOST }}
@@ -431,7 +376,7 @@ jobs:
 
       - name: Upload E2E logs
         uses: actions/upload-artifact@v4
-        if: always() && inputs.pipeline_mode != 'noop'
+        if: ${{ always() && !inputs.dry_run }}
         with:
           name: e2e-test-logs-${{ inputs.module_slug }}-${{ github.run_id }}
           path: ${{ github.workspace }}/e2e-test-output.log
@@ -439,7 +384,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Cleanup test resources
-        if: always() && inputs.pipeline_mode != 'noop'
+        if: ${{ always() && !inputs.dry_run }}
         env:
           SSH_HOST: ${{ secrets.E2E_SSH_HOST }}
           SSH_USER: ${{ secrets.E2E_SSH_USER }}
@@ -470,16 +415,24 @@ jobs:
           fi
 
       - name: Cleanup temp credentials
-        if: always() && inputs.pipeline_mode != 'noop'
+        if: ${{ always() && !inputs.dry_run }}
         run: rm -f "${E2E_SSH_KEY_PATH}" "${E2E_SSH_PUB_PATH}" "${E2E_KUBECONFIG_PATH}" 2>/dev/null || true
 
   teardown-cluster:
-    if: inputs.pipeline_mode == 'teardown-only'
     name: teardown-cluster
+    needs: [ create-cluster, run-tests ]
+    if: ${{ always() && (needs.create-cluster.result == 'success' || needs.create-cluster.result == 'failure') }}
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
+      - name: teardown-cluster (mocked)
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "teardown-cluster is mocked (dry_run)"
+          echo "PR: ${{ inputs.pr_number }}, module: ${{ inputs.module_slug }}"
+
       - name: Prepare workspace for checkout (self-hosted)
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           WS="${GITHUB_WORKSPACE}"
@@ -494,12 +447,13 @@ jobs:
           done
 
       - name: Checkout repository
+        if: ${{ !inputs.dry_run }}
         uses: actions/checkout@v4
         with:
           clean: false
 
       - name: Checkout storage-e2e
-        if: ${{ !inputs.skip_storage_e2e_replace }}
+        if: ${{ !inputs.dry_run && !inputs.skip_storage_e2e_replace }}
         uses: actions/checkout@v4
         with:
           repository: deckhouse/storage-e2e
@@ -508,12 +462,14 @@ jobs:
           clean: false
 
       - name: Setup Go
+        if: ${{ !inputs.dry_run }}
         uses: actions/setup-go@v5
         with:
           go-version-file: ${{ inputs.skip_storage_e2e_replace && 'go.mod' || 'storage-e2e/go.mod' }}
           cache-dependency-path: ${{ inputs.skip_storage_e2e_replace && 'go.sum' || 'storage-e2e/go.sum' }}
 
       - name: Prepare credentials
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           E2E_SSH_KEY_PATH=$(mktemp /tmp/e2e_ssh_key.XXXXXX)
@@ -534,6 +490,7 @@ jobs:
           E2E_CLUSTER_KUBECONFIG: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
 
       - name: Remove cluster
+        if: ${{ !inputs.dry_run }}
         working-directory: ${{ inputs.skip_storage_e2e_replace && '.' || 'storage-e2e' }}
         env:
           GOMODCACHE: ${{ runner.temp }}/e2e-gomodcache
@@ -553,5 +510,5 @@ jobs:
           go run ./cmd/remove-cluster
 
       - name: Cleanup temp credentials
-        if: always()
+        if: ${{ always() && !inputs.dry_run }}
         run: rm -f "${E2E_SSH_KEY_PATH:-}" "${E2E_KUBECONFIG_PATH:-}" 2>/dev/null || true
