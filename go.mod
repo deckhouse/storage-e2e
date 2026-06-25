@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
-	github.com/deckhouse/deckhouse v1.76.0
+	github.com/deckhouse/deckhouse v1.74.0
 	github.com/deckhouse/sds-node-configurator/api v0.0.0-20260114125558-7fd7152586ff
 	github.com/deckhouse/virtualization/api v1.8.0
 	github.com/go-logr/logr v1.4.3
