@@ -276,3 +276,16 @@ require (
 )
 
 tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+
+// The deckhouse monorepo's go.mod requires these submodules at versions that do
+// not exist in any proxy (they are wired via in-tree replace directives inside
+// the monorepo). We never import them; these replaces only let `go list -m all`
+// (used by IDE indexing) resolve the module graph. Point them at an empty stub.
+replace (
+	github.com/deckhouse/deckhouse/dhctl => ./hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/egress-gateway-agent => ./hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/go_lib/cloud-data => ./hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/go_lib/dependency/k8s/drain => ./hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/go_lib/dependency/vsphere => ./hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/go_lib/registry => ./hack/deckhouse-stub
+)

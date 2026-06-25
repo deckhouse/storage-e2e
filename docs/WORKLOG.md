@@ -189,3 +189,9 @@ All notable changes to this repository are documented here. New entries are appe
 - **Update** `.github/workflows/e2e-self-test.yml`: point self-test at the new `e2e` module (`module_path: e2e`,
   `test_package: ./`, `cluster_config: e2e/cluster_config.yml`), so it now also exercises the `go mod replace` path.
   Removed stray duplicate `e2e/tests/cluster_config.yaml`.
+- **Refactor** drop `go.work`/`third_party/deckhouse` workspace hack for IDE module resolution: added
+  `hack/deckhouse-stub`
+  (empty module) and a `replace` block in `go.mod` pointing the 6 unpublished `github.com/deckhouse/deckhouse/*`
+  submodules (dhctl, egress-gateway-agent, go_lib/cloud-data, go_lib/dependency/{k8s/drain,vsphere}, go_lib/registry) at
+  the stub, so `go list -m all` (IDE indexing) resolves without a local deckhouse clone. Builds/tests still use the real
+  deckhouse module from the proxy.

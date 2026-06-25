@@ -158,9 +158,12 @@ storage-e2e/
 │   └── bootstrap/
 │       └── config.yml.tpl        # Bootstrap configuration template
 │
-├── go.mod
+├── hack/
+│   └── deckhouse-stub/           # Empty module; replace target for unpublished deckhouse submodules
+│       └── go.mod
+│
+├── go.mod                         # replace block points unused deckhouse submodules at hack/deckhouse-stub
 ├── go.sum
-├── go.work                        # Workspace: root module + ./e2e + third_party/deckhouse
 ├── README.md                      # Main documentation
 └── LICENSE
 ```
