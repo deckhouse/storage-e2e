@@ -24,8 +24,8 @@ jobs:
     uses: ./.github/workflows/e2e.yml
     with:
       module_slug: storage-e2e
-      module_path: .
-      test_package: ./tests/test-template/
-      cluster_config: tests/test-template/cluster_config.yml
+      module_path: e2e
+      test_package: ./
+      cluster_config: e2e/cluster_config.yml
       storage_e2e_ref: ${{ github.event.pull_request.head.sha }}
     secrets: inherit
