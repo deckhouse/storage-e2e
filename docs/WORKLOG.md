@@ -171,3 +171,4 @@ All notable changes to this repository are documented here. New entries are appe
 - **Add** `docs/superpowers/specs/2026-06-25-e2e-github-actions-ci-design.md`: design for a from-scratch reusable GitHub Actions e2e CI (resolve → bootstrap → run-tests → teardown), PR-label driven (`e2e/run` gate, `e2e/keep-cluster` skips teardown, `e2e/label:*` → Ginkgo filter), stable per-PR namespace, with a caller template for consumer modules.
 - **Add** `.github/scripts/e2e-resolve-labels.sh` + test: PR labels → keep_cluster/ginkgo_filter/namespace outputs.
 - **Add** `.github/scripts/e2e-prepare-creds.sh` + test: SSH key/kubeconfig secrets → temp files, workspace prune.
+- **Add** `.github/scripts/e2e-run-tests.sh` + test: go mod replace (self-aware) + go test with Ginkgo label filter.
