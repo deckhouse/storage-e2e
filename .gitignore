@@ -3,3 +3,7 @@ third_party
 # Coverage artifacts emitted by `make cover` / unit-tests CI job.
 coverage.out
 coverage.html
+.cursor/skills
+docs/superpowers
+go.work.sum
+go.work
