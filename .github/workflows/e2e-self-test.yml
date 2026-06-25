@@ -1,26 +1,31 @@
-name: E2E
+# Copyright 2026 Flant JSC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: E2E self-test
 
 on:
   pull_request:
-    paths:
-      - '.github/workflows/e2e-reusable.yml'
-      - '.github/scripts/**'
-      - 'go.mod'
-      - 'go.sum'
-  workflow_dispatch:
-
-concurrency:
-  group: e2e-self-test-${{ github.ref }}
-  cancel-in-progress: true
+    types: [opened, synchronize, reopened, labeled]
 
 jobs:
   e2e:
-    uses: ./.github/workflows/e2e-reusable.yml
+    # Dogfood the reusable workflow against storage-e2e itself, gated by e2e/run.
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'e2e/run') }}
+    uses: ./.github/workflows/e2e.yml
     with:
-      pr_number: ${{ github.event.pull_request.number }}
       module_slug: storage-e2e
       module_path: .
       test_package: ./tests/test-template/
-      skip_storage_e2e_replace: true
-      runner_labels: '["self-hosted","regular"]'
+      cluster_config: tests/test-template/cluster_config.yml
     secrets: inherit
