@@ -81,3 +81,4 @@ Tests for these scripts live in `.github/scripts/tests/`.
 - `run-tests` is a **skeleton**: only `E2E_GINKGO_LABEL_FILTER` is wired. The full
   cluster/SSH/license env block is deferred until the test library client is defined.
 - No SSH tunnel is created in CI — the Go code establishes its own tunnel.
+- The `test_timeout` input is reserved for the future full `run-tests` wiring and is **not yet consumed**; the skeleton currently hardcodes the `go test` timeout.
