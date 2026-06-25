@@ -124,6 +124,24 @@ storage-e2e/
 │   │
 │   └── create-test.sh            # Script to create new tests from template
 │
+├── cmd/                           # Pipeline entrypoints
+│   ├── bootstrap-cluster/        # `go run` target used by the CI bootstrap job
+│   └── remove-cluster/           # `go run` target used by the CI teardown job
+│
+├── .github/                       # CI
+│   ├── workflows/
+│   │   ├── e2e.yml               # Reusable pipeline (resolve → bootstrap → run-tests → teardown)
+│   │   ├── e2e-self-test.yml     # Caller running e2e.yml against storage-e2e itself
+│   │   ├── go-checks.yml         # Lint + unit tests + coverage
+│   │   └── gitleaks.yml          # Secret scanning
+│   ├── scripts/
+│   │   ├── e2e-resolve-labels.sh # PR labels → keep_cluster/ginkgo_filter/namespace
+│   │   ├── e2e-prepare-creds.sh  # Secrets → temp files; workspace prune
+│   │   ├── e2e-run-tests.sh      # go mod replace + go test
+│   │   └── tests/                # Bash tests for the scripts above
+│   └── templates/
+│       └── e2e-tests.yml         # Copy-ready caller for consumer modules
+│
 ├── docs/                          # Documentation
 │   ├── ARCHITECTURE.md           # This file
 │   ├── FUNCTIONS_GLOSSARY.md     # Exported functions reference
