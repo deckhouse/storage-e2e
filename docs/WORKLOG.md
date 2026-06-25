@@ -178,3 +178,4 @@ All notable changes to this repository are documented here. New entries are appe
 - **Update** `e2e-self-test.yml`: pin `storage_e2e_ref` to PR head SHA so self-test dogfoods PR scripts/cmd.
 - **Update** docs for the new CI: rewrote `docs/CI.md`, README CI section, ARCHITECTURE `.github/` + `cmd/` tree.
 - **Update** `docs/CI.md`: note that `test_timeout` is reserved and not yet consumed by the skeleton run-tests.
+- **Update** `e2e.yml`: clarify `test_timeout` input description as reserved/not-yet-wired.

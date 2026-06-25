@@ -51,7 +51,7 @@ on:
         required: false
         default: '["self-hosted","regular"]'
       test_timeout:
-        description: "Ginkgo suite timeout (also used as go test -timeout)"
+        description: "Reserved: Ginkgo/go test timeout (not yet wired; see docs/CI.md)"
         type: string
         required: false
         default: "90m"
