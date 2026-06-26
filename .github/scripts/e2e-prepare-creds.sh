@@ -4,8 +4,8 @@
 # GITHUB_ENV. Never echoes secret values.
 #
 # Inputs (env):
-#   E2E_SSH_PRIVATE_KEY     SSH private key contents (required)
-#   E2E_CLUSTER_KUBECONFIG  base64-encoded kubeconfig (required)
+#   E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY     SSH private key contents (required)
+#   E2E_DVP_BASE_CLUSTER_KUBECONFIG  base64-encoded kubeconfig (required)
 #   GITHUB_ENV              file to append env exports to (required)
 #   GITHUB_WORKSPACE        workspace root to prune (optional)
 #   RUNNER_TEMP             dir for temp files (falls back to TMPDIR, then /tmp)
@@ -16,14 +16,14 @@ tmp_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 ssh_key_path="$(mktemp "${tmp_dir%/}/e2e_ssh_key.XXXXXX")"
 kubeconfig_path="$(mktemp "${tmp_dir%/}/e2e_kubeconfig.XXXXXX")"
 
-printf '%s\n' "${E2E_SSH_PRIVATE_KEY:?E2E_SSH_PRIVATE_KEY is required}" >"$ssh_key_path"
+printf '%s\n' "${E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY:?E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY is required}" >"$ssh_key_path"
 chmod 600 "$ssh_key_path"
 
-printf '%s' "${E2E_CLUSTER_KUBECONFIG:?E2E_CLUSTER_KUBECONFIG is required}" | base64 -d >"$kubeconfig_path"
+printf '%s' "${E2E_DVP_BASE_CLUSTER_KUBECONFIG:?E2E_DVP_BASE_CLUSTER_KUBECONFIG is required}" | base64 -d >"$kubeconfig_path"
 chmod 600 "$kubeconfig_path"
 
 {
-  echo "E2E_DVP_BASE_CLUSTER_SSH_KEY_PATH=${ssh_key_path}"
+  echo "E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY_PATH=${ssh_key_path}"
   echo "E2E_DVP_BASE_CLUSTER_KUBECONFIG_PATH=${kubeconfig_path}"
 } >>"${GITHUB_ENV:?GITHUB_ENV is required}"
 
