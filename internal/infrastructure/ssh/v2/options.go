@@ -41,9 +41,13 @@ func defaultOptions() options {
 		keepalive:   0,
 		retries:     config.SSHRetryCount,
 		log:         logger.GetLogger(),
-		hostKey:     ssh.InsecureIgnoreHostKey(),
+		hostKey:     insecureIgnoreHostKey(),
 		dialTimeout: defaultDialTimeout,
 	}
+}
+
+func insecureIgnoreHostKey() ssh.HostKeyCallback {
+	return ssh.InsecureIgnoreHostKey() //nolint:gosec // G106: deliberate, see doc comment.
 }
 
 type Option func(*options)
@@ -78,6 +82,5 @@ func WithHostKeyCallback(cb ssh.HostKeyCallback) Option {
 }
 
 func WithInsecureIgnoreHostKey() Option {
-	//nolint:gosec // G106: explicit opt-in to skip host key verification.
-	return func(o *options) { o.hostKey = ssh.InsecureIgnoreHostKey() }
+	return func(o *options) { o.hostKey = insecureIgnoreHostKey() }
 }
