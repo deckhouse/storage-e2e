@@ -229,8 +229,8 @@ jobs:
 
       - name: Prepare credentials
         env:
-          E2E_SSH_PRIVATE_KEY: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY }}
-          E2E_CLUSTER_KUBECONFIG: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
+          E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY }}
+          E2E_DVP_BASE_CLUSTER_KUBECONFIG: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
         run: bash _storage-e2e/.github/scripts/e2e-prepare-creds.sh
 
       - name: Remove cluster
