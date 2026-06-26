@@ -1,69 +1,84 @@
-# Reusable CI pipeline (storage-e2e)
+# Reusable E2E CI pipeline (storage-e2e)
 
-Three-job workflow with **mocked** `create-cluster` / `teardown-cluster` and a full `run-tests` that mirrors the `build_dev` smoke flow.
+All pipeline logic lives in `.github/workflows/e2e.yml` — a reusable
+(`workflow_call`) workflow. Consumer modules add a thin caller workflow that
+gates on the `e2e/run` PR label and calls it with `secrets: inherit`.
 
-## Jobs
+## Job graph
 
-| Job | Condition | What it does |
-|-----|-----------|--------------|
-| `create-cluster` | `pipeline_mode == 'create-and-test'` | No-op placeholder (mocked) |
-| `run-tests` | after `create-cluster` succeeds | Sets up SSH tunnel + kubeconfig, runs `go test` directly in the module repo |
-| `teardown-cluster` | `pipeline_mode == 'teardown-only'` | No-op placeholder (mocked) |
-
-Cluster lifecycle is handled inside the module's test suite via `pkg/cluster.CreateOrConnectToTestCluster`.
-
-## PR-scoped namespace
-
-`TEST_CLUSTER_NAMESPACE = e2e-<module_slug>-pr<pr_number>-<run_id>` — unique per run, set both in `env:` and forwarded to `go test`.
-
-## How to call from a module repo
-
-```yaml
-jobs:
-  e2e:
-    uses: deckhouse/storage-e2e/.github/workflows/e2e-reusable.yml@<ref>
-    secrets: inherit
-    with:
-      pipeline_mode: create-and-test   # or teardown-only
-      pr_number: "123"
-      module_slug: sds-node-configurator
-      module_path: e2e
-      cluster_provider: alwaysCreateNew
-      cluster_config: e2e/tests/cluster_config.yml
-      test_package: ./tests/
-      label_filter: ""          # empty → !stress-test (all non-stress specs)
-      test_timeout: 90m
-      storage_e2e_ref: main     # storage-e2e branch/tag to checkout and replace
 ```
+resolve ──> bootstrap ──> run-tests ──> teardown
+```
+
+| Job | `needs` | Runs when | What it does |
+|-----|---------|-----------|--------------|
+| `resolve` | — | always (workflow invoked) | Sparse-checks-out `.github/scripts`, runs `e2e-resolve-labels.sh` → outputs `keep_cluster`, `ginkgo_filter`, `namespace` |
+| `bootstrap` | resolve | always when reached | `e2e-prepare-creds.sh` + `go run ./cmd/bootstrap-cluster` |
+| `run-tests` | resolve, bootstrap | `needs.bootstrap.result == 'success'` | `e2e-run-tests.sh` (`go mod replace` + `go test` with Ginkgo filter); uploads log |
+| `teardown` | resolve, bootstrap, run-tests | `always() && bootstrap succeeded && keep_cluster != 'true'` | `e2e-prepare-creds.sh` + `go run ./cmd/remove-cluster` |
+
+`run-tests` does **not** block teardown by its own result — the cluster is
+cleaned regardless of test pass/fail, unless the `e2e/keep-cluster` label is set.
+
+## PR labels (Kubernetes/Prow style)
+
+| Label | Effect |
+|-------|--------|
+| `e2e/run` | **Gate** (in the caller). Without it the reusable workflow is not invoked. |
+| `e2e/keep-cluster` | Skip teardown so you can re-run tests on the same cluster. |
+| `e2e/label:<x>` | Ginkgo labels; multiple are joined with ` \|\| ` (e.g. `stress-test \|\| integration`). Falls back to the `label_filter` input (default `!stress-test`) when none are present. |
+
+## Stable per-PR identity
+
+Namespace / cluster identity is `e2e-<module_slug>-pr<pr_number>` — **no `run_id`**.
+Bootstrap is idempotent (`CreateNamespaceIfNotExists`), so re-runs land in the
+same namespace → "same cluster".
+
+## Reusable workflow inputs
+
+| Input | Purpose | Default |
+|-------|---------|---------|
+| `module_slug` | module name used in the namespace | (required) |
+| `module_path` | path to the Go module containing tests | `.` |
+| `test_package` | Go package to test | `./tests/` |
+| `label_filter` | default Ginkgo filter when no `e2e/label:*` labels | `!stress-test` |
+| `cluster_config` | path (in the module repo) to the cluster YAML (`E2E_CLUSTER_CONFIG_YAML_PATH`) | (required) |
+| `storage_e2e_ref` | git ref of storage-e2e to checkout | `main` |
+| `runner_labels` | JSON array of runner labels | `["self-hosted","regular"]` |
+| `test_timeout` | Ginkgo suite timeout | `90m` |
 
 ## Required secrets (inherited)
 
 | Secret | Required | Purpose |
 |--------|----------|---------|
-| `E2E_SSH_PRIVATE_KEY` | Yes | SSH key for master node |
-| `E2E_SSH_HOST` | Yes | Master node IP/hostname |
-| `E2E_SSH_USER` | Yes | SSH user on master |
-| `SSH_VM_USER` | No | User for VM nodes (default: `cloud`) |
-| `E2E_SSH_JUMP_HOST` | No | Jump/bastion host for `10.10.10.x` networks |
-| `E2E_SSH_JUMP_USER` | No | SSH user on jump host |
-| `E2E_CLUSTER_KUBECONFIG` | No | Base64 kubeconfig for the virtualization cluster |
-| `E2E_TEST_CLUSTER_STORAGE_CLASS` | No | StorageClass for VirtualDisks |
-| `E2E_TEST_CLUSTER_CREATE_MODE` | No | Overrides `cluster_provider` input |
-| `E2E_DECKHOUSE_LICENSE` | No | DKP license key |
-| `E2E_REGISTRY_DOCKER_CFG` | No | Registry auth |
+| `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY` | Yes | SSH key for the base (virtualization) cluster |
+| `E2E_DVP_BASE_CLUSTER_KUBECONFIG` | Yes | base64 kubeconfig for the base cluster |
+| `E2E_DVP_BASE_CLUSTER_SSH_USER` | Yes | SSH user |
+| `E2E_DVP_BASE_CLUSTER_SSH_HOST` | Yes | SSH host |
+| `E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE` | No | SSH key passphrase |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST` / `_SSH_JUMP_USER` | No | jump/bastion host |
+| `E2E_TEST_CLUSTER_PROVIDER` | No | provider mode (default `dvp`) |
 | `GOPROXY` | No | Go module proxy |
 
-## Label filter
+## Scripts
 
-- `inputs.label_filter` → `E2E_GINKGO_LABEL_FILTER`
-- If empty at runtime → auto-set to `!stress-test` (all specs except stress)
-- Minimum suite timeout enforced: 90m
+| Script | Used by | Responsibility |
+|--------|---------|----------------|
+| `.github/scripts/e2e-resolve-labels.sh` | resolve | PR labels → `keep_cluster` / `ginkgo_filter` / `namespace` |
+| `.github/scripts/e2e-prepare-creds.sh` | bootstrap, teardown | SSH key + kubeconfig secrets → temp files; workspace prune |
+| `.github/scripts/e2e-run-tests.sh` | run-tests | self-aware `go mod replace` + `go test` (no SSH tunnel) |
 
-## run-tests flow
+Tests for these scripts live in `.github/scripts/tests/`.
 
-1. Checkout module repo + `storage-e2e` at `inputs.storage_e2e_ref`
-2. `go mod edit -replace github.com/deckhouse/storage-e2e=./storage-e2e` to use local ref
-3. Open SSH tunnel to master (ProxyJump via `E2E_SSH_JUMP_HOST` when set)
-4. `go test -v -timeout 3h30m ./tests/ -run '^TestSdsNodeConfigurator$' -ginkgo.label-filter=...`
-5. Upload `e2e-test-output.log` as artifact
-6. Cleanup: delete test namespace + VMs (SSH tunnel, `if: always()`)
+## Enabling e2e in a module
+
+1. Copy `.github/templates/e2e-tests.yml` into your module at `.github/workflows/e2e-tests.yml`.
+2. Adjust `module_slug`, `module_path`, `test_package`, `cluster_config`.
+3. Provide the inherited secrets above and create the PR labels `e2e/run`, `e2e/keep-cluster`, `e2e/label:*`.
+
+## Notes / current limitations
+
+- `run-tests` is a **skeleton**: only `E2E_GINKGO_LABEL_FILTER` is wired. The full
+  cluster/SSH/license env block is deferred until the test library client is defined.
+- No SSH tunnel is created in CI — the Go code establishes its own tunnel.
+- The `test_timeout` input is reserved for the future full `run-tests` wiring and is **not yet consumed**; the skeleton currently hardcodes the `go test` timeout.

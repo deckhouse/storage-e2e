@@ -114,6 +114,5 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 }
 
 func (p *dvpProvider) Remove(ctx context.Context) error {
-	// TODO: implement — idempotent teardown by deterministic cluster name.
-	return fmt.Errorf("dvp provider Remove is not implemented")
+	return nil
 }

@@ -124,6 +124,30 @@ storage-e2e/
 │   │
 │   └── create-test.sh            # Script to create new tests from template
 │
+├── e2e/                           # Separate Go module: storage-e2e's own e2e suite
+│   ├── go.mod                    # module github.com/deckhouse/storage-e2e/e2e
+│   ├── e2e_suite_test.go         # Ginkgo runner (TestE2E)
+│   ├── e2e_test.go               # Labeled specs: smoke/integration/regress/stress-test
+│   └── cluster_config.yml        # Cluster definition for the self-test bootstrap
+│
+├── cmd/                           # Pipeline entrypoints
+│   ├── bootstrap-cluster/        # `go run` target used by the CI bootstrap job
+│   └── remove-cluster/           # `go run` target used by the CI teardown job
+│
+├── .github/                       # CI
+│   ├── workflows/
+│   │   ├── e2e.yml               # Reusable pipeline (resolve → bootstrap → run-tests → teardown)
+│   │   ├── e2e-self-test.yml     # Caller running e2e.yml against storage-e2e itself
+│   │   ├── go-checks.yml         # Lint + unit tests + coverage
+│   │   └── gitleaks.yml          # Secret scanning
+│   ├── scripts/
+│   │   ├── e2e-resolve-labels.sh # PR labels → keep_cluster/ginkgo_filter/namespace
+│   │   ├── e2e-prepare-creds.sh  # Secrets → temp files; workspace prune
+│   │   ├── e2e-run-tests.sh      # go mod replace + go test
+│   │   └── tests/                # Bash tests for the scripts above
+│   └── templates/
+│       └── e2e-tests.yml         # Copy-ready caller for consumer modules
+│
 ├── docs/                          # Documentation
 │   ├── ARCHITECTURE.md           # This file
 │   ├── FUNCTIONS_GLOSSARY.md     # Exported functions reference
@@ -134,7 +158,11 @@ storage-e2e/
 │   └── bootstrap/
 │       └── config.yml.tpl        # Bootstrap configuration template
 │
-├── go.mod
+├── hack/
+│   └── deckhouse-stub/           # Empty module; replace target for unpublished deckhouse submodules
+│       └── go.mod
+│
+├── go.mod                         # replace block points unused deckhouse submodules at hack/deckhouse-stub
 ├── go.sum
 ├── README.md                      # Main documentation
 └── LICENSE

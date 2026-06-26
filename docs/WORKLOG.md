@@ -162,3 +162,65 @@ All notable changes to this repository are documented here. New entries are appe
 ## 2026-06-24
 
 - **Remove** `.github/workflows/unit-tests.yml` per PR #20 review: `main`'s `.github/workflows/go-checks.yml` already runs lint + race-enabled unit tests + coverage publishing, so the dedicated workflow was a duplicate. Updated the `Makefile` header comment to point at `go-checks.yml` instead of the removed workflow.
+- **Update** `.github/workflows/e2e-reusable.yml`: replace mocked `create-cluster`/`teardown-cluster` jobs with real steps that check out the repo (+ storage-e2e when `skip_storage_e2e_replace=false`), set up Go, materialize `E2E_DVP_BASE_CLUSTER_*` SSH key/kubeconfig to temp files, and run `go run ./cmd/bootstrap-cluster` / `go run ./cmd/remove-cluster` with the DVP provider env. `noop` mode still echoes.
+
+---
+
+## 2026-06-25
+
+- **Add** `docs/superpowers/specs/2026-06-25-e2e-github-actions-ci-design.md`: design for a from-scratch reusable GitHub Actions e2e CI (resolve → bootstrap → run-tests → teardown), PR-label driven (`e2e/run` gate, `e2e/keep-cluster` skips teardown, `e2e/label:*` → Ginkgo filter), stable per-PR namespace, with a caller template for consumer modules.
+- **Add** `.github/scripts/e2e-resolve-labels.sh` + test: PR labels → keep_cluster/ginkgo_filter/namespace outputs.
+- **Add** `.github/scripts/e2e-prepare-creds.sh` + test: SSH key/kubeconfig secrets → temp files, workspace prune.
+- **Add** `.github/scripts/e2e-run-tests.sh` + test: go mod replace (self-aware) + go test with Ginkgo label filter.
+- **Add** `.github/workflows/e2e.yml` reusable workflow: resolve → bootstrap → run-tests → teardown, label-gated, stable per-PR namespace.
+- **Add** `.github/templates/e2e-tests.yml` caller template for consumer modules.
+- **Remove** old CI (`e2e-reusable.yml`, `e2e-prepare-env.sh`, `e2e-prepare-workspace.sh`); **Refactor** `e2e-self-test.yml` into a thin caller of `e2e.yml`.
+- **Update** `e2e-self-test.yml`: pin `storage_e2e_ref` to PR head SHA so self-test dogfoods PR scripts/cmd.
+- **Update** docs for the new CI: rewrote `docs/CI.md`, README CI section, ARCHITECTURE `.github/` + `cmd/` tree.
+- **Update** `docs/CI.md`: note that `test_timeout` is reserved and not yet consumed by the skeleton run-tests.
+- **Update** `e2e.yml`: clarify `test_timeout` input description as reserved/not-yet-wired.
+- **Update** `.github/workflows/e2e.yml`: bump actions to latest (checkout v4→v7, setup-go v5→v6, upload-artifact v4→v7)
+  and set `cache: false` on Setup Go (self-hosted runner caches Go in `runner.temp`, so setup-go's post-job cache save
+  was slow and targeted the wrong dir).
+- **Add** `e2e/` as a separate Go module (`github.com/deckhouse/storage-e2e/e2e`) with a Ginkgo suite (
+  `e2e_suite_test.go`) and four label-tagged smoke specs (`e2e_test.go`: smoke/integration/regress/stress-test) to
+  exercise CI label routing; added `./e2e` to `go.work`. Does not use the (old) `pkg/storage-e2e` SDK yet; the cluster
+  is provisioned by the CI bootstrap job.
+- **Update** `.github/workflows/e2e-self-test.yml`: point self-test at the new `e2e` module (`module_path: e2e`,
+  `test_package: ./`, `cluster_config: e2e/cluster_config.yml`), so it now also exercises the `go mod replace` path.
+  Removed stray duplicate `e2e/tests/cluster_config.yaml`.
+- **Refactor** drop `go.work`/`third_party/deckhouse` workspace hack for IDE module resolution: added
+  `hack/deckhouse-stub`
+  (empty module) and a `replace` block in `go.mod` pointing the 6 unpublished `github.com/deckhouse/deckhouse/*`
+  submodules (dhctl, egress-gateway-agent, go_lib/cloud-data, go_lib/dependency/{k8s/drain,vsphere}, go_lib/registry) at
+  the stub, so `go list -m all` (IDE indexing) resolves without a local deckhouse clone. Builds/tests still use the real
+  deckhouse module from the proxy.
+- **Bugfix** `.github/workflows/e2e.yml`: fix `cluster_config not found` on self-hosted runners. The `resolve`
+  job's non-cone sparse checkout of `.github/scripts` polluted the shared workspace-root `.git`
+  (`core.sparseCheckout=true` persists, actions/checkout#2249), so `bootstrap`'s `clean: false` re-checkout only
+  restored `.github/scripts` and dropped `e2e/cluster_config.yml`. Moved `resolve` to a dedicated `_se2e-scripts`
+  path with cone mode (no root pollution) and added a "Reset stale sparse-checkout" step before the module checkout
+  in bootstrap/run-tests/teardown so already-polluted runners self-heal.
+- **Bugfix** restore the `hack/deckhouse-stub` `go.mod` and `replace` block in `go.mod` that were dropped during the
+  `deckhouse v1.74.0 → v1.76.0` bump (GoLand `go list -m -u all` failed on unpublished submodules); added the new
+  `go_lib/configtools/conversion` submodule introduced in v1.76.0 to the replace block.
+- **Update** `.github/scripts/e2e-run-tests.sh`: in the consumer-module branch, back up `go.mod`/`go.sum` and restore
+  them via a `trap ... EXIT` (preserving `$?`) so the persistent `clean: false` workspace is not left with a stale
+  absolute-path replace, and replaced `go mod tidy` with `go mod download` for deterministic, network-light runs;
+  extended `.github/scripts/tests/test-run-tests.sh` to assert `mod download` (not `mod tidy`) and that `go.mod` is
+  restored after the run.
+- **Add** `docs/superpowers/specs/2026-06-25-cluster-tool-images-design.md`: design for containerizing
+  `cmd/bootstrap-cluster` + `cmd/remove-cluster` into a single versioned `cluster-tool` image (dev-registry, semver on
+  release tags), consumed via an optional `cluster_tool_image` input in `e2e.yml` (image path for consumers, `go run`
+  kept for self-test); no `go:embed` refactor since the legacy `PrepareBootstrapConfig` template path is not on the
+  image's DVP bootstrap path.
+
+---
+
+## 2026-06-26
+
+- **Bugfix** `.github/workflows/e2e.yml`: checkout the caller module repo before bootstrap/teardown so
+  `E2E_CLUSTER_CONFIG_YAML_PATH` points at an existing `cluster_config.yml`; format cluster CLI fatal errors with
+  `log.Fatalf` instead of glued key/value arguments.
+- **Bugfix** `.github/workflows/e2e.yml`: checkout `storage-e2e` into `_storage-e2e` in the `run-tests` job before
+  invoking `.github/scripts/e2e-run-tests.sh`.

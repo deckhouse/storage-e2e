@@ -6,7 +6,16 @@ End-to-end tests for Deckhouse storage components.
 
 ## CI (reusable workflow)
 
-See [docs/CI.md](docs/CI.md) for the reusable E2E pipeline (`create-cluster` → `run-tests` → `teardown-cluster`) and how to call it from a module repo.
+E2E runs through a reusable GitHub Actions workflow (`bootstrap` → `run-tests` →
+`teardown`), gated by the `e2e/run` PR label. See [docs/CI.md](docs/CI.md) for the
+full job graph, inputs, and required secrets.
+
+### Enabling e2e in your module
+
+1. Copy `.github/templates/e2e-tests.yml` into your repo at `.github/workflows/e2e-tests.yml`.
+2. Adjust `module_slug`, `module_path`, `test_package`, `cluster_config`.
+3. Provide the inherited secrets and create the PR labels `e2e/run`,
+   `e2e/keep-cluster`, and `e2e/label:<suite>` (e.g. `e2e/label:stress-test`).
 
 ## Quick Start
 
