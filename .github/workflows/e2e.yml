@@ -69,9 +69,6 @@ defaults:
   run:
     shell: bash
 
-env:
-  GOWORK: "off"
-
 jobs:
   resolve:
     name: resolve
@@ -104,17 +101,6 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
-      - name: Reset stale sparse-checkout (self-hosted runners)
-        run: |
-          git -C "${{ github.workspace }}" sparse-checkout disable 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --unset-all core.sparseCheckout 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
-
-      - name: Checkout module repo
-        uses: actions/checkout@v7
-        with:
-          clean: false
-
       - name: Checkout storage-e2e
         uses: actions/checkout@v7
         with:
@@ -153,10 +139,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
-          if [ ! -f "${E2E_CLUSTER_CONFIG_YAML_PATH}" ]; then
-            echo "::error::cluster_config not found at ${E2E_CLUSTER_CONFIG_YAML_PATH}"
-            exit 1
-          fi
           go run ./cmd/bootstrap-cluster
 
       - name: Cleanup temp credentials
@@ -170,23 +152,9 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 240
     steps:
-      - name: Reset stale sparse-checkout (self-hosted runners)
-        run: |
-          git -C "${{ github.workspace }}" sparse-checkout disable 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --unset-all core.sparseCheckout 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
-
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
-          clean: false
-
-      - name: Checkout storage-e2e
-        uses: actions/checkout@v7
-        with:
-          repository: deckhouse/storage-e2e
-          ref: ${{ inputs.storage_e2e_ref }}
-          path: _storage-e2e
           clean: false
 
       - name: Setup Go
@@ -227,17 +195,6 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
-      - name: Reset stale sparse-checkout (self-hosted runners)
-        run: |
-          git -C "${{ github.workspace }}" sparse-checkout disable 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --unset-all core.sparseCheckout 2>/dev/null || true
-          git -C "${{ github.workspace }}" config --worktree --unset-all core.sparseCheckout 2>/dev/null || true
-
-      - name: Checkout module repo
-        uses: actions/checkout@v7
-        with:
-          clean: false
-
       - name: Checkout storage-e2e
         uses: actions/checkout@v7
         with:
