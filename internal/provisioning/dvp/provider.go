@@ -54,7 +54,7 @@ func NewDVPProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (cl
 
 func (p *dvpProvider) Name() string { return clusterprovider.ModeDVP }
 
-func (p *dvpProvider) buildSshClient(ctx context.Context) (*ssh.Client, error) {
+func (p *dvpProvider) buildSSHClient(ctx context.Context) (*ssh.Client, error) {
 	var dialer ssh.Dialer
 	if p.dvpConf.HasJumpHost() {
 		dialer = ssh.Route(ssh.Endpoint{
@@ -129,7 +129,7 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"kubeconfigSource", p.dvpConf.KubeConfigPath,
 	)
 
-	sshClient, sshNewErr := p.buildSshClient(ctx)
+	sshClient, sshNewErr := p.buildSSHClient(ctx)
 	if sshNewErr != nil {
 		return fmt.Errorf("creating ssh client: %w", sshNewErr)
 	}

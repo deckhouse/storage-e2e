@@ -224,3 +224,6 @@ All notable changes to this repository are documented here. New entries are appe
   `log.Fatalf` instead of glued key/value arguments.
 - **Bugfix** `.github/workflows/e2e.yml`: checkout `storage-e2e` into `_storage-e2e` in the `run-tests` job before
   invoking `.github/scripts/e2e-run-tests.sh`.
+- **Bugfix** `internal/infrastructure/ssh/v2/conn.go` (`newConn`): derive keepalive context via
+  `context.WithCancel(context.WithoutCancel(ctx))` instead of `context.Background()` to satisfy `contextcheck` while
+  keeping the loop lifetime tied to the connection (still cancelled in `Close`).

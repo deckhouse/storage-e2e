@@ -62,7 +62,7 @@ func newConn(ctx context.Context, d Dialer, o options) (*conn, error) {
 	}
 
 	if o.keepalive > 0 {
-		kaCtx, cancel := context.WithCancel(context.Background())
+		kaCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 		c.kaCancel = cancel
 		c.wg.Add(1)
 		go c.keepaliveLoop(kaCtx, o.keepalive)
