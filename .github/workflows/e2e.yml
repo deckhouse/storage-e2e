@@ -162,6 +162,14 @@ jobs:
         with:
           clean: false
 
+      - name: Checkout storage-e2e
+        uses: actions/checkout@v7
+        with:
+          repository: deckhouse/storage-e2e
+          ref: ${{ inputs.storage_e2e_ref }}
+          path: _storage-e2e
+          clean: false
+
       - name: Setup Go
         uses: actions/setup-go@v6
         with:

@@ -222,3 +222,5 @@ All notable changes to this repository are documented here. New entries are appe
 - **Bugfix** `.github/workflows/e2e.yml`: checkout the caller module repo before bootstrap/teardown so
   `E2E_CLUSTER_CONFIG_YAML_PATH` points at an existing `cluster_config.yml`; format cluster CLI fatal errors with
   `log.Fatalf` instead of glued key/value arguments.
+- **Bugfix** `.github/workflows/e2e.yml`: checkout `storage-e2e` into `_storage-e2e` in the `run-tests` job before
+  invoking `.github/scripts/e2e-run-tests.sh`.
