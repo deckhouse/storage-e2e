@@ -13,22 +13,22 @@ import (
 func main() {
 	cfg, err := clusterprovider.NewClusterConfig()
 	if err != nil {
-		log.Fatal("failed to initialize config", "error", err)
+		log.Fatalf("failed to initialize config: %v", err)
 	}
 
 	newProvider, registryGetErr := registry.DefaultRegistry.Get(cfg.ClusterProvider)
 	if registryGetErr != nil {
-		log.Fatal("failed to get provider", "error", registryGetErr)
+		log.Fatalf("failed to get provider: %v", registryGetErr)
 	}
 
 	slogger := logger.GetLogger()
 	clusterProvider, err := newProvider(slogger, cfg)
 	if err != nil {
-		log.Fatal("failed to build provider", "error", err)
+		log.Fatalf("failed to build provider: %v", err)
 	}
 
 	teardownErr := clusterProvider.Remove(context.Background())
 	if teardownErr != nil {
-		log.Fatal("failed to tear down cluster", "error", teardownErr)
+		log.Fatalf("failed to tear down cluster: %v", teardownErr)
 	}
 }

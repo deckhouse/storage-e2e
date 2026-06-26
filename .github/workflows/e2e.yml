@@ -101,6 +101,11 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
+      - name: Checkout module repo
+        uses: actions/checkout@v7
+        with:
+          clean: false
+
       - name: Checkout storage-e2e
         uses: actions/checkout@v7
         with:
@@ -195,6 +200,11 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:
+      - name: Checkout module repo
+        uses: actions/checkout@v7
+        with:
+          clean: false
+
       - name: Checkout storage-e2e
         uses: actions/checkout@v7
         with:

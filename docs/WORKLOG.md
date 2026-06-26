@@ -214,3 +214,11 @@ All notable changes to this repository are documented here. New entries are appe
   release tags), consumed via an optional `cluster_tool_image` input in `e2e.yml` (image path for consumers, `go run`
   kept for self-test); no `go:embed` refactor since the legacy `PrepareBootstrapConfig` template path is not on the
   image's DVP bootstrap path.
+
+---
+
+## 2026-06-26
+
+- **Bugfix** `.github/workflows/e2e.yml`: checkout the caller module repo before bootstrap/teardown so
+  `E2E_CLUSTER_CONFIG_YAML_PATH` points at an existing `cluster_config.yml`; format cluster CLI fatal errors with
+  `log.Fatalf` instead of glued key/value arguments.
