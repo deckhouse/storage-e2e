@@ -17,12 +17,13 @@ limitations under the License.
 package dvp
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -50,24 +51,42 @@ func buildRestConfig(kubeconfig []byte, localAddr string) (*rest.Config, error) 
 	return restConfig, nil
 }
 
-// readSSHPublicKey reads the OpenSSH public key that sits next to the given
-// private key path (privateKeyPath + ".pub"). The key is injected into the VM
-// cloud-init so the provisioner can later reach the VMs over SSH using the same
-// key pair that connects to the base cluster.
-func readSSHPublicKey(privateKeyPath string) (string, error) {
-	path, err := expandUserPath(privateKeyPath + ".pub")
+// publicKeyFromPrivateKey derives the OpenSSH authorized-keys line from a PEM
+// private key. It works whether the key arrived as inline content
+// (E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY) or was read from a file, so cloud-init
+// gets the public half without needing a separate ".pub" file next to the key.
+func publicKeyFromPrivateKey(privateKeyPEM []byte, passphrase string) (string, error) {
+	signer, err := parsePrivateKeySigner(privateKeyPEM, passphrase)
 	if err != nil {
 		return "", err
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read SSH public key %q: %w", path, err)
-	}
-	key := strings.TrimSpace(string(raw))
+	authorized := ssh.MarshalAuthorizedKey(signer.PublicKey())
+	key := strings.TrimSpace(string(authorized))
 	if key == "" {
-		return "", fmt.Errorf("SSH public key %q is empty", path)
+		return "", fmt.Errorf("derived SSH public key is empty")
 	}
 	return key, nil
+}
+
+// parsePrivateKeySigner mirrors internal/infrastructure/ssh/v2 key handling:
+// try unencrypted, then fall back to passphrase decryption when the key is
+// passphrase-protected.
+func parsePrivateKeySigner(raw []byte, passphrase string) (ssh.Signer, error) {
+	signer, err := ssh.ParsePrivateKey(raw)
+	if err == nil {
+		return signer, nil
+	}
+	if _, ok := errors.AsType[*ssh.PassphraseMissingError](err); !ok {
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+	if passphrase == "" {
+		return nil, fmt.Errorf("private key is passphrase-protected but no passphrase was provided")
+	}
+	signer, err = ssh.ParsePrivateKeyWithPassphrase(raw, []byte(passphrase))
+	if err != nil {
+		return nil, fmt.Errorf("decrypt private key with passphrase: %w", err)
+	}
+	return signer, nil
 }
 
 func configureTunnelTimeouts(cfg *rest.Config) {

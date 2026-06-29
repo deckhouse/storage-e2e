@@ -314,3 +314,4 @@ All notable changes to this repository are documented here. New entries are appe
 - **Merge** reconcile `origin/main` (ssh/v2 `KeyData`, DVP `Credentials`/`LoadConfig` config refactor, Commander
   provider) with the DVP VM-provisioning branch: rewrote `connect`/`Bootstrap`/`Remove` to use the merged
   credentials-based `buildRestConfig`, dropped the duplicate `expandUserPath` (kept in `config.go`).
+- **Bugfix** `internal/provisioning/dvp/{kubeconfig.go,provider.go}`: derive the cloud-init SSH public key from the resolved private key (`publicKeyFromPrivateKey`) instead of reading a `<path>.pub` file, fixing bootstrap failure when keys are passed inline (`E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY`). Removed `readSSHPublicKey`.

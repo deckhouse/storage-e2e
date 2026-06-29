@@ -176,9 +176,9 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"workers", len(clusterDef.Workers),
 	)
 
-	sshPublicKey, pubKeyErr := readSSHPublicKey(p.dvpConf.SSHKeyPath)
+	sshPublicKey, pubKeyErr := publicKeyFromPrivateKey(p.creds.SSHKey, p.dvpConf.SSHPassphrase)
 	if pubKeyErr != nil {
-		return fmt.Errorf("read ssh public key: %w", pubKeyErr)
+		return fmt.Errorf("derive ssh public key: %w", pubKeyErr)
 	}
 
 	setupSuffix, suffixErr := randomSuffix()
