@@ -34,7 +34,7 @@ func buildRestConfig(kubeconfig []byte, localAddr string) (*rest.Config, error) 
 
 	overrides := &clientcmd.ConfigOverrides{
 		ClusterInfo: clientcmdapi.Cluster{
-			Server: localAddr,
+			Server: fmt.Sprintf("https://%s", localAddr),
 		},
 		Timeout: (2 * time.Minute).String(),
 	}
