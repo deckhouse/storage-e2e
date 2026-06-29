@@ -525,8 +525,9 @@ reconnect from callers.
   signature guarantees at least one hop at compile time. The returned `io.Closer`
   tears down the whole chain (target + every jump + ssh-agent connections).
 - `Endpoint` describes a single host: `User`, `Addr` (`host` or `host:port`,
-  default `:22`), `KeyPath` (`~` expanded), optional `Passphrase`
-  (falls back to `SSH_PASSPHRASE` then ssh-agent), optional per-hop `HostKey`.
+  default `:22`), `KeyData` (raw private-key bytes; the transport layer never
+  reads files or expands paths — callers resolve key bytes themselves), optional
+  `Passphrase` (falls back to ssh-agent), optional per-hop `HostKey`.
 - The unexported `conn` core owns the current `*ssh.Client`, its chain `Closer`,
   and a generation counter under a mutex. `snapshot` reads them; `refresh`
   re-dials via `singleflight` keyed on the failed generation so concurrent
@@ -885,6 +886,29 @@ logger.Error("Failed to create resource: %v", err)
 | `COMMANDER_WAIT_TIMEOUT` | `30m` | Timeout for waiting for cluster readiness |
 | `COMMANDER_AUTH_METHOD` | `x-auth-token` | Auth method (`x-auth-token`, `bearer`, `basic`, etc.) |
 | `COMMANDER_API_PREFIX` | `/api/v1` | API path prefix |
+
+### DVP Base Cluster Variables (mode `dvp`)
+
+Each file-backed secret accepts **either a path or inline content** (exactly one;
+enforced by `dvp.Config.Validate`). Locally pass a path; in CI pass the Secret
+content directly. Inline content is less safe than a path (it sits in
+`/proc/<pid>/environ`) — prefer a path on `tmpfs` when possible.
+
+| Variable                                         | Default                  | Description                                   |
+|--------------------------------------------------|--------------------------|-----------------------------------------------|
+| `E2E_DVP_BASE_CLUSTER_SSH_USER`                  | (required)               | SSH user for the base cluster                 |
+| `E2E_DVP_BASE_CLUSTER_SSH_HOST`                  | (required)               | SSH host for the base cluster                 |
+| `E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE`            | -                        | Passphrase for the SSH private key            |
+| `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY_PATH`      | (one of)                 | SSH private key path (`~`/`$ENV` expanded)    |
+| `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY`           | (one of)                 | SSH private key inline content                |
+| `E2E_DVP_BASE_CLUSTER_KUBECONFIG_PATH`           | (one of)                 | Kubeconfig path (`~`/`$ENV` expanded)         |
+| `E2E_DVP_BASE_CLUSTER_KUBECONFIG`                | (one of)                 | Kubeconfig inline content                     |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST`             | -                        | Jump host (all jump fields required together) |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER`             | -                        | Jump host SSH user                            |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_KEY_PASSPHRASE`   | -                        | Passphrase for the jump private key           |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_PRIVATE_KEY_PATH` | (one of, with jump host) | Jump private key path                         |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_PRIVATE_KEY`      | (one of, with jump host) | Jump private key inline content               |
+| `E2E_DVP_BASE_CLUSTER_NAMESPACE`                 | `e2e-test-cluster`       | Test namespace name                           |
 
 ---
 

@@ -265,3 +265,6 @@ All notable changes to this repository are documented here. New entries are appe
   `path`/`inline` kubeconfig source.
 - **Update** `docs/ARCHITECTURE.md`: document `Endpoint.KeyData` and add the DVP base-cluster env-var reference
   (path/content pairs) to Section 7.
+- **Bugfix** `pkg/kubernetes/modules.go`: `WaitForModuleReady` now derives a `context.WithTimeout(ctx, timeout)` instead
+  of only logging the timeout value; previously the `timeout` arg was never enforced so the wait hung until the parent
+  context was canceled (e.g. "waiting for virtualization module" never timing out at 1m).
