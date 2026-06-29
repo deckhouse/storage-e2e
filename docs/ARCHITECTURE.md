@@ -150,7 +150,7 @@ storage-e2e/
 │   │   └── gitleaks.yml          # Secret scanning
 │   ├── scripts/
 │   │   ├── e2e-resolve-labels.sh # PR labels → keep_cluster/ginkgo_filter/namespace
-│   │   ├── e2e-prepare-creds.sh  # Secrets → temp files; workspace prune
+│   │   ├── e2e-prune-workspace.sh # Prune stale Go-cache trees (creds passed inline)
 │   │   ├── e2e-run-tests.sh      # go mod replace + go test
 │   │   └── tests/                # Bash tests for the scripts above
 │   └── templates/

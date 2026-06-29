@@ -265,6 +265,15 @@ All notable changes to this repository are documented here. New entries are appe
   `path`/`inline` kubeconfig source.
 - **Update** `docs/ARCHITECTURE.md`: document `Endpoint.KeyData` and add the DVP base-cluster env-var reference
   (path/content pairs) to Section 7.
+- **Refactor** CI: drop the temp-file credential workaround now that `dvp.Config` accepts inline content. Renamed
+  `.github/scripts/e2e-prepare-creds.sh` → `e2e-prune-workspace.sh` (workspace prune only); `.github/workflows/e2e.yml`
+  now passes `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY`/`..._SSH_JUMP_PRIVATE_KEY` as inline content and decodes the
+  base64 `..._KUBECONFIG` secret into `..._KUBECONFIG` content inline before `go run` (bootstrap + teardown); removed
+  the "Cleanup temp credentials" steps. Replaced `tests/test-prepare-creds.sh` with `tests/test-prune-workspace.sh`.
+  Updated `docs/CI.md`.
+- **Remove** `.github/workflows/e2e.yml`: drop the jump-host env wiring (`..._SSH_JUMP_HOST/_USER/_PRIVATE_KEY`) from
+  bootstrap + teardown — the jump host was never actually used in CI (direct connection), and the new all-or-nothing
+  jump validation would fail on a partial config. Left a comment on how to re-enable (set all three together).
 - **Bugfix** `pkg/kubernetes/modules.go`: `WaitForModuleReady` now derives a `context.WithTimeout(ctx, timeout)` instead
   of only logging the timeout value; previously the `timeout` arg was never enforced so the wait hung until the parent
   context was canceled (e.g. "waiting for virtualization module" never timing out at 1m).
