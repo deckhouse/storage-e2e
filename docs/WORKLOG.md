@@ -251,3 +251,17 @@ All notable changes to this repository are documented here. New entries are appe
   canceled")
   and `contextcheck` (add `//nolint` for the deliberate `context.AfterFunc(c.lifeCtx, …)` that uses the conn lifetime
   rather than the per-caller ctx).
+- **Add** `internal/provisioning/dvp/vm/` package (PR #28 cleanup): rebased the DVP cluster-provider branch onto current
+  `main`, dropping work already merged via PR #23 / #27 (the `pkg/clusterprovider` package, `ssh/v2` client, `cmd`
+  entrypoints, `module_overrides`, and the duplicate `cluster_definition_config.go`). Ported only the unique VM
+  provisioning package — `ClusterVirtualImage → VirtualDisk → VirtualMachine (+ VirtualMachineClass)` resource graph
+  with
+  idempotent ensure, cloud-init generation, readiness/deletion waits, and label-based idempotent teardown.
+- **Add** `internal/provisioning/dvp/vm/provision.go`: restored `Config.SetupVMNameSuffix` and apply it to the
+  `config.DefaultSetupVM` hostname so the bootstrap node gets a unique name per run (matches the package test and the
+  `"bootstrap-node-"` trailing-hyphen convention).
+- **Update** `internal/provisioning/dvp/{provider.go,config.go,kubeconfig.go}`: wire the VM provisioner into
+  `Bootstrap` (after namespace creation) and `Teardown` into `Remove` via a shared `connect` helper; add
+  `readSSHPublicKey` (reads `<SSHKeyPath>.pub` for cloud-init) and a random setup-VM name suffix; add
+  `StorageClass`, `VMClassName`, `DefaultVMClassName` env-configurable fields to the DVP `Config`
+  (`E2E_DVP_BASE_CLUSTER_STORAGE_CLASS` / `_VM_CLASS` / `_DEFAULT_VM_CLASS`).

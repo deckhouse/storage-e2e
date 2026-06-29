@@ -32,6 +32,12 @@ type Config struct {
 	KubeConfigPath string `env:"E2E_DVP_BASE_CLUSTER_KUBECONFIG_PATH,required"`
 
 	Namespace string `env:"E2E_DVP_BASE_CLUSTER_NAMESPACE" envDefault:"e2e-test-cluster"`
+
+	StorageClass string `env:"E2E_DVP_BASE_CLUSTER_STORAGE_CLASS"`
+
+	VMClassName string `env:"E2E_DVP_BASE_CLUSTER_VM_CLASS" envDefault:"generic"`
+
+	DefaultVMClassName string `env:"E2E_DVP_BASE_CLUSTER_DEFAULT_VM_CLASS" envDefault:"generic"`
 }
 
 func (c *Config) HasJumpHost() bool {

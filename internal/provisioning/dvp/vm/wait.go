@@ -1,0 +1,62 @@
+/*
+ * Copyright 2026 Flant JSC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * 	http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package vm
+
+import (
+	"context"
+	"time"
+)
+
+// conditionFunc inspects the latest get result and decides whether the wait is
+// done. It receives both the fetched object and the get error so that callers
+// can implement readiness checks (where a get error aborts) and deletion checks
+// (where a NotFound error means success) on top of the same loop.
+//
+// It returns done=true to stop successfully, or a non-nil error to stop with a
+// failure. Returning (false, nil) keeps polling.
+type conditionFunc[T any] func(obj T, getErr error) (done bool, err error)
+
+// waitForCondition polls get at the given interval until cond reports done, cond
+// returns an error, or ctx is cancelled. The first check happens immediately,
+// before any wait. This single helper backs every readiness/deletion wait in
+// the package so there is exactly one ticker loop to reason about.
+func waitForCondition[T any](
+	ctx context.Context,
+	interval time.Duration,
+	get func(ctx context.Context) (T, error),
+	cond conditionFunc[T],
+) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		obj, getErr := get(ctx)
+		done, err := cond(obj, getErr)
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}

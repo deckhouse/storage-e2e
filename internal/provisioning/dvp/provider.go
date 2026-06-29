@@ -18,6 +18,8 @@ package dvp
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
@@ -29,9 +31,13 @@ import (
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
+	"github.com/deckhouse/storage-e2e/internal/provisioning/dvp/vm"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
+
+const vmProvisionPollInterval = 5 * time.Second
 
 type dvpProvider struct {
 	cfg     *clusterprovider.ClusterConfig
@@ -111,6 +117,65 @@ func (p *dvpProvider) buildRestConfig(tun *ssh.Tunnel) (*rest.Config, error) {
 	return restConfig, nil
 }
 
+func (p *dvpProvider) connect(ctx context.Context) (*rest.Config, func(), error) {
+	p.logger.Info("connecting to DVP base cluster",
+		"host", p.dvpConf.SSHHost,
+		"jumpHost", p.dvpConf.SSHJumpHost,
+		"kubeconfigSource", p.dvpConf.KubeConfigPath,
+	)
+
+	sshClient, sshNewErr := p.buildSSHClient(ctx)
+	if sshNewErr != nil {
+		return nil, nil, fmt.Errorf("creating ssh client: %w", sshNewErr)
+	}
+
+	tun, tunErr := sshClient.OpenTunnel(ctx, apiServerRemotePort)
+	if tunErr != nil {
+		if closeErr := sshClient.Close(); closeErr != nil {
+			p.logger.Warn("failed to close ssh client", "err", closeErr)
+		}
+		return nil, nil, fmt.Errorf("creating tunnel: %w", tunErr)
+	}
+
+	kubeconfig, buildRestConfErr := p.buildRestConfig(tun)
+	if buildRestConfErr != nil {
+		if closeErr := tun.Close(); closeErr != nil {
+			p.logger.Warn("failed to close tunnel", "err", closeErr)
+		}
+		if closeErr := sshClient.Close(); closeErr != nil {
+			p.logger.Warn("failed to close ssh client", "err", closeErr)
+		}
+		return nil, nil, fmt.Errorf("creating rest config: %w", buildRestConfErr)
+	}
+
+	cleanup := func() {
+		if tunCloseErr := tun.Close(); tunCloseErr != nil {
+			p.logger.Warn("failed to close tunnel", "err", tunCloseErr)
+		}
+		if sshClientCloseErr := sshClient.Close(); sshClientCloseErr != nil {
+			p.logger.Warn("failed to close ssh client", "err", sshClientCloseErr)
+		}
+	}
+	return kubeconfig, cleanup, nil
+}
+
+func (p *dvpProvider) provisionerConfig(sshPublicKey, setupSuffix string) vm.Config {
+	return vm.Config{
+		Namespace:                       p.dvpConf.Namespace,
+		StorageClass:                    p.dvpConf.StorageClass,
+		SSHPublicKey:                    sshPublicKey,
+		VMClassName:                     p.dvpConf.VMClassName,
+		DefaultVMClassName:              p.dvpConf.DefaultVMClassName,
+		RunLabel:                        p.dvpConf.Namespace,
+		SetupVMNameSuffix:               setupSuffix,
+		PollInterval:                    vmProvisionPollInterval,
+		ClusterVirtualImageReadyTimeout: config.ClusterVirtualImageReadinessTimeout,
+		VMClassReadyTimeout:             config.VirtualMachineClassReadinessTimeout,
+		VMRunningTimeout:                config.VMsRunningTimeout,
+		DeleteTimeout:                   config.ClusterCleanupTimeout,
+	}
+}
+
 func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	clusterDef, err := config.LoadClusterDefinition(p.cfg.ClusterBootstrapConfigPath)
 	if err != nil {
@@ -123,38 +188,21 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"workers", len(clusterDef.Workers),
 	)
 
-	p.logger.Info("connecting to DVP base cluster",
-		"host", p.dvpConf.SSHHost,
-		"jumpHost", p.dvpConf.SSHJumpHost,
-		"kubeconfigSource", p.dvpConf.KubeConfigPath,
-	)
-
-	sshClient, sshNewErr := p.buildSSHClient(ctx)
-	if sshNewErr != nil {
-		return fmt.Errorf("creating ssh client: %w", sshNewErr)
+	sshPublicKey, pubKeyErr := readSSHPublicKey(p.dvpConf.SSHKeyPath)
+	if pubKeyErr != nil {
+		return fmt.Errorf("read ssh public key: %w", pubKeyErr)
 	}
-	defer func() {
-		sshClientCloseErr := sshClient.Close()
-		if sshClientCloseErr != nil {
-			p.logger.Warn("failed to close ssh client", "err", sshClientCloseErr)
-		}
-	}()
 
-	tun, tunErr := sshClient.OpenTunnel(ctx, apiServerRemotePort)
-	if tunErr != nil {
-		return fmt.Errorf("creating tunnel: %w", tunErr)
+	setupSuffix, suffixErr := randomSuffix()
+	if suffixErr != nil {
+		return fmt.Errorf("generate setup VM name suffix: %w", suffixErr)
 	}
-	defer func() {
-		tunCloseErr := tun.Close()
-		if tunCloseErr != nil {
-			p.logger.Warn("failed to close tunnel", "err", tunCloseErr)
-		}
-	}()
 
-	kubeconfig, buildRestConfErr := p.buildRestConfig(tun)
-	if buildRestConfErr != nil {
-		return fmt.Errorf("creating rest config: %w", buildRestConfErr)
+	kubeconfig, cleanup, connErr := p.connect(ctx)
+	if connErr != nil {
+		return connErr
 	}
+	defer cleanup()
 
 	p.logger.Info("waiting for virtualization module to become ready",
 		"timeout", config.ModuleCheckTimeout,
@@ -175,9 +223,60 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	}
 	p.logger.Info("test namespace is ready", "namespace", p.dvpConf.Namespace)
 
+	virtClient, virtClientErr := virtualization.NewClient(ctx, kubeconfig)
+	if virtClientErr != nil {
+		return fmt.Errorf("create virtualization client: %w", virtClientErr)
+	}
+
+	provisioner := vm.NewProvisioner(vm.NewClient(virtClient), p.logger, p.provisionerConfig(sshPublicKey, setupSuffix))
+
+	p.logger.Info("provisioning virtual machines",
+		"namespace", p.dvpConf.Namespace,
+		"timeout", config.VMCreationTimeout,
+	)
+	provisionCtx, provisionCancel := context.WithTimeout(ctx, config.VMCreationTimeout)
+	defer provisionCancel()
+	setupVMName, provisionErr := provisioner.Provision(provisionCtx, clusterDef)
+	if provisionErr != nil {
+		return fmt.Errorf("provision virtual machines: %w", provisionErr)
+	}
+	p.logger.Info("virtual machines provisioned", "setupVM", setupVMName)
+
 	return nil
 }
 
 func (p *dvpProvider) Remove(ctx context.Context) error {
+	kubeconfig, cleanup, connErr := p.connect(ctx)
+	if connErr != nil {
+		return connErr
+	}
+	defer cleanup()
+
+	virtClient, virtClientErr := virtualization.NewClient(ctx, kubeconfig)
+	if virtClientErr != nil {
+		return fmt.Errorf("create virtualization client: %w", virtClientErr)
+	}
+
+	provisioner := vm.NewProvisioner(vm.NewClient(virtClient), p.logger, p.provisionerConfig("", ""))
+
+	p.logger.Info("tearing down virtual machines",
+		"namespace", p.dvpConf.Namespace,
+		"timeout", config.ClusterCleanupTimeout,
+	)
+	teardownCtx, teardownCancel := context.WithTimeout(ctx, config.ClusterCleanupTimeout)
+	defer teardownCancel()
+	if err := provisioner.Teardown(teardownCtx); err != nil {
+		return fmt.Errorf("teardown virtual machines: %w", err)
+	}
+	p.logger.Info("virtual machines torn down", "namespace", p.dvpConf.Namespace)
+
 	return nil
+}
+
+func randomSuffix() (string, error) {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("read random bytes: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }

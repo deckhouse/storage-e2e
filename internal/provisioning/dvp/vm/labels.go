@@ -14,23 +14,24 @@
  * limitations under the License.
  */
 
-package clusterprovider
+package vm
 
-import (
-	"github.com/caarlos0/env/v11"
+import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+const (
+	managedByLabelKey   = "storage-e2e.deckhouse.io/managed-by"
+	managedByLabelValue = "storage-e2e"
+	runLabelKey         = "storage-e2e.deckhouse.io/run"
 )
 
-type ClusterConfig struct {
-	ClusterProvider            ProviderMode `env:"E2E_TEST_CLUSTER_PROVIDER,required"`
-	ClusterBootstrapConfigPath string       `env:"E2E_CLUSTER_CONFIG_YAML_PATH,required"`
+func managedLabels(run string) map[string]string {
+	return map[string]string{
+		managedByLabelKey: managedByLabelValue,
+		runLabelKey:       run,
+	}
 }
 
-func NewClusterConfig() (*ClusterConfig, error) {
-	cfg := &ClusterConfig{}
-	parseErr := env.Parse(cfg)
-	if parseErr != nil {
-		return nil, parseErr
-	}
-
-	return cfg, nil
+func isManagedByRun(meta metav1.ObjectMeta, run string) bool {
+	return meta.Labels[managedByLabelKey] == managedByLabelValue &&
+		meta.Labels[runLabelKey] == run
 }
