@@ -39,8 +39,6 @@ type Config struct {
 	VMClassName        string
 	DefaultVMClassName string
 
-	RunLabel string
-
 	SetupVMNameSuffix string
 
 	PollInterval                    time.Duration
@@ -144,7 +142,7 @@ func (p *Provisioner) provisionVMClass(ctx context.Context) error {
 		return fmt.Errorf("get template VirtualMachineClass %q: %w", p.cfg.DefaultVMClassName, err)
 	}
 
-	class := buildVirtualMachineClass(name, template.Spec, managedLabels(p.cfg.RunLabel))
+	class := buildVirtualMachineClass(name, template.Spec, managedLabels())
 	if err := ensureVirtualMachineClass(ctx, p.client, class); err != nil {
 		return err
 	}
@@ -177,7 +175,7 @@ func (p *Provisioner) provisionClusterVirtualImages(ctx context.Context, planned
 	for name, url := range images {
 		name, url := name, url
 		g.Go(func() error {
-			cvi := buildClusterVirtualImage(name, url, managedLabels(p.cfg.RunLabel))
+			cvi := buildClusterVirtualImage(name, url, managedLabels())
 			if err := ensureClusterVirtualImage(gctx, p.client, cvi); err != nil {
 				return err
 			}
@@ -212,7 +210,7 @@ func (p *Provisioner) provisionDisksAndVMs(ctx context.Context, planned []planne
 }
 
 func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
-	labels := managedLabels(p.cfg.RunLabel)
+	labels := managedLabels()
 	diskName := systemDiskName(pl.node.Hostname)
 
 	vd, err := buildVirtualDisk(p.cfg.Namespace, diskName, pl.cviName, p.cfg.StorageClass, pl.node.DiskSize, labels)
@@ -312,7 +310,7 @@ func (p *Provisioner) teardownVirtualMachines(ctx context.Context) error {
 	g, gctx := errgroup.WithContext(ctx)
 	for i := range vms {
 		machine := vms[i]
-		if !isManagedByRun(machine.ObjectMeta, p.cfg.RunLabel) {
+		if !isManaged(machine.ObjectMeta) {
 			continue
 		}
 		g.Go(func() error {
@@ -339,7 +337,7 @@ func (p *Provisioner) teardownVirtualDisks(ctx context.Context) (map[string]stru
 	g, gctx := errgroup.WithContext(ctx)
 	for i := range vds {
 		vd := vds[i]
-		if !isManagedByRun(vd.ObjectMeta, p.cfg.RunLabel) {
+		if !isManaged(vd.ObjectMeta) {
 			continue
 		}
 		if name, ok := virtualDiskCVIRef(vd); ok {
@@ -373,7 +371,7 @@ func (p *Provisioner) teardownClusterVirtualImages(ctx context.Context, candidat
 	}
 	managed := make(map[string]struct{})
 	for i := range cvis {
-		if isManagedByRun(cvis[i].ObjectMeta, p.cfg.RunLabel) {
+		if isManaged(cvis[i].ObjectMeta) {
 			managed[cvis[i].Name] = struct{}{}
 		}
 	}

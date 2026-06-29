@@ -154,7 +154,6 @@ func (p *dvpProvider) provisionerConfig(sshPublicKey, setupSuffix string) vm.Con
 		SSHPublicKey:                    sshPublicKey,
 		VMClassName:                     p.dvpConf.VMClassName,
 		DefaultVMClassName:              p.dvpConf.DefaultVMClassName,
-		RunLabel:                        p.dvpConf.Namespace,
 		SetupVMNameSuffix:               setupSuffix,
 		PollInterval:                    vmProvisionPollInterval,
 		ClusterVirtualImageReadyTimeout: config.ClusterVirtualImageReadinessTimeout,

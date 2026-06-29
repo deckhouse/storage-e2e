@@ -26,7 +26,7 @@ import (
 )
 
 func TestBuildClusterVirtualImage(t *testing.T) {
-	labels := managedLabels("run-1")
+	labels := managedLabels()
 	cvi := buildClusterVirtualImage("ubuntu", "http://example/img.qcow2", labels)
 
 	if cvi.Name != "ubuntu" {
@@ -38,8 +38,8 @@ func TestBuildClusterVirtualImage(t *testing.T) {
 	if cvi.Spec.DataSource.HTTP == nil || cvi.Spec.DataSource.HTTP.URL != "http://example/img.qcow2" {
 		t.Errorf("DataSource.HTTP = %+v, want URL set", cvi.Spec.DataSource.HTTP)
 	}
-	if cvi.Labels[managedByLabelKey] != managedByLabelValue || cvi.Labels[runLabelKey] != "run-1" {
-		t.Errorf("labels = %v, want managed labels for run-1", cvi.Labels)
+	if cvi.Labels[managedByLabelKey] != managedByLabelValue {
+		t.Errorf("labels = %v, want managed labels", cvi.Labels)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestBuildVirtualMachineClass(t *testing.T) {
 		CPU:          v1alpha3.CPU{Type: v1alpha3.CPUTypeModel, Model: "IvyBridge"},
 	}
 
-	class := buildVirtualMachineClass("custom", template, managedLabels("run-1"))
+	class := buildVirtualMachineClass("custom", template, managedLabels())
 
 	if class.Spec.CPU.Type != v1alpha3.CPUTypeHost {
 		t.Errorf("cpu.type = %q, want Host", class.Spec.CPU.Type)
@@ -180,7 +180,7 @@ func TestBuildVirtualMachineClass(t *testing.T) {
 	if class.Spec.Tolerations != nil {
 		t.Errorf("tolerations = %v, want nil", class.Spec.Tolerations)
 	}
-	if class.Labels[runLabelKey] != "run-1" {
-		t.Errorf("labels = %v, want run-1", class.Labels)
+	if class.Labels[managedByLabelKey] != managedByLabelValue {
+		t.Errorf("labels = %v, want managed labels", class.Labels)
 	}
 }

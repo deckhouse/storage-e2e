@@ -21,17 +21,19 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 const (
 	managedByLabelKey   = "storage-e2e.deckhouse.io/managed-by"
 	managedByLabelValue = "storage-e2e"
-	runLabelKey         = "storage-e2e.deckhouse.io/run"
 )
 
-func managedLabels(run string) map[string]string {
+// managedLabels are the labels stamped on every resource the provisioner
+// creates. Isolation boundary is the namespace (one run per namespace), so no
+// per-run label is needed.
+func managedLabels() map[string]string {
 	return map[string]string{
 		managedByLabelKey: managedByLabelValue,
-		runLabelKey:       run,
 	}
 }
 
-func isManagedByRun(meta metav1.ObjectMeta, run string) bool {
-	return meta.Labels[managedByLabelKey] == managedByLabelValue &&
-		meta.Labels[runLabelKey] == run
+// isManaged reports whether a resource was created by this provisioner and is
+// therefore eligible for teardown.
+func isManaged(meta metav1.ObjectMeta) bool {
+	return meta.Labels[managedByLabelKey] == managedByLabelValue
 }

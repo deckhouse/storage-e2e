@@ -26,7 +26,7 @@ import (
 
 func TestEnsureClusterVirtualImageIdempotent(t *testing.T) {
 	c := newFakeClient()
-	cvi := buildClusterVirtualImage("ubuntu", "http://example/img.qcow2", managedLabels("run-1"))
+	cvi := buildClusterVirtualImage("ubuntu", "http://example/img.qcow2", managedLabels())
 
 	for i := 0; i < 3; i++ {
 		if err := ensureClusterVirtualImage(context.Background(), c, cvi); err != nil {

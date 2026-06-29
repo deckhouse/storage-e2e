@@ -42,7 +42,6 @@ func testConfig() Config {
 		SSHPublicKey:                    "ssh-ed25519 AAAA test",
 		VMClassName:                     "generic",
 		DefaultVMClassName:              "generic",
-		RunLabel:                        "ns",
 		SetupVMNameSuffix:               "123",
 		PollInterval:                    time.Millisecond,
 		ClusterVirtualImageReadyTimeout: time.Minute,
