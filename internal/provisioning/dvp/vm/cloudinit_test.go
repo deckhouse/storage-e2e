@@ -23,17 +23,19 @@ import (
 
 func TestBuildCloudInit(t *testing.T) {
 	tests := []struct {
-		name       string
-		withDocker bool
+		name             string
+		withStorageTools bool
+		withDocker       bool
 	}{
-		{name: "cluster node", withDocker: false},
-		{name: "setup node", withDocker: true},
+		{name: "cluster node", withStorageTools: true, withDocker: false},
+		{name: "setup node", withStorageTools: false, withDocker: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out := buildCloudInit(cloudInitOptions{
 				hostname:         "node-1",
 				sshAuthorizedKey: "ssh-ed25519 AAAA test",
+				withStorageTools: tt.withStorageTools,
 				withDocker:       tt.withDocker,
 			})
 
@@ -46,11 +48,30 @@ func TestBuildCloudInit(t *testing.T) {
 				"AllowTcpForwarding yes",
 				"ssh-ed25519 AAAA test",
 				"hostnamectl set-hostname node-1",
-				testStandUserPasswordHash,
+				"ssh_pwauth: false",
 			}
 			for _, s := range mustContain {
 				if !strings.Contains(out, s) {
 					t.Errorf("cloud-init missing %q", s)
+				}
+			}
+
+			mustNotContain := []string{
+				"passwd:",
+				"chpasswd",
+				"lock_passwd",
+				"$6$rounds=4096$",
+			}
+			for _, s := range mustNotContain {
+				if strings.Contains(out, s) {
+					t.Errorf("cloud-init must not contain %q", s)
+				}
+			}
+
+			storageTools := []string{"stress-ng", "yq", "rsync", "fio", "/root/.kubectl_aliases"}
+			for _, s := range storageTools {
+				if strings.Contains(out, s) != tt.withStorageTools {
+					t.Errorf("withStorageTools=%v: %q presence = %v", tt.withStorageTools, s, strings.Contains(out, s))
 				}
 			}
 

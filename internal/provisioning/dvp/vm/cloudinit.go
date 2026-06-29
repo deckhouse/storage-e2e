@@ -21,8 +21,6 @@ import (
 	"strings"
 )
 
-const testStandUserPasswordHash = `$6$rounds=4096$vln/.aPHBOI7BMYR$bBMkqQvuGs5Gyd/1H5DP4m9HjQSy.kgrxpaGEHwkX7KEFV8BS.HZWPitAtZ2Vd8ZqIZRqmlykRCagTgPejt1i.`
-
 const cloudInitAptMirror = `apt:
   primary:
     - arches: [default]
@@ -37,9 +35,18 @@ const cloudInitForceIPv4Apt = `  - path: /etc/apt/apt.conf.d/99force-ipv4
       Acquire::ForceIPv4 "true";
 `
 
+// cloudInitKubectlAliases is written to cluster nodes so operators get the
+// familiar `k` alias + completion when debugging storage on the node.
+const cloudInitKubectlAliases = `  - path: /root/.kubectl_aliases
+    content: |
+      alias k=kubectl
+      complete -o default -F __start_kubectl k
+`
+
 type cloudInitOptions struct {
 	hostname         string
 	sshAuthorizedKey string
+	withStorageTools bool
 	withDocker       bool
 }
 
@@ -52,8 +59,20 @@ var basePackages = []string{
 	"curl",
 }
 
+// storageToolPackages are the tools the storage e2e suites rely on for load
+// generation and data integrity checks on cluster nodes.
+var storageToolPackages = []string{
+	"stress-ng",
+	"yq",
+	"rsync",
+	"fio",
+}
+
 func buildCloudInit(opts cloudInitOptions) string {
 	packages := append([]string{}, basePackages...)
+	if opts.withStorageTools {
+		packages = append(packages, storageToolPackages...)
+	}
 	if opts.withDocker {
 		packages = append(packages, "docker.io")
 	}
@@ -65,9 +84,12 @@ func buildCloudInit(opts cloudInitOptions) string {
 
 	runcmd := []string{
 		"systemctl restart ssh",
-		fmt.Sprintf("hostnamectl set-hostname %s", opts.hostname), // TODO: hostname должно быть уникальным
+		fmt.Sprintf("hostnamectl set-hostname %s", opts.hostname),
 		"systemctl daemon-reload",
 		"systemctl enable --now qemu-guest-agent.service",
+	}
+	if opts.withStorageTools {
+		runcmd = append(runcmd, "echo 'source /root/.kubectl_aliases' >> /root/.bashrc")
 	}
 	if opts.withDocker {
 		runcmd = append(runcmd, "systemctl enable --now docker.service")
@@ -78,18 +100,20 @@ func buildCloudInit(opts cloudInitOptions) string {
 		fmt.Fprintf(&runcmdList, "  - %s\n", c)
 	}
 
+	writeFiles := cloudInitForceIPv4Apt
+	if opts.withStorageTools {
+		writeFiles += cloudInitKubectlAliases
+	}
+
 	return fmt.Sprintf(`#cloud-config
 %spackage_update: true
 packages:
 %s
-ssh_pwauth: true
+ssh_pwauth: false
 users:
   - name: cloud
-    passwd: %s
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
-    chpasswd: {expire: False}
-    lock_passwd: false
     ssh_authorized_keys:
       - %s
 write_files:
@@ -100,9 +124,8 @@ runcmd:
 %s`,
 		cloudInitAptMirror,
 		strings.TrimRight(pkgList.String(), "\n"),
-		testStandUserPasswordHash,
 		opts.sshAuthorizedKey,
-		cloudInitForceIPv4Apt,
+		writeFiles,
 		runcmdList.String(),
 	)
 }

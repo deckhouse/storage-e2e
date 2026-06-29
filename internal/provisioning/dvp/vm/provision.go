@@ -59,9 +59,10 @@ func NewProvisioner(client Client, log *slog.Logger, cfg Config) *Provisioner {
 }
 
 type plannedVM struct {
-	node       *config.ClusterNode
-	withDocker bool
-	cviName    string
+	node             *config.ClusterNode
+	withStorageTools bool
+	withDocker       bool
+	cviName          string
 }
 
 func (p *Provisioner) plan(def *config.ClusterDefinition, setup *config.ClusterNode) []plannedVM {
@@ -72,9 +73,10 @@ func (p *Provisioner) plan(def *config.ClusterDefinition, setup *config.ClusterN
 			return
 		}
 		planned = append(planned, plannedVM{
-			node:       n,
-			withDocker: n.Role == config.ClusterRoleSetup,
-			cviName:    cviNameFromImageURL(n.OSType.ImageURL),
+			node:             n,
+			withStorageTools: n.Role != config.ClusterRoleSetup,
+			withDocker:       n.Role == config.ClusterRoleSetup,
+			cviName:          cviNameFromImageURL(n.OSType.ImageURL),
 		})
 	}
 
@@ -224,6 +226,7 @@ func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
 	cloudInit := buildCloudInit(cloudInitOptions{
 		hostname:         pl.node.Hostname,
 		sshAuthorizedKey: p.cfg.SSHPublicKey,
+		withStorageTools: pl.withStorageTools,
 		withDocker:       pl.withDocker,
 	})
 
