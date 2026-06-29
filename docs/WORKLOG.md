@@ -251,6 +251,32 @@ All notable changes to this repository are documented here. New entries are appe
   canceled")
   and `contextcheck` (add `//nolint` for the deliberate `context.AfterFunc(c.lifeCtx, …)` that uses the conn lifetime
   rather than the per-caller ctx).
+- **Refactor** `internal/infrastructure/ssh/v2/endpoint.go`: replace `Endpoint.KeyPath` with `KeyData []byte`; delete
+  `expandTilde` and the file-read branch in `clientConfig` so the transport layer never reads files or expands paths.
+  Updated `endpoint_test.go` with `KeyData` signer cases (incl. passphrase-protected). [Possible compatibility break]
+- **Refactor** `internal/provisioning/dvp/config.go`: make `Config` struct path/content pair-based, add `LoadConfig`
+  (injectable env map), accumulating `Validate` with sentinel errors via `errors.Join`, `Resolve`→`Credentials`
+  (single path-expansion/read site), rename `HasJumpHost`→`JumpHostConfigured`; moved `expandUserPath` here. Added
+  `config_test.go` + `credentials_test.go`.
+- **Refactor** `internal/provisioning/dvp/kubeconfig.go`: replace `readKubeconfig` with free function
+  `buildRestConfig([]byte, string)`; drop `expandUserPath` (moved to `config.go`). Added `kubeconfig_test.go`.
+- **Refactor** `internal/provisioning/dvp/provider.go`: split thin `NewDVPProvider` (reads env, resolves creds) from
+  injectable `newProvider`; `buildSSHClient` passes `KeyData` from resolved credentials; log a derived
+  `path`/`inline` kubeconfig source.
+- **Update** `docs/ARCHITECTURE.md`: document `Endpoint.KeyData` and add the DVP base-cluster env-var reference
+  (path/content pairs) to Section 7.
+- **Refactor** CI: drop the temp-file credential workaround now that `dvp.Config` accepts inline content. Renamed
+  `.github/scripts/e2e-prepare-creds.sh` → `e2e-prune-workspace.sh` (workspace prune only); `.github/workflows/e2e.yml`
+  now passes `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY`/`..._SSH_JUMP_PRIVATE_KEY` as inline content and decodes the
+  base64 `..._KUBECONFIG` secret into `..._KUBECONFIG` content inline before `go run` (bootstrap + teardown); removed
+  the "Cleanup temp credentials" steps. Replaced `tests/test-prepare-creds.sh` with `tests/test-prune-workspace.sh`.
+  Updated `docs/CI.md`.
+- **Remove** `.github/workflows/e2e.yml`: drop the jump-host env wiring (`..._SSH_JUMP_HOST/_USER/_PRIVATE_KEY`) from
+  bootstrap + teardown — the jump host was never actually used in CI (direct connection), and the new all-or-nothing
+  jump validation would fail on a partial config. Left a comment on how to re-enable (set all three together).
+- **Bugfix** `pkg/kubernetes/modules.go`: `WaitForModuleReady` now derives a `context.WithTimeout(ctx, timeout)` instead
+  of only logging the timeout value; previously the `timeout` arg was never enforced so the wait hung until the parent
+  context was canceled (e.g. "waiting for virtualization module" never timing out at 1m).
 - **Add** Commander cluster provider for the new provider abstraction:
   `internal/provisioning/commander/{config.go,provider.go,provider_test.go}`. `Bootstrap`
   creates a cluster from a Commander template (resolving template version + optional registry,
@@ -267,3 +293,11 @@ All notable changes to this repository are documented here. New entries are appe
   credentials` step on `cluster_provider == 'dvp'`, and pass the `E2E_COMMANDER_*` env (typed/defaulted
   fields via `|| <default>` so unset vars never override Go-side defaults). `.github/templates/e2e-tests.yml`
   and `docs/CI.md` document the provider choice and the Commander secrets/vars.
+- **Merge** reconcile `origin/main` (Commander provider, #31) with the DVP config/CI refactor in
+  `.github/workflows/e2e.yml` and `docs/CI.md`: the DVP-only `Prepare credentials` step is replaced by the
+  provider-agnostic `Prune stale workspace caches` step (credentials flow as inline content), while the Commander
+  `cluster_provider` input and `E2E_COMMANDER_*` env are kept; the base64 kubeconfig is decoded inline in both
+  bootstrap and teardown.
+- **Add** `internal/provisioning/dvp/provider.go`: explicit API-server connectivity check in `Bootstrap`
+  (calls `kubernetes.NewClientsetWithRetry` right after `buildRestConfig`) so a dead SSH tunnel / bad
+  kubeconfig fails fast with a clear error instead of timing out inside `WaitForModuleReady`.

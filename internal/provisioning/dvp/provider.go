@@ -20,12 +20,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/caarlos0/env/v11"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
@@ -36,43 +34,54 @@ import (
 type dvpProvider struct {
 	cfg     *clusterprovider.ClusterConfig
 	dvpConf *Config
+	creds   Credentials
 	logger  *slog.Logger
 }
 
 func NewDVPProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {
-	dvpConf := &Config{}
-	if err := env.Parse(dvpConf); err != nil {
+	dvpConf, err := LoadConfig(env.ToMap(os.Environ()))
+	if err != nil {
 		return nil, err
 	}
 
+	creds, err := dvpConf.Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("resolving credentials: %w", err)
+	}
+
+	return newProvider(logger, cfg, dvpConf, creds), nil
+}
+
+func newProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig, dvpConf *Config, creds Credentials) *dvpProvider {
 	return &dvpProvider{
 		cfg:     cfg,
 		dvpConf: dvpConf,
+		creds:   creds,
 		logger:  logger,
-	}, nil
+	}
 }
 
 func (p *dvpProvider) Name() string { return clusterprovider.ModeDVP }
 
 func (p *dvpProvider) buildSSHClient(ctx context.Context) (*ssh.Client, error) {
 	var dialer ssh.Dialer
-	if p.dvpConf.HasJumpHost() {
+	if p.dvpConf.JumpHostConfigured() {
 		dialer = ssh.Route(ssh.Endpoint{
 			User:       p.dvpConf.SSHJumpUser,
 			Addr:       p.dvpConf.SSHJumpHost,
-			KeyPath:    p.dvpConf.SSHJumpKeyPath,
+			KeyData:    p.creds.JumpKey,
 			Passphrase: p.dvpConf.SSHJumpPassphrase,
 		}, ssh.Endpoint{
 			User:       p.dvpConf.SSHUser,
 			Addr:       p.dvpConf.SSHHost,
-			KeyPath:    p.dvpConf.SSHKeyPath,
+			KeyData:    p.creds.SSHKey,
 			Passphrase: p.dvpConf.SSHPassphrase,
 		})
 	} else {
 		dialer = ssh.Route(ssh.Endpoint{
 			User:       p.dvpConf.SSHUser,
 			Addr:       p.dvpConf.SSHHost,
-			KeyPath:    p.dvpConf.SSHKeyPath,
+			KeyData:    p.creds.SSHKey,
 			Passphrase: p.dvpConf.SSHPassphrase,
 		})
 	}
@@ -82,33 +91,6 @@ func (p *dvpProvider) buildSSHClient(ctx context.Context) (*ssh.Client, error) {
 		return nil, fmt.Errorf("creating ssh client: %w", sshNewErr)
 	}
 	return sshClient, nil
-}
-
-func (p *dvpProvider) buildRestConfig(tun *ssh.Tunnel) (*rest.Config, error) {
-	rawKubeconfig, readErr := readKubeconfig(p.dvpConf.KubeConfigPath)
-	if readErr != nil {
-		return nil, fmt.Errorf("reading kubeconfig: %w", readErr)
-	}
-
-	apiCfg, err := clientcmd.Load(rawKubeconfig)
-	overrides := &clientcmd.ConfigOverrides{
-		ClusterInfo: clientcmdapi.Cluster{
-			Server: tun.LocalAddr(),
-		},
-		Timeout: (2 * time.Minute).String(),
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("parsing kubeconfig: %w", err)
-	}
-
-	restConfig, clientConfigErr := clientcmd.NewDefaultClientConfig(*apiCfg, overrides).ClientConfig()
-	if clientConfigErr != nil {
-		return nil, fmt.Errorf("creating client config: %w", clientConfigErr)
-	}
-
-	configureTunnelTimeouts(restConfig)
-	return restConfig, nil
 }
 
 func (p *dvpProvider) Bootstrap(ctx context.Context) error {
@@ -123,10 +105,14 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"workers", len(clusterDef.Workers),
 	)
 
+	kubeconfigSource := "path"
+	if p.dvpConf.KubeConfigContent != "" {
+		kubeconfigSource = "inline"
+	}
 	p.logger.Info("connecting to DVP base cluster",
 		"host", p.dvpConf.SSHHost,
 		"jumpHost", p.dvpConf.SSHJumpHost,
-		"kubeconfigSource", p.dvpConf.KubeConfigPath,
+		"kubeconfigSource", kubeconfigSource,
 	)
 
 	sshClient, sshNewErr := p.buildSSHClient(ctx)
@@ -151,10 +137,16 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		}
 	}()
 
-	kubeconfig, buildRestConfErr := p.buildRestConfig(tun)
+	kubeconfig, buildRestConfErr := buildRestConfig(p.creds.Kubeconfig, tun.LocalAddr())
 	if buildRestConfErr != nil {
 		return fmt.Errorf("creating rest config: %w", buildRestConfErr)
 	}
+
+	p.logger.Info("verifying connectivity to DVP base cluster API server")
+	if _, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig); err != nil {
+		return fmt.Errorf("cluster connectivity check failed: %w", err)
+	}
+	p.logger.Info("DVP base cluster API server is reachable")
 
 	p.logger.Info("waiting for virtualization module to become ready",
 		"timeout", config.ModuleCheckTimeout,

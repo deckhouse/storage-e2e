@@ -125,15 +125,11 @@ jobs:
           go-version-file: _storage-e2e/go.mod
           cache: false
 
-      # DVP provisions a nested cluster on a base DVP cluster and needs its SSH
-      # key + kubeconfig materialized to disk. The commander provider talks to
-      # the Commander API over HTTP and needs neither, so this step is skipped.
-      - name: Prepare credentials
-        if: ${{ inputs.cluster_provider == 'dvp' }}
-        env:
-          E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY }}
-          E2E_DVP_BASE_CLUSTER_KUBECONFIG: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
-        run: bash _storage-e2e/.github/scripts/e2e-prepare-creds.sh
+      # Prune stale Go-cache trees on the self-hosted runner (provider-agnostic).
+      # Credentials are no longer materialized to disk: the DVP provider consumes
+      # the SSH key + kubeconfig as inline content (see env below).
+      - name: Prune stale workspace caches
+        run: bash _storage-e2e/.github/scripts/e2e-prune-workspace.sh
 
       - name: Bootstrap cluster
         working-directory: _storage-e2e
@@ -148,9 +144,10 @@ jobs:
           E2E_DVP_BASE_CLUSTER_SSH_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_USER }}
           E2E_DVP_BASE_CLUSTER_SSH_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_HOST }}
           E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE }}
-          E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST }}
-          E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER }}
+          E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY }}
           E2E_DVP_BASE_CLUSTER_NAMESPACE: ${{ needs.resolve.outputs.namespace }}
+          # KUBECONFIG secret is base64-encoded; decoded to inline content below.
+          E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
           # Commander provider env (used when cluster_provider == commander).
           # Typed/defaulted fields use `|| <default>` so an unset var never
           # renders as an empty string that would override the Go-side default.
@@ -169,11 +166,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
+          # DVP: decode the base64 kubeconfig secret into inline content. Empty
+          # for non-DVP providers (commander), which simply ignore it.
+          E2E_DVP_BASE_CLUSTER_KUBECONFIG="$(printf '%s' "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64}" | base64 -d)"
+          export E2E_DVP_BASE_CLUSTER_KUBECONFIG
           go run ./cmd/bootstrap-cluster
-
-      - name: Cleanup temp credentials
-        if: ${{ always() }}
-        run: rm -f "${E2E_DVP_BASE_CLUSTER_SSH_KEY_PATH:-}" "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_PATH:-}" 2>/dev/null || true
 
   run-tests:
     name: run-tests
@@ -252,12 +249,8 @@ jobs:
           go-version-file: _storage-e2e/go.mod
           cache: false
 
-      - name: Prepare credentials
-        if: ${{ inputs.cluster_provider == 'dvp' }}
-        env:
-          E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY }}
-          E2E_DVP_BASE_CLUSTER_KUBECONFIG: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
-        run: bash _storage-e2e/.github/scripts/e2e-prepare-creds.sh
+      - name: Prune stale workspace caches
+        run: bash _storage-e2e/.github/scripts/e2e-prune-workspace.sh
 
       - name: Remove cluster
         working-directory: _storage-e2e
@@ -272,9 +265,10 @@ jobs:
           E2E_DVP_BASE_CLUSTER_SSH_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_USER }}
           E2E_DVP_BASE_CLUSTER_SSH_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_HOST }}
           E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE }}
-          E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST }}
-          E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER }}
+          E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY }}
           E2E_DVP_BASE_CLUSTER_NAMESPACE: ${{ needs.resolve.outputs.namespace }}
+          # KUBECONFIG secret is base64-encoded; decoded to inline content below.
+          E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
           # Commander provider env (used when cluster_provider == commander).
           # The cluster name MUST match the bootstrap job so the right cluster
           # is deleted: both use the per-PR namespace as the cluster name.
@@ -290,8 +284,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
+          # DVP: decode the base64 kubeconfig secret into inline content. Empty
+          # for non-DVP providers (commander), which simply ignore it.
+          E2E_DVP_BASE_CLUSTER_KUBECONFIG="$(printf '%s' "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64}" | base64 -d)"
+          export E2E_DVP_BASE_CLUSTER_KUBECONFIG
           go run ./cmd/remove-cluster
-
-      - name: Cleanup temp credentials
-        if: ${{ always() }}
-        run: rm -f "${E2E_DVP_BASE_CLUSTER_SSH_KEY_PATH:-}" "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_PATH:-}" 2>/dev/null || true
