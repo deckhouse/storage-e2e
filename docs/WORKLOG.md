@@ -224,3 +224,30 @@ All notable changes to this repository are documented here. New entries are appe
   `log.Fatalf` instead of glued key/value arguments.
 - **Bugfix** `.github/workflows/e2e.yml`: checkout `storage-e2e` into `_storage-e2e` in the `run-tests` job before
   invoking `.github/scripts/e2e-run-tests.sh`.
+- **Bugfix** `internal/infrastructure/ssh/v2/conn.go` (`newConn`): derive keepalive context via
+  `context.WithCancel(context.WithoutCancel(ctx))` instead of `context.Background()` to satisfy `contextcheck` while
+  keeping the loop lifetime tied to the connection (still cancelled in `Close`).
+- **Refactor** `internal/infrastructure/ssh/v2/{options.go,endpoint.go}`: centralise `ssh.InsecureIgnoreHostKey` into a
+  single documented `insecureIgnoreHostKey` helper with one `//nolint:gosec` (G106); call sites now use the wrapper.
+
+## 2026-06-29
+
+- **Add** `docs/REVIEW_SSH_V2.md`: code-review report for `internal/infrastructure/ssh/v2` (PR #27) with a fix
+  checklist (1 High, 3 Medium, 1 Low, 4 Nit) and per-finding explanations.
+- **Bugfix** `internal/infrastructure/ssh/v2/conn.go` (review #1): add a connection-lifetime `lifeCtx`/`lifeCancel`
+  (cancelled in `Close`) and back reconnect dials with it instead of `context.WithoutCancel(ctx)`, so `Close()` aborts
+  an in-flight keepalive reconnect immediately rather than blocking on `dialTimeout`; `refresh` no longer takes a
+  `ctx` param. Added regression test `TestConnCloseAbortsInFlightReconnect` and made the test dialer gate honour ctx.
+- **Update** `internal/infrastructure/ssh/v2/{options.go,conn.go}` (review #2): decouple the keepalive probe timeout
+  from the probe interval via new `WithKeepaliveTimeout` option and `resolveKeepaliveTimeout` helper (default
+  `min(interval, 10s)`); `keepaliveLoop` now takes an explicit `probeTimeout`. Added `options_test.go`.
+- **Refactor** `internal/infrastructure/ssh/v2/{endpoint.go,options.go,client.go}` (review #3): make host key
+  resolution single-source — remove the unreachable `insecureIgnoreHostKey` fallback in `clientConfig` and document in
+  `WithHostKeyCallback` that the default only reaches `Route`-built dialers, not custom `Dialer`s.
+- **Update** `internal/infrastructure/ssh/v2/{options.go,client.go}` (review #4): track an `insecureHostKey` flag on
+  options, document the insecure-by-default host key policy in the package godoc, and log a `Warn` from `New` when host
+  key verification is disabled.
+- **Bugfix** `internal/infrastructure/ssh/v2/conn.go`: fix golangci-lint findings — `misspell` ("cancelled" → "
+  canceled")
+  and `contextcheck` (add `//nolint` for the deliberate `context.AfterFunc(c.lifeCtx, …)` that uses the conn lifetime
+  rather than the per-caller ctx).

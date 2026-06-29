@@ -39,6 +39,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/deckhouse/virtualization/api/core/v1alpha2"
+
 	internalcluster "github.com/deckhouse/storage-e2e/internal/cluster"
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
@@ -47,7 +49,6 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/logger"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 	"github.com/deckhouse/storage-e2e/pkg/testkit"
-	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 )
 
 // extraCommanderValues stores additional values to be passed to Commander cluster creation
@@ -1607,7 +1608,7 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 				}
 			}
 		} else {
-			// Tunnel already exists, use it
+			// OpenTunnel already exists, use it
 			logger.Success("Base cluster tunnel already exists")
 			baseTunnel = resources.BaseTunnelInfo
 			cleanupKubeconfig = resources.BaseKubeconfig
