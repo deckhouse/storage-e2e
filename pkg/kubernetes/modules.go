@@ -590,6 +590,9 @@ const moduleReadyPollInterval = 2 * time.Second
 //   - On timeout the error carries the last observed phase and the IsReady
 //     condition message so a stuck module is diagnosable from logs alone.
 func WaitForModuleReady(ctx context.Context, kubeconfig *rest.Config, moduleName string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	var lastPhase, lastCondition string
 
 	// ready re-reads the module and reports whether it has converged, recording

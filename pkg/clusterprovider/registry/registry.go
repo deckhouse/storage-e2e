@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/deckhouse/storage-e2e/internal/provisioning/commander"
 	"github.com/deckhouse/storage-e2e/internal/provisioning/dvp"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
@@ -42,7 +43,8 @@ type Registry struct {
 // NewRegistry returns a Registry pre-populated with the built-in providers.
 func NewRegistry() *Registry {
 	return &Registry{constructors: map[string]Constructor{
-		clusterprovider.ModeDVP: dvp.NewDVPProvider,
+		clusterprovider.ModeDVP:       dvp.NewDVPProvider,
+		clusterprovider.ModeCommander: commander.NewCommanderProvider,
 	}}
 }
 

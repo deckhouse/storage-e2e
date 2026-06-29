@@ -251,17 +251,66 @@ All notable changes to this repository are documented here. New entries are appe
   canceled")
   and `contextcheck` (add `//nolint` for the deliberate `context.AfterFunc(c.lifeCtx, …)` that uses the conn lifetime
   rather than the per-caller ctx).
-- **Add** `internal/provisioning/dvp/vm/` package (PR #28 cleanup): rebased the DVP cluster-provider branch onto current
-  `main`, dropping work already merged via PR #23 / #27 (the `pkg/clusterprovider` package, `ssh/v2` client, `cmd`
-  entrypoints, `module_overrides`, and the duplicate `cluster_definition_config.go`). Ported only the unique VM
-  provisioning package — `ClusterVirtualImage → VirtualDisk → VirtualMachine (+ VirtualMachineClass)` resource graph
-  with
-  idempotent ensure, cloud-init generation, readiness/deletion waits, and label-based idempotent teardown.
-- **Add** `internal/provisioning/dvp/vm/provision.go`: restored `Config.SetupVMNameSuffix` and apply it to the
-  `config.DefaultSetupVM` hostname so the bootstrap node gets a unique name per run (matches the package test and the
-  `"bootstrap-node-"` trailing-hyphen convention).
+- **Refactor** `internal/infrastructure/ssh/v2/endpoint.go`: replace `Endpoint.KeyPath` with `KeyData []byte`; delete
+  `expandTilde` and the file-read branch in `clientConfig` so the transport layer never reads files or expands paths.
+  Updated `endpoint_test.go` with `KeyData` signer cases (incl. passphrase-protected). [Possible compatibility break]
+- **Refactor** `internal/provisioning/dvp/config.go`: make `Config` struct path/content pair-based, add `LoadConfig`
+  (injectable env map), accumulating `Validate` with sentinel errors via `errors.Join`, `Resolve`→`Credentials`
+  (single path-expansion/read site), rename `HasJumpHost`→`JumpHostConfigured`; moved `expandUserPath` here. Added
+  `config_test.go` + `credentials_test.go`.
+- **Refactor** `internal/provisioning/dvp/kubeconfig.go`: replace `readKubeconfig` with free function
+  `buildRestConfig([]byte, string)`; drop `expandUserPath` (moved to `config.go`). Added `kubeconfig_test.go`.
+- **Refactor** `internal/provisioning/dvp/provider.go`: split thin `NewDVPProvider` (reads env, resolves creds) from
+  injectable `newProvider`; `buildSSHClient` passes `KeyData` from resolved credentials; log a derived
+  `path`/`inline` kubeconfig source.
+- **Update** `docs/ARCHITECTURE.md`: document `Endpoint.KeyData` and add the DVP base-cluster env-var reference
+  (path/content pairs) to Section 7.
+- **Refactor** CI: drop the temp-file credential workaround now that `dvp.Config` accepts inline content. Renamed
+  `.github/scripts/e2e-prepare-creds.sh` → `e2e-prune-workspace.sh` (workspace prune only); `.github/workflows/e2e.yml`
+  now passes `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY`/`..._SSH_JUMP_PRIVATE_KEY` as inline content and decodes the
+  base64 `..._KUBECONFIG` secret into `..._KUBECONFIG` content inline before `go run` (bootstrap + teardown); removed
+  the "Cleanup temp credentials" steps. Replaced `tests/test-prepare-creds.sh` with `tests/test-prune-workspace.sh`.
+  Updated `docs/CI.md`.
+- **Remove** `.github/workflows/e2e.yml`: drop the jump-host env wiring (`..._SSH_JUMP_HOST/_USER/_PRIVATE_KEY`) from
+  bootstrap + teardown — the jump host was never actually used in CI (direct connection), and the new all-or-nothing
+  jump validation would fail on a partial config. Left a comment on how to re-enable (set all three together).
+- **Bugfix** `pkg/kubernetes/modules.go`: `WaitForModuleReady` now derives a `context.WithTimeout(ctx, timeout)` instead
+  of only logging the timeout value; previously the `timeout` arg was never enforced so the wait hung until the parent
+  context was canceled (e.g. "waiting for virtualization module" never timing out at 1m).
+- **Add** Commander cluster provider for the new provider abstraction:
+  `internal/provisioning/commander/{config.go,provider.go,provider_test.go}`. `Bootstrap`
+  creates a cluster from a Commander template (resolving template version + optional registry,
+  merging `E2E_COMMANDER_VALUES` and a forced `prefix`) and waits for Ready (idempotent: reuses an
+  existing cluster of the same name); `Remove` deletes it (tolerates `ErrClusterNotFound`). Config is
+  env-driven via the `E2E_COMMANDER_*` prefix. Reuses the existing `internal/kubernetes/commander`
+  API client. The cluster name is taken verbatim from config (no randomization) so the separate
+  `cmd/bootstrap-cluster` and `cmd/remove-cluster` processes act on the same cluster.
+- **Update** `pkg/clusterprovider/registry/registry.go`: seed `ModeCommander` →
+  `commander.NewCommanderProvider`. Adjusted `registry_test.go` (`TestRegistryGet_UnregisteredMode`
+  now uses a bogus mode; `TestDefaultRegistry_HasBuiltinProviders` asserts both `dvp` and `commander`).
+- **Update** `.github/workflows/e2e.yml`: add a `cluster_provider` input (`dvp` default | `commander`),
+  thread it into `E2E_TEST_CLUSTER_PROVIDER` for bootstrap/teardown, gate the DVP-only `Prepare
+  credentials` step on `cluster_provider == 'dvp'`, and pass the `E2E_COMMANDER_*` env (typed/defaulted
+  fields via `|| <default>` so unset vars never override Go-side defaults). `.github/templates/e2e-tests.yml`
+  and `docs/CI.md` document the provider choice and the Commander secrets/vars.
+- **Merge** reconcile `origin/main` (Commander provider, #31) with the DVP config/CI refactor in
+  `.github/workflows/e2e.yml` and `docs/CI.md`: the DVP-only `Prepare credentials` step is replaced by the
+  provider-agnostic `Prune stale workspace caches` step (credentials flow as inline content), while the Commander
+  `cluster_provider` input and `E2E_COMMANDER_*` env are kept; the base64 kubeconfig is decoded inline in both
+  bootstrap and teardown.
+- **Add** `internal/provisioning/dvp/provider.go`: explicit API-server connectivity check in `Bootstrap`
+  (calls `kubernetes.NewClientsetWithRetry` right after `buildRestConfig`) so a dead SSH tunnel / bad
+  kubeconfig fails fast with a clear error instead of timing out inside `WaitForModuleReady`.
+- **Add** `internal/provisioning/dvp/vm/` package: VM provisioning resource graph
+  `ClusterVirtualImage → VirtualDisk → VirtualMachine (+ VirtualMachineClass)` with idempotent ensure, cloud-init
+  generation, readiness/deletion waits, and label-based idempotent teardown.
+- **Add** `internal/provisioning/dvp/vm/provision.go`: `Config.SetupVMNameSuffix` applied to the
+  `config.DefaultSetupVM` hostname so the bootstrap node gets a unique name per run.
 - **Update** `internal/provisioning/dvp/{provider.go,config.go,kubeconfig.go}`: wire the VM provisioner into
-  `Bootstrap` (after namespace creation) and `Teardown` into `Remove` via a shared `connect` helper; add
-  `readSSHPublicKey` (reads `<SSHKeyPath>.pub` for cloud-init) and a random setup-VM name suffix; add
-  `StorageClass`, `VMClassName`, `DefaultVMClassName` env-configurable fields to the DVP `Config`
-  (`E2E_DVP_BASE_CLUSTER_STORAGE_CLASS` / `_VM_CLASS` / `_DEFAULT_VM_CLASS`).
+  `Bootstrap` and `Teardown` into `Remove` via a shared `connect` helper (built on the merged `Credentials` /
+  free-function `buildRestConfig`); add `readSSHPublicKey` (reads `<SSHKeyPath>.pub` for cloud-init) and a random
+  setup-VM name suffix; add `StorageClass`, `VMClassName`, `DefaultVMClassName` env-configurable fields to the DVP
+  `Config` (`E2E_DVP_BASE_CLUSTER_STORAGE_CLASS` / `_VM_CLASS` / `_DEFAULT_VM_CLASS`).
+- **Merge** reconcile `origin/main` (ssh/v2 `KeyData`, DVP `Credentials`/`LoadConfig` config refactor, Commander
+  provider) with the DVP VM-provisioning branch: rewrote `connect`/`Bootstrap`/`Remove` to use the merged
+  credentials-based `buildRestConfig`, dropped the duplicate `expandUserPath` (kept in `config.go`).

@@ -23,9 +23,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/user"
-	"path/filepath"
-	"strings"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -34,7 +31,7 @@ import (
 type Endpoint struct {
 	User       string
 	Addr       string
-	KeyPath    string
+	KeyData    []byte
 	Passphrase string
 	HostKey    ssh.HostKeyCallback
 }
@@ -56,18 +53,10 @@ func (e Endpoint) label() string {
 func (e Endpoint) clientConfig(ctx context.Context, defaultHostKey ssh.HostKeyCallback) (*ssh.ClientConfig, io.Closer, error) {
 	var signers []ssh.Signer
 
-	if e.KeyPath != "" {
-		keyPath, err := expandTilde(e.KeyPath)
+	if len(e.KeyData) > 0 {
+		signer, err := parseSigner(e.KeyData, e.Passphrase)
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolve key path %q: %w", e.KeyPath, err)
-		}
-		raw, err := os.ReadFile(keyPath)
-		if err != nil {
-			return nil, nil, fmt.Errorf("read private key %q: %w", keyPath, err)
-		}
-		signer, err := parseSigner(raw, e.Passphrase)
-		if err != nil {
-			return nil, nil, fmt.Errorf("parse private key %q: %w", keyPath, err)
+			return nil, nil, fmt.Errorf("parse private key for %s: %w", e.label(), err)
 		}
 		if signer != nil {
 			signers = append(signers, signer)
@@ -86,7 +75,7 @@ func (e Endpoint) clientConfig(ctx context.Context, defaultHostKey ssh.HostKeyCa
 	}
 
 	if len(signers) == 0 {
-		return nil, nil, fmt.Errorf("no usable credentials for %s: set KeyPath or start an ssh-agent", e.label())
+		return nil, nil, fmt.Errorf("no usable credentials for %s: set KeyData or start an ssh-agent", e.label())
 	}
 
 	hostKey := e.HostKey
@@ -122,18 +111,4 @@ func parseSigner(raw []byte, passphrase string) (ssh.Signer, error) {
 		return nil, fmt.Errorf("decrypt private key with passphrase: %w", err)
 	}
 	return signer, nil
-}
-
-func expandTilde(path string) (string, error) {
-	if !strings.HasPrefix(path, "~") {
-		return path, nil
-	}
-	usr, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("look up current user: %w", err)
-	}
-	if path == "~" {
-		return usr.HomeDir, nil
-	}
-	return filepath.Join(usr.HomeDir, strings.TrimPrefix(path, "~/")), nil
 }

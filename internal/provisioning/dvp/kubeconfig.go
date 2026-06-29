@@ -20,26 +20,34 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
-func readKubeconfig(path string) ([]byte, error) {
-	resolved, err := expandUserPath(path)
+func buildRestConfig(kubeconfig []byte, localAddr string) (*rest.Config, error) {
+	apiCfg, err := clientcmd.Load(kubeconfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing kubeconfig: %w", err)
 	}
-	raw, err := os.ReadFile(resolved)
+
+	overrides := &clientcmd.ConfigOverrides{
+		ClusterInfo: clientcmdapi.Cluster{
+			Server: fmt.Sprintf("https://%s", localAddr),
+		},
+		Timeout: (2 * time.Minute).String(),
+	}
+
+	restConfig, err := clientcmd.NewDefaultClientConfig(*apiCfg, overrides).ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("read kubeconfig %q: %w", resolved, err)
+		return nil, fmt.Errorf("creating client config: %w", err)
 	}
-	if strings.TrimSpace(string(raw)) == "" {
-		return nil, fmt.Errorf("kubeconfig %q is empty", resolved)
-	}
-	return raw, nil
+
+	configureTunnelTimeouts(restConfig)
+	return restConfig, nil
 }
 
 // readSSHPublicKey reads the OpenSSH public key that sits next to the given
@@ -60,21 +68,6 @@ func readSSHPublicKey(privateKeyPath string) (string, error) {
 		return "", fmt.Errorf("SSH public key %q is empty", path)
 	}
 	return key, nil
-}
-
-func expandUserPath(path string) (string, error) {
-	expanded := os.ExpandEnv(path)
-	if !strings.HasPrefix(expanded, "~") {
-		return expanded, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory for %q: %w", path, err)
-	}
-	if expanded == "~" {
-		return home, nil
-	}
-	return filepath.Join(home, strings.TrimPrefix(expanded, "~/")), nil
 }
 
 func configureTunnelTimeouts(cfg *rest.Config) {
