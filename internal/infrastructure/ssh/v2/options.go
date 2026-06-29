@@ -26,23 +26,30 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/logger"
 )
 
-const defaultDialTimeout = 30 * time.Second
+const (
+	defaultDialTimeout = 30 * time.Second
+
+	defaultKeepaliveTimeout = 10 * time.Second
+)
 
 type options struct {
-	keepalive   time.Duration
-	retries     int
-	log         *slog.Logger
-	hostKey     ssh.HostKeyCallback
-	dialTimeout time.Duration
+	keepalive        time.Duration
+	keepaliveTimeout time.Duration
+	retries          int
+	log              *slog.Logger
+	hostKey          ssh.HostKeyCallback
+	insecureHostKey  bool
+	dialTimeout      time.Duration
 }
 
 func defaultOptions() options {
 	return options{
-		keepalive:   0,
-		retries:     config.SSHRetryCount,
-		log:         logger.GetLogger(),
-		hostKey:     insecureIgnoreHostKey(),
-		dialTimeout: defaultDialTimeout,
+		keepalive:       0,
+		retries:         config.SSHRetryCount,
+		log:             logger.GetLogger(),
+		hostKey:         insecureIgnoreHostKey(),
+		insecureHostKey: true,
+		dialTimeout:     defaultDialTimeout,
 	}
 }
 
@@ -50,10 +57,28 @@ func insecureIgnoreHostKey() ssh.HostKeyCallback {
 	return ssh.InsecureIgnoreHostKey() //nolint:gosec // G106: deliberate, see doc comment.
 }
 
+func resolveKeepaliveTimeout(interval, configured time.Duration) time.Duration {
+	if configured > 0 {
+		return configured
+	}
+	if interval < defaultKeepaliveTimeout {
+		return interval
+	}
+	return defaultKeepaliveTimeout
+}
+
 type Option func(*options)
 
 func WithKeepalive(d time.Duration) Option {
 	return func(o *options) { o.keepalive = d }
+}
+
+func WithKeepaliveTimeout(d time.Duration) Option {
+	return func(o *options) {
+		if d > 0 {
+			o.keepaliveTimeout = d
+		}
+	}
 }
 
 func WithRetries(n int) Option {
@@ -77,10 +102,14 @@ func WithHostKeyCallback(cb ssh.HostKeyCallback) Option {
 	return func(o *options) {
 		if cb != nil {
 			o.hostKey = cb
+			o.insecureHostKey = false
 		}
 	}
 }
 
 func WithInsecureIgnoreHostKey() Option {
-	return func(o *options) { o.hostKey = insecureIgnoreHostKey() }
+	return func(o *options) {
+		o.hostKey = insecureIgnoreHostKey()
+		o.insecureHostKey = true
+	}
 }

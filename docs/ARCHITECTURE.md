@@ -531,20 +531,26 @@ reconnect from callers.
   and a generation counter under a mutex. `snapshot` reads them; `refresh`
   re-dials via `singleflight` keyed on the failed generation so concurrent
   reconnects collapse into one and a stale generation never tears down a freshly
-  healed link. The slow `Dial` runs outside the lock on a detached context
-  (`context.WithoutCancel` + timeout) so one caller's cancellation can't abort
-  the shared flight.
+  healed link. The slow `Dial` runs outside the lock on a connection-lifetime
+  context (`lifeCtx`, derived from the constructor ctx via `context.WithoutCancel`
+  and cancelled by `Close`) + timeout: one caller's cancellation can't abort the
+  shared flight, yet `Close` aborts an in-flight reconnect immediately.
 - A single generic executor `withConn[T]` runs an operation against the live
   client and heals on transient failures (bounded by `WithRetries`); the tunnel
   uses it today and `Run`/`Upload` are designed to reuse it unchanged.
 - Optional keepalive (`WithKeepalive`) probes the link and heals through the same
-  `refresh` path; every heal is logged at WARN.
+  `refresh` path; every heal is logged at WARN. The probe reply timeout is
+  independent of the probe interval (`WithKeepaliveTimeout`, default
+  `min(interval, 10s)`).
 
 **Public API v1**: `New(ctx, Dialer, ...Option)`, `Client.Tunnel(ctx, remotePort)`
 (self-healing local forward on a free `127.0.0.1` port; `Tunnel.LocalAddr`,
-`Tunnel.Close`), `Client.Close`. Options: `WithKeepalive`, `WithRetries`,
-`WithLogger`, `WithHostKeyCallback`, `WithInsecureIgnoreHostKey` (host key
-defaults to `InsecureIgnoreHostKey` — a conscious default for ephemeral e2e VMs).
+`Tunnel.Close`), `Client.Close`. Options: `WithKeepalive`, `WithKeepaliveTimeout`,
+`WithRetries`, `WithLogger`, `WithHostKeyCallback`, `WithInsecureIgnoreHostKey`
+(host key defaults to `InsecureIgnoreHostKey` — a conscious default for ephemeral
+e2e VMs; `New` logs a WARN whenever this insecure default is active). The host key
+default is injected only into `Route`-built dialers; a custom `Dialer` handles its
+own host key verification.
 
 **Extension points (designed, not yet implemented)**: `Run` (transparent retry
 only when the session fails to open; mid-flight drops heal but surface the error

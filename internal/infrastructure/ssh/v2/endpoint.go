@@ -93,9 +93,6 @@ func (e Endpoint) clientConfig(ctx context.Context, defaultHostKey ssh.HostKeyCa
 	if hostKey == nil {
 		hostKey = defaultHostKey
 	}
-	if hostKey == nil {
-		hostKey = insecureIgnoreHostKey()
-	}
 
 	cfg := &ssh.ClientConfig{
 		User:            e.User,

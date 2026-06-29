@@ -68,8 +68,9 @@ func newConn(ctx context.Context, d Dialer, o options) (*conn, error) {
 	}
 
 	if o.keepalive > 0 {
+		probeTimeout := resolveKeepaliveTimeout(o.keepalive, o.keepaliveTimeout)
 		c.wg.Add(1)
-		go c.keepaliveLoop(lifeCtx, o.keepalive)
+		go c.keepaliveLoop(lifeCtx, o.keepalive, probeTimeout)
 	}
 
 	return c, nil
@@ -144,7 +145,7 @@ func (c *conn) refresh(failedGen uint64) (*ssh.Client, uint64, error) {
 	return r.client, r.gen, nil
 }
 
-func (c *conn) keepaliveLoop(ctx context.Context, interval time.Duration) {
+func (c *conn) keepaliveLoop(ctx context.Context, interval, probeTimeout time.Duration) {
 	defer c.wg.Done()
 
 	ticker := time.NewTicker(interval)
@@ -159,7 +160,7 @@ func (c *conn) keepaliveLoop(ctx context.Context, interval time.Duration) {
 			if client == nil {
 				continue
 			}
-			if err := probeKeepalive(ctx, client, interval); err == nil {
+			if err := probeKeepalive(ctx, client, probeTimeout); err == nil {
 				continue
 			}
 			if ctx.Err() != nil {

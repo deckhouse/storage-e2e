@@ -238,3 +238,12 @@ All notable changes to this repository are documented here. New entries are appe
   (cancelled in `Close`) and back reconnect dials with it instead of `context.WithoutCancel(ctx)`, so `Close()` aborts
   an in-flight keepalive reconnect immediately rather than blocking on `dialTimeout`; `refresh` no longer takes a
   `ctx` param. Added regression test `TestConnCloseAbortsInFlightReconnect` and made the test dialer gate honour ctx.
+- **Update** `internal/infrastructure/ssh/v2/{options.go,conn.go}` (review #2): decouple the keepalive probe timeout
+  from the probe interval via new `WithKeepaliveTimeout` option and `resolveKeepaliveTimeout` helper (default
+  `min(interval, 10s)`); `keepaliveLoop` now takes an explicit `probeTimeout`. Added `options_test.go`.
+- **Refactor** `internal/infrastructure/ssh/v2/{endpoint.go,options.go,client.go}` (review #3): make host key
+  resolution single-source — remove the unreachable `insecureIgnoreHostKey` fallback in `clientConfig` and document in
+  `WithHostKeyCallback` that the default only reaches `Route`-built dialers, not custom `Dialer`s.
+- **Update** `internal/infrastructure/ssh/v2/{options.go,client.go}` (review #4): track an `insecureHostKey` flag on
+  options, document the insecure-by-default host key policy in the package godoc, and log a `Warn` from `New` when host
+  key verification is disabled.

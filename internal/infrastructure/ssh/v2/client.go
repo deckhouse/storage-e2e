@@ -57,6 +57,11 @@ func New(ctx context.Context, d Dialer, opts ...Option) (*Client, error) {
 		opt(&o)
 	}
 
+	if o.insecureHostKey {
+		o.log.Warn("ssh: host key verification is disabled (InsecureIgnoreHostKey); " +
+			"connection is vulnerable to MITM — intended for ephemeral test stands only")
+	}
+
 	if hkd, ok := d.(hostKeyDefaulter); ok {
 		hkd.setDefaultHostKey(o.hostKey)
 	}
