@@ -17,6 +17,7 @@ limitations under the License.
 package dvp
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -47,12 +48,14 @@ func TestBuildRestConfigOverridesServer(t *testing.T) {
 	t.Parallel()
 
 	const localAddr = "127.0.0.1:6445"
+	result := fmt.Sprintf("https://%s", localAddr)
+
 	restConfig, err := buildRestConfig([]byte(sampleKubeconfig), localAddr)
 	if err != nil {
 		t.Fatalf("buildRestConfig() = %v, want nil", err)
 	}
-	if restConfig.Host != localAddr {
-		t.Fatalf("Host = %q, want %q", restConfig.Host, localAddr)
+	if restConfig.Host != result {
+		t.Fatalf("Host = %q, want %q", restConfig.Host, result)
 	}
 	if restConfig.WrapTransport == nil {
 		t.Fatalf("WrapTransport = nil, want tunnel timeouts applied")
