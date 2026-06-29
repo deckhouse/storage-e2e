@@ -40,6 +40,11 @@ on:
         description: "Path (relative to the module repo) to the cluster YAML definition"
         type: string
         required: true
+      cluster_provider:
+        description: "Cluster provider used by bootstrap/teardown: dvp | commander"
+        type: string
+        required: false
+        default: "dvp"
       storage_e2e_ref:
         description: "Git ref of storage-e2e to checkout"
         type: string
@@ -120,6 +125,9 @@ jobs:
           go-version-file: _storage-e2e/go.mod
           cache: false
 
+      # Prune stale Go-cache trees on the self-hosted runner (provider-agnostic).
+      # Credentials are no longer materialized to disk: the DVP provider consumes
+      # the SSH key + kubeconfig as inline content (see env below).
       - name: Prune stale workspace caches
         run: bash _storage-e2e/.github/scripts/e2e-prune-workspace.sh
 
@@ -129,8 +137,10 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/e2e-gomodcache
           GOCACHE: ${{ runner.temp }}/e2e-gocache
           GOPROXY: ${{ secrets.GOPROXY }}
-          E2E_TEST_CLUSTER_PROVIDER: ${{ secrets.E2E_TEST_CLUSTER_PROVIDER || 'dvp' }}
+          E2E_TEST_CLUSTER_PROVIDER: ${{ inputs.cluster_provider }}
           E2E_CLUSTER_CONFIG_YAML_PATH: ${{ github.workspace }}/${{ inputs.cluster_config }}
+          LOG_LEVEL: ${{ vars.E2E_LOG_LEVEL || 'info' }}
+          # DVP provider env (used when cluster_provider == dvp).
           E2E_DVP_BASE_CLUSTER_SSH_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_USER }}
           E2E_DVP_BASE_CLUSTER_SSH_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_HOST }}
           E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE }}
@@ -138,10 +148,26 @@ jobs:
           E2E_DVP_BASE_CLUSTER_NAMESPACE: ${{ needs.resolve.outputs.namespace }}
           # KUBECONFIG secret is base64-encoded; decoded to inline content below.
           E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
-          LOG_LEVEL: ${{ vars.E2E_LOG_LEVEL || 'info' }}
+          # Commander provider env (used when cluster_provider == commander).
+          # Typed/defaulted fields use `|| <default>` so an unset var never
+          # renders as an empty string that would override the Go-side default.
+          E2E_COMMANDER_URL: ${{ secrets.E2E_COMMANDER_URL }}
+          E2E_COMMANDER_TOKEN: ${{ secrets.E2E_COMMANDER_TOKEN }}
+          E2E_COMMANDER_CLUSTER_NAME: ${{ needs.resolve.outputs.namespace }}
+          E2E_COMMANDER_TEMPLATE_NAME: ${{ secrets.E2E_COMMANDER_TEMPLATE_NAME }}
+          E2E_COMMANDER_TEMPLATE_VERSION: ${{ vars.E2E_COMMANDER_TEMPLATE_VERSION }}
+          E2E_COMMANDER_REGISTRY_NAME: ${{ vars.E2E_COMMANDER_REGISTRY_NAME }}
+          E2E_COMMANDER_VALUES: ${{ vars.E2E_COMMANDER_VALUES }}
+          E2E_COMMANDER_CA_CERT: ${{ secrets.E2E_COMMANDER_CA_CERT }}
+          E2E_COMMANDER_AUTH_METHOD: ${{ vars.E2E_COMMANDER_AUTH_METHOD || 'x-auth-token' }}
+          E2E_COMMANDER_API_PREFIX: ${{ vars.E2E_COMMANDER_API_PREFIX || '/api/v1' }}
+          E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY: ${{ vars.E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY || 'false' }}
+          E2E_COMMANDER_WAIT_TIMEOUT: ${{ vars.E2E_COMMANDER_WAIT_TIMEOUT || '30m' }}
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
+          # DVP: decode the base64 kubeconfig secret into inline content. Empty
+          # for non-DVP providers (commander), which simply ignore it.
           E2E_DVP_BASE_CLUSTER_KUBECONFIG="$(printf '%s' "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64}" | base64 -d)"
           export E2E_DVP_BASE_CLUSTER_KUBECONFIG
           go run ./cmd/bootstrap-cluster
@@ -232,8 +258,10 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/e2e-gomodcache
           GOCACHE: ${{ runner.temp }}/e2e-gocache
           GOPROXY: ${{ secrets.GOPROXY }}
-          E2E_TEST_CLUSTER_PROVIDER: ${{ secrets.E2E_TEST_CLUSTER_PROVIDER || 'dvp' }}
+          E2E_TEST_CLUSTER_PROVIDER: ${{ inputs.cluster_provider }}
           E2E_CLUSTER_CONFIG_YAML_PATH: ${{ github.workspace }}/${{ inputs.cluster_config }}
+          LOG_LEVEL: ${{ vars.E2E_LOG_LEVEL || 'info' }}
+          # DVP provider env (used when cluster_provider == dvp).
           E2E_DVP_BASE_CLUSTER_SSH_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_USER }}
           E2E_DVP_BASE_CLUSTER_SSH_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_HOST }}
           E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE }}
@@ -241,10 +269,23 @@ jobs:
           E2E_DVP_BASE_CLUSTER_NAMESPACE: ${{ needs.resolve.outputs.namespace }}
           # KUBECONFIG secret is base64-encoded; decoded to inline content below.
           E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
-          LOG_LEVEL: ${{ vars.E2E_LOG_LEVEL || 'info' }}
+          # Commander provider env (used when cluster_provider == commander).
+          # The cluster name MUST match the bootstrap job so the right cluster
+          # is deleted: both use the per-PR namespace as the cluster name.
+          E2E_COMMANDER_URL: ${{ secrets.E2E_COMMANDER_URL }}
+          E2E_COMMANDER_TOKEN: ${{ secrets.E2E_COMMANDER_TOKEN }}
+          E2E_COMMANDER_CLUSTER_NAME: ${{ needs.resolve.outputs.namespace }}
+          E2E_COMMANDER_TEMPLATE_NAME: ${{ secrets.E2E_COMMANDER_TEMPLATE_NAME }}
+          E2E_COMMANDER_CA_CERT: ${{ secrets.E2E_COMMANDER_CA_CERT }}
+          E2E_COMMANDER_AUTH_METHOD: ${{ vars.E2E_COMMANDER_AUTH_METHOD || 'x-auth-token' }}
+          E2E_COMMANDER_API_PREFIX: ${{ vars.E2E_COMMANDER_API_PREFIX || '/api/v1' }}
+          E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY: ${{ vars.E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY || 'false' }}
+          E2E_COMMANDER_WAIT_TIMEOUT: ${{ vars.E2E_COMMANDER_WAIT_TIMEOUT || '30m' }}
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
+          # DVP: decode the base64 kubeconfig secret into inline content. Empty
+          # for non-DVP providers (commander), which simply ignore it.
           E2E_DVP_BASE_CLUSTER_KUBECONFIG="$(printf '%s' "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64}" | base64 -d)"
           export E2E_DVP_BASE_CLUSTER_KUBECONFIG
           go run ./cmd/remove-cluster

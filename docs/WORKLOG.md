@@ -277,3 +277,24 @@ All notable changes to this repository are documented here. New entries are appe
 - **Bugfix** `pkg/kubernetes/modules.go`: `WaitForModuleReady` now derives a `context.WithTimeout(ctx, timeout)` instead
   of only logging the timeout value; previously the `timeout` arg was never enforced so the wait hung until the parent
   context was canceled (e.g. "waiting for virtualization module" never timing out at 1m).
+- **Add** Commander cluster provider for the new provider abstraction:
+  `internal/provisioning/commander/{config.go,provider.go,provider_test.go}`. `Bootstrap`
+  creates a cluster from a Commander template (resolving template version + optional registry,
+  merging `E2E_COMMANDER_VALUES` and a forced `prefix`) and waits for Ready (idempotent: reuses an
+  existing cluster of the same name); `Remove` deletes it (tolerates `ErrClusterNotFound`). Config is
+  env-driven via the `E2E_COMMANDER_*` prefix. Reuses the existing `internal/kubernetes/commander`
+  API client. The cluster name is taken verbatim from config (no randomization) so the separate
+  `cmd/bootstrap-cluster` and `cmd/remove-cluster` processes act on the same cluster.
+- **Update** `pkg/clusterprovider/registry/registry.go`: seed `ModeCommander` →
+  `commander.NewCommanderProvider`. Adjusted `registry_test.go` (`TestRegistryGet_UnregisteredMode`
+  now uses a bogus mode; `TestDefaultRegistry_HasBuiltinProviders` asserts both `dvp` and `commander`).
+- **Update** `.github/workflows/e2e.yml`: add a `cluster_provider` input (`dvp` default | `commander`),
+  thread it into `E2E_TEST_CLUSTER_PROVIDER` for bootstrap/teardown, gate the DVP-only `Prepare
+  credentials` step on `cluster_provider == 'dvp'`, and pass the `E2E_COMMANDER_*` env (typed/defaulted
+  fields via `|| <default>` so unset vars never override Go-side defaults). `.github/templates/e2e-tests.yml`
+  and `docs/CI.md` document the provider choice and the Commander secrets/vars.
+- **Merge** reconcile `origin/main` (Commander provider, #31) with the DVP config/CI refactor in
+  `.github/workflows/e2e.yml` and `docs/CI.md`: the DVP-only `Prepare credentials` step is replaced by the
+  provider-agnostic `Prune stale workspace caches` step (credentials flow as inline content), while the Commander
+  `cluster_provider` input and `E2E_COMMANDER_*` env are kept; the base64 kubeconfig is decoded inline in both
+  bootstrap and teardown.
