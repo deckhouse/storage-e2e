@@ -188,7 +188,11 @@ func (d *serverDialer) Dial(ctx context.Context) (*ssh.Client, io.Closer, error)
 	d.mu.Unlock()
 
 	if gate != nil {
-		<-gate
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
 	}
 
 	client, err := dialSSH(ctx, d.addr, &ssh.ClientConfig{

@@ -36,14 +36,16 @@ type conn struct {
 
 	flight singleflight.Group
 
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
+
 	mu     sync.Mutex
 	client *ssh.Client
 	closer io.Closer
 	gen    uint64
 	closed bool
 
-	kaCancel context.CancelFunc
-	wg       sync.WaitGroup
+	wg sync.WaitGroup
 }
 
 func newConn(ctx context.Context, d Dialer, o options) (*conn, error) {
@@ -52,6 +54,8 @@ func newConn(ctx context.Context, d Dialer, o options) (*conn, error) {
 		return nil, fmt.Errorf("connect to %s: %w", d.Describe(), err)
 	}
 
+	lifeCtx, lifeCancel := context.WithCancel(context.WithoutCancel(ctx))
+
 	c := &conn{
 		dialer:      d,
 		log:         o.log,
@@ -59,13 +63,13 @@ func newConn(ctx context.Context, d Dialer, o options) (*conn, error) {
 		client:      client,
 		closer:      closer,
 		gen:         1,
+		lifeCtx:     lifeCtx,
+		lifeCancel:  lifeCancel,
 	}
 
 	if o.keepalive > 0 {
-		kaCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-		c.kaCancel = cancel
 		c.wg.Add(1)
-		go c.keepaliveLoop(kaCtx, o.keepalive)
+		go c.keepaliveLoop(lifeCtx, o.keepalive)
 	}
 
 	return c, nil
@@ -77,7 +81,7 @@ func (c *conn) snapshot() (client *ssh.Client, gen uint64) {
 	return c.client, c.gen
 }
 
-func (c *conn) refresh(ctx context.Context, failedGen uint64) (*ssh.Client, uint64, error) {
+func (c *conn) refresh(failedGen uint64) (*ssh.Client, uint64, error) {
 	key := strconv.FormatUint(failedGen, 10)
 
 	type healed struct {
@@ -98,7 +102,10 @@ func (c *conn) refresh(ctx context.Context, failedGen uint64) (*ssh.Client, uint
 		}
 		c.mu.Unlock()
 
-		dialCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.dialTimeout)
+		// Reconnect dials run on the connection-lifetime context, not on any
+		// per-caller ctx: this keeps the singleflight-shared dial isolated from
+		// one caller's cancellation while still letting Close() abort it.
+		dialCtx, cancel := context.WithTimeout(c.lifeCtx, c.dialTimeout)
 		defer cancel()
 
 		client, closer, dialErr := c.dialer.Dial(dialCtx)
@@ -160,7 +167,7 @@ func (c *conn) keepaliveLoop(ctx context.Context, interval time.Duration) {
 			}
 			c.log.Warn("ssh: keepalive failed, healing connection",
 				"route", c.dialer.Describe())
-			if _, _, err := c.refresh(ctx, gen); err != nil {
+			if _, _, err := c.refresh(gen); err != nil {
 				if c.isClosed() || ctx.Err() != nil {
 					return
 				}
@@ -205,14 +212,11 @@ func (c *conn) Close() error {
 	}
 	c.closed = true
 	closer := c.closer
-	cancel := c.kaCancel
 	c.client = nil
 	c.closer = nil
 	c.mu.Unlock()
 
-	if cancel != nil {
-		cancel()
-	}
+	c.lifeCancel()
 	c.wg.Wait()
 
 	if closer != nil {
@@ -253,7 +257,7 @@ func withConn[T any](ctx context.Context, c *conn, retries int, op func(context.
 		c.log.Warn("ssh: operation failed on broken connection, healing",
 			"route", c.dialer.Describe(), "attempt", attempt+1, "err", err)
 
-		client, gen, err = c.refresh(ctx, gen)
+		client, gen, err = c.refresh(gen)
 		if err != nil {
 			return zero, fmt.Errorf("heal connection: %w", err)
 		}

@@ -227,3 +227,14 @@ All notable changes to this repository are documented here. New entries are appe
 - **Bugfix** `internal/infrastructure/ssh/v2/conn.go` (`newConn`): derive keepalive context via
   `context.WithCancel(context.WithoutCancel(ctx))` instead of `context.Background()` to satisfy `contextcheck` while
   keeping the loop lifetime tied to the connection (still cancelled in `Close`).
+- **Refactor** `internal/infrastructure/ssh/v2/{options.go,endpoint.go}`: centralise `ssh.InsecureIgnoreHostKey` into a
+  single documented `insecureIgnoreHostKey` helper with one `//nolint:gosec` (G106); call sites now use the wrapper.
+
+## 2026-06-29
+
+- **Add** `docs/REVIEW_SSH_V2.md`: code-review report for `internal/infrastructure/ssh/v2` (PR #27) with a fix
+  checklist (1 High, 3 Medium, 1 Low, 4 Nit) and per-finding explanations.
+- **Bugfix** `internal/infrastructure/ssh/v2/conn.go` (review #1): add a connection-lifetime `lifeCtx`/`lifeCancel`
+  (cancelled in `Close`) and back reconnect dials with it instead of `context.WithoutCancel(ctx)`, so `Close()` aborts
+  an in-flight keepalive reconnect immediately rather than blocking on `dialTimeout`; `refresh` no longer takes a
+  `ctx` param. Added regression test `TestConnCloseAbortsInFlightReconnect` and made the test dialer gate honour ctx.

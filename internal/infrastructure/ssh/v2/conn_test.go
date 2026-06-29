@@ -65,7 +65,7 @@ func TestConnRefreshStaleGenerationDoesNotReconnect(t *testing.T) {
 	d := &serverDialer{addr: srv.addr()}
 	c := newTestConn(t, d, 0)
 
-	client, gen, err := c.refresh(context.Background(), 0)
+	client, gen, err := c.refresh(0)
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestConnRefreshDeduplicatesConcurrentReconnects(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, gen, err := c.refresh(context.Background(), 1)
+			_, gen, err := c.refresh(1)
 			gens[i] = gen
 			errs[i] = err
 		}(i)
@@ -238,8 +238,42 @@ func TestConnCloseIsIdempotent(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if _, _, err := c.refresh(context.Background(), 1); !errors.Is(err, errClosed) {
+	if _, _, err := c.refresh(1); !errors.Is(err, errClosed) {
 		t.Fatalf("refresh after close = %v, want errClosed", err)
+	}
+}
+
+func TestConnCloseAbortsInFlightReconnect(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t)
+	d := &serverDialer{addr: srv.addr()}
+
+	o := defaultOptions()
+	o.log = quietLogger()
+	o.keepalive = 50 * time.Millisecond
+	o.dialTimeout = 30 * time.Second
+	c, err := newConn(context.Background(), d, o)
+	if err != nil {
+		t.Fatalf("newConn: %v", err)
+	}
+
+	gate := make(chan struct{})
+	d.setGate(gate)
+	defer close(gate)
+
+	srv.dropConns()
+	waitFor(t, 5*time.Second, func() bool { return d.dialCount() >= 2 })
+
+	done := make(chan error, 1)
+	go func() { done <- c.Close() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close blocked on in-flight reconnect dial; lifeCtx cancellation did not abort it")
 	}
 }
 
