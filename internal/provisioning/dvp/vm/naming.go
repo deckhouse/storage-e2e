@@ -18,10 +18,6 @@ package vm
 
 import "strings"
 
-// cviNameFromImageURL derives a deterministic, RFC 1123-compliant
-// ClusterVirtualImage name from an OS image URL: it takes the file name, drops
-// the extension, lowercases it and replaces characters that are illegal in
-// Kubernetes object names with hyphens.
 func cviNameFromImageURL(imageURL string) string {
 	parts := strings.Split(imageURL, "/")
 	name := parts[len(parts)-1]

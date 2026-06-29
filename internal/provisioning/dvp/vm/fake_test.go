@@ -27,9 +27,6 @@ import (
 	"github.com/deckhouse/virtualization/api/core/v1alpha3"
 )
 
-// fakeClient is an in-memory, concurrency-safe implementation of Client for
-// unit tests. Optional onGet* hooks let a test simulate controller behavior
-// (e.g. a CVI becoming Ready, a VM becoming Running) without any real clock.
 type fakeClient struct {
 	mu sync.Mutex
 

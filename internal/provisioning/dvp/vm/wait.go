@@ -21,19 +21,8 @@ import (
 	"time"
 )
 
-// conditionFunc inspects the latest get result and decides whether the wait is
-// done. It receives both the fetched object and the get error so that callers
-// can implement readiness checks (where a get error aborts) and deletion checks
-// (where a NotFound error means success) on top of the same loop.
-//
-// It returns done=true to stop successfully, or a non-nil error to stop with a
-// failure. Returning (false, nil) keeps polling.
 type conditionFunc[T any] func(obj T, getErr error) (done bool, err error)
 
-// waitForCondition polls get at the given interval until cond reports done, cond
-// returns an error, or ctx is cancelled. The first check happens immediately,
-// before any wait. This single helper backs every readiness/deletion wait in
-// the package so there is exactly one ticker loop to reason about.
 func waitForCondition[T any](
 	ctx context.Context,
 	interval time.Duration,
