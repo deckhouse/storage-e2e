@@ -298,3 +298,6 @@ All notable changes to this repository are documented here. New entries are appe
   provider-agnostic `Prune stale workspace caches` step (credentials flow as inline content), while the Commander
   `cluster_provider` input and `E2E_COMMANDER_*` env are kept; the base64 kubeconfig is decoded inline in both
   bootstrap and teardown.
+- **Add** `internal/provisioning/dvp/provider.go`: explicit API-server connectivity check in `Bootstrap`
+  (calls `kubernetes.NewClientsetWithRetry` right after `buildRestConfig`) so a dead SSH tunnel / bad
+  kubeconfig fails fast with a clear error instead of timing out inside `WaitForModuleReady`.

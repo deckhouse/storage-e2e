@@ -142,6 +142,12 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		return fmt.Errorf("creating rest config: %w", buildRestConfErr)
 	}
 
+	p.logger.Info("verifying connectivity to DVP base cluster API server")
+	if _, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig); err != nil {
+		return fmt.Errorf("cluster connectivity check failed: %w", err)
+	}
+	p.logger.Info("DVP base cluster API server is reachable")
+
 	p.logger.Info("waiting for virtualization module to become ready",
 		"timeout", config.ModuleCheckTimeout,
 	)
