@@ -43,11 +43,30 @@ same namespace → "same cluster".
 | `test_package` | Go package to test | `./tests/` |
 | `label_filter` | default Ginkgo filter when no `e2e/label:*` labels | `!stress-test` |
 | `cluster_config` | path (in the module repo) to the cluster YAML (`E2E_CLUSTER_CONFIG_YAML_PATH`) | (required) |
+| `cluster_provider` | provider for bootstrap/teardown: `dvp` or `commander` | `dvp` |
 | `storage_e2e_ref` | git ref of storage-e2e to checkout | `main` |
 | `runner_labels` | JSON array of runner labels | `["self-hosted","regular"]` |
 | `test_timeout` | Ginkgo suite timeout | `90m` |
 
-## Required secrets (inherited)
+## Cluster providers
+
+`bootstrap` and `teardown` run `go run ./cmd/{bootstrap,remove}-cluster`, which
+dispatch on `E2E_TEST_CLUSTER_PROVIDER` (set from the `cluster_provider` input)
+to a registered provider:
+
+- **`dvp`** (default) — provisions a nested cluster on a base Deckhouse
+  Virtualization cluster (needs the `E2E_DVP_BASE_CLUSTER_*` SSH/kubeconfig
+  secrets, materialized by `e2e-prepare-creds.sh`).
+- **`commander`** — creates a fresh cluster through the Deckhouse Commander API
+  from a template (`Bootstrap`) and deletes it (`Remove`). It talks to Commander
+  over HTTPS and needs neither SSH key nor kubeconfig, so the `Prepare
+  credentials` step is skipped for it. The cluster name is the per-PR identity
+  `e2e-<module_slug>-pr<pr_number>`, so bootstrap and teardown act on the same
+  cluster.
+
+## Required secrets / vars (inherited)
+
+### DVP provider (`cluster_provider: dvp`)
 
 | Secret | Required | Purpose |
 |--------|----------|---------|
@@ -57,7 +76,30 @@ same namespace → "same cluster".
 | `E2E_DVP_BASE_CLUSTER_SSH_HOST` | Yes | SSH host |
 | `E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE` | No | SSH key passphrase |
 | `E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST` / `_SSH_JUMP_USER` | No | jump/bastion host |
-| `E2E_TEST_CLUSTER_PROVIDER` | No | provider mode (default `dvp`) |
+
+### Commander provider (`cluster_provider: commander`)
+
+| Secret / var | Required | Purpose |
+|--------------|----------|---------|
+| `secrets.E2E_COMMANDER_URL` | Yes | Commander API base URL |
+| `secrets.E2E_COMMANDER_TOKEN` | Yes | Commander API token |
+| `secrets.E2E_COMMANDER_TEMPLATE_NAME` | Yes | cluster template to create from |
+| `secrets.E2E_COMMANDER_CA_CERT` | No | path to a CA cert for the Commander TLS |
+| `vars.E2E_COMMANDER_TEMPLATE_VERSION` | No | pin a template version (name or ID); default = current |
+| `vars.E2E_COMMANDER_REGISTRY_NAME` | No | registry name resolved to `registry_id` |
+| `vars.E2E_COMMANDER_VALUES` | No | JSON template input values (`prefix` is set automatically) |
+| `vars.E2E_COMMANDER_AUTH_METHOD` | No | `x-auth-token` (default) / `bearer` / `basic` |
+| `vars.E2E_COMMANDER_API_PREFIX` | No | API prefix, default `/api/v1` |
+| `vars.E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY` | No | `true` to skip TLS verify, default `false` |
+| `vars.E2E_COMMANDER_WAIT_TIMEOUT` | No | Go duration for the Ready wait, default `30m` |
+
+The cluster name (`E2E_COMMANDER_CLUSTER_NAME`) is set by the workflow to the
+per-PR namespace and must not be overridden.
+
+### Common
+
+| Secret | Required | Purpose |
+|--------|----------|---------|
 | `GOPROXY` | No | Go module proxy |
 
 ## Scripts

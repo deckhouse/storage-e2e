@@ -57,12 +57,13 @@ func TestNewRegistry_SeedsBuiltinProviders(t *testing.T) {
 func TestRegistryGet_UnregisteredMode(t *testing.T) {
 	r := NewRegistry()
 
-	c, err := r.Get(clusterprovider.ModeCommander)
+	const unknownMode = clusterprovider.ProviderMode("nonexistent")
+	c, err := r.Get(unknownMode)
 	if err == nil {
-		t.Fatalf("Get(%q) expected error for unregistered mode, got nil", clusterprovider.ModeCommander)
+		t.Fatalf("Get(%q) expected error for unregistered mode, got nil", unknownMode)
 	}
 	if c != nil {
-		t.Errorf("Get(%q) expected nil constructor on error, got %v", clusterprovider.ModeCommander, c)
+		t.Errorf("Get(%q) expected nil constructor on error, got %v", unknownMode, c)
 	}
 }
 
@@ -117,12 +118,14 @@ func TestRegistryRegister_ReplacesExistingConstructor(t *testing.T) {
 }
 
 func TestDefaultRegistry_HasBuiltinProviders(t *testing.T) {
-	c, err := DefaultRegistry.Get(clusterprovider.ModeDVP)
-	if err != nil {
-		t.Fatalf("DefaultRegistry.Get(%q) returned unexpected error: %v", clusterprovider.ModeDVP, err)
-	}
-	if c == nil {
-		t.Fatalf("DefaultRegistry.Get(%q) returned nil constructor", clusterprovider.ModeDVP)
+	for _, mode := range []clusterprovider.ProviderMode{clusterprovider.ModeDVP, clusterprovider.ModeCommander} {
+		c, err := DefaultRegistry.Get(mode)
+		if err != nil {
+			t.Fatalf("DefaultRegistry.Get(%q) returned unexpected error: %v", mode, err)
+		}
+		if c == nil {
+			t.Fatalf("DefaultRegistry.Get(%q) returned nil constructor", mode)
+		}
 	}
 }
 

@@ -33,6 +33,7 @@ jobs:
       module_path: .
       test_package: ./tests/
       cluster_config: tests/cluster_config.yml
+      # cluster_provider: dvp          # dvp (default) | commander
       # label_filter: "!stress-test"   # optional override
       # storage_e2e_ref: main          # optional
       # test_timeout: 90m              # optional
