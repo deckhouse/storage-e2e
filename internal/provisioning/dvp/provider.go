@@ -77,7 +77,7 @@ func (p *dvpProvider) buildSSHClient(ctx context.Context) (*ssh.Client, error) {
 		})
 	}
 
-	sshClient, sshNewErr := ssh.New(ctx, dialer)
+	sshClient, sshNewErr := ssh.New(ctx, dialer, ssh.WithKeepalive(30*time.Second))
 	if sshNewErr != nil {
 		return nil, fmt.Errorf("creating ssh client: %w", sshNewErr)
 	}
@@ -133,9 +133,14 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	if sshNewErr != nil {
 		return fmt.Errorf("creating ssh client: %w", sshNewErr)
 	}
+	defer func() {
+		sshClientCloseErr := sshClient.Close()
+		if sshClientCloseErr != nil {
+			p.logger.Warn("failed to close ssh client", "err", sshClientCloseErr)
+		}
+	}()
 
 	tun, tunErr := sshClient.OpenTunnel(ctx, apiServerRemotePort)
-
 	if tunErr != nil {
 		return fmt.Errorf("creating tunnel: %w", tunErr)
 	}

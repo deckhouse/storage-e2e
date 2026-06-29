@@ -65,7 +65,7 @@ func TestConnRefreshStaleGenerationDoesNotReconnect(t *testing.T) {
 	d := &serverDialer{addr: srv.addr()}
 	c := newTestConn(t, d, 0)
 
-	client, gen, err := c.refresh(0)
+	client, gen, err := c.refresh(context.Background(), 0)
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestConnRefreshDeduplicatesConcurrentReconnects(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, gen, err := c.refresh(1)
+			_, gen, err := c.refresh(context.Background(), 1)
 			gens[i] = gen
 			errs[i] = err
 		}(i)
@@ -238,7 +238,7 @@ func TestConnCloseIsIdempotent(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if _, _, err := c.refresh(1); !errors.Is(err, errClosed) {
+	if _, _, err := c.refresh(context.Background(), 1); !errors.Is(err, errClosed) {
 		t.Fatalf("refresh after close = %v, want errClosed", err)
 	}
 }

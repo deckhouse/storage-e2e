@@ -36,6 +36,11 @@ type conn struct {
 
 	flight singleflight.Group
 
+	// lifeCtx is tied to the conn's lifetime and is cancelled by Close().
+	// refresh hooks it via context.AfterFunc so teardown aborts an in-flight
+	// reconnect Dial immediately instead of waiting out dialTimeout, while the
+	// dial itself stays detached from the per-caller context shared through
+	// singleflight.
 	lifeCtx    context.Context
 	lifeCancel context.CancelFunc
 
@@ -82,7 +87,7 @@ func (c *conn) snapshot() (client *ssh.Client, gen uint64) {
 	return c.client, c.gen
 }
 
-func (c *conn) refresh(failedGen uint64) (*ssh.Client, uint64, error) {
+func (c *conn) refresh(ctx context.Context, failedGen uint64) (*ssh.Client, uint64, error) {
 	key := strconv.FormatUint(failedGen, 10)
 
 	type healed struct {
@@ -90,7 +95,7 @@ func (c *conn) refresh(failedGen uint64) (*ssh.Client, uint64, error) {
 		gen    uint64
 	}
 
-	v, err, _ := c.flight.Do(key, func() (interface{}, error) {
+	v, err, _ := c.flight.Do(key, func() (any, error) {
 		c.mu.Lock()
 		if c.closed {
 			c.mu.Unlock()
@@ -103,11 +108,14 @@ func (c *conn) refresh(failedGen uint64) (*ssh.Client, uint64, error) {
 		}
 		c.mu.Unlock()
 
-		// Reconnect dials run on the connection-lifetime context, not on any
-		// per-caller ctx: this keeps the singleflight-shared dial isolated from
-		// one caller's cancellation while still letting Close() abort it.
-		dialCtx, cancel := context.WithTimeout(c.lifeCtx, c.dialTimeout)
+		// The reconnect dial is shared across callers through singleflight, so it
+		// must not inherit any single caller's cancellation: WithoutCancel keeps
+		// the caller's values while dropping its Done, and dialTimeout bounds it.
+		// AfterFunc re-attaches the connection lifetime so Close() aborts an
+		// in-flight dial immediately instead of waiting out dialTimeout.
+		dialCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.dialTimeout)
 		defer cancel()
+		defer context.AfterFunc(c.lifeCtx, cancel)()
 
 		client, closer, dialErr := c.dialer.Dial(dialCtx)
 		if dialErr != nil {
@@ -168,7 +176,7 @@ func (c *conn) keepaliveLoop(ctx context.Context, interval, probeTimeout time.Du
 			}
 			c.log.Warn("ssh: keepalive failed, healing connection",
 				"route", c.dialer.Describe())
-			if _, _, err := c.refresh(gen); err != nil {
+			if _, _, err := c.refresh(ctx, gen); err != nil {
 				if c.isClosed() || ctx.Err() != nil {
 					return
 				}
@@ -258,7 +266,7 @@ func withConn[T any](ctx context.Context, c *conn, retries int, op func(context.
 		c.log.Warn("ssh: operation failed on broken connection, healing",
 			"route", c.dialer.Describe(), "attempt", attempt+1, "err", err)
 
-		client, gen, err = c.refresh(gen)
+		client, gen, err = c.refresh(ctx, gen)
 		if err != nil {
 			return zero, fmt.Errorf("heal connection: %w", err)
 		}
