@@ -247,3 +247,7 @@ All notable changes to this repository are documented here. New entries are appe
 - **Update** `internal/infrastructure/ssh/v2/{options.go,client.go}` (review #4): track an `insecureHostKey` flag on
   options, document the insecure-by-default host key policy in the package godoc, and log a `Warn` from `New` when host
   key verification is disabled.
+- **Bugfix** `internal/infrastructure/ssh/v2/conn.go`: fix golangci-lint findings — `misspell` ("cancelled" → "
+  canceled")
+  and `contextcheck` (add `//nolint` for the deliberate `context.AfterFunc(c.lifeCtx, …)` that uses the conn lifetime
+  rather than the per-caller ctx).

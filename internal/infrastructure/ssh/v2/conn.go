@@ -36,7 +36,7 @@ type conn struct {
 
 	flight singleflight.Group
 
-	// lifeCtx is tied to the conn's lifetime and is cancelled by Close().
+	// lifeCtx is tied to the conn's lifetime and is canceled by Close().
 	// refresh hooks it via context.AfterFunc so teardown aborts an in-flight
 	// reconnect Dial immediately instead of waiting out dialTimeout, while the
 	// dial itself stays detached from the per-caller context shared through
@@ -115,6 +115,9 @@ func (c *conn) refresh(ctx context.Context, failedGen uint64) (*ssh.Client, uint
 		// in-flight dial immediately instead of waiting out dialTimeout.
 		dialCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.dialTimeout)
 		defer cancel()
+		// c.lifeCtx is deliberately not derived from the per-caller ctx: it is the
+		// conn's own lifetime so Close() can abort an in-flight reconnect.
+		//nolint:contextcheck // intentional: lifeCtx is the conn lifetime, not the caller's ctx.
 		defer context.AfterFunc(c.lifeCtx, cancel)()
 
 		client, closer, dialErr := c.dialer.Dial(dialCtx)
