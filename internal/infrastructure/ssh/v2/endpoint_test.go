@@ -17,6 +17,7 @@ limitations under the License.
 package ssh
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
@@ -50,28 +51,63 @@ func TestEndpointAddr(t *testing.T) {
 	}
 }
 
-func TestExpandTilde(t *testing.T) {
-	t.Parallel()
+func TestEndpointClientConfigKeyData(t *testing.T) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	plain, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatalf("marshal plain key: %v", err)
+	}
+	plainPEM := pem.EncodeToMemory(plain)
 
-	t.Run("no tilde unchanged", func(t *testing.T) {
-		t.Parallel()
-		got, err := expandTilde("/etc/ssh/key")
+	encrypted, err := ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte("s3cret"))
+	if err != nil {
+		t.Fatalf("marshal encrypted key: %v", err)
+	}
+	encryptedPEM := pem.EncodeToMemory(encrypted)
+
+	hostKey := ssh.InsecureIgnoreHostKey()
+
+	t.Run("plain key bytes produce a signer", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "")
+		e := Endpoint{User: "u", Addr: "host", KeyData: plainPEM}
+		cfg, closer, err := e.clientConfig(context.Background(), hostKey)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got != "/etc/ssh/key" {
-			t.Fatalf("got %q, want /etc/ssh/key", got)
+		if closer != nil {
+			_ = closer.Close()
+		}
+		if cfg.User != "u" {
+			t.Fatalf("User = %q, want u", cfg.User)
+		}
+		if len(cfg.Auth) != 1 {
+			t.Fatalf("expected one auth method, got %d", len(cfg.Auth))
 		}
 	})
 
-	t.Run("tilde expands to home", func(t *testing.T) {
-		t.Parallel()
-		got, err := expandTilde("~/.ssh/id_ed25519")
+	t.Run("encrypted key bytes with passphrase produce a signer", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "")
+		e := Endpoint{User: "u", Addr: "host", KeyData: encryptedPEM, Passphrase: "s3cret"}
+		cfg, closer, err := e.clientConfig(context.Background(), hostKey)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got == "~/.ssh/id_ed25519" {
-			t.Fatalf("tilde was not expanded: %q", got)
+		if closer != nil {
+			_ = closer.Close()
+		}
+		if len(cfg.Auth) != 1 {
+			t.Fatalf("expected one auth method, got %d", len(cfg.Auth))
+		}
+	})
+
+	t.Run("no key data and no agent fails", func(t *testing.T) {
+		t.Setenv("SSH_AUTH_SOCK", "")
+		e := Endpoint{User: "u", Addr: "host"}
+		if _, _, err := e.clientConfig(context.Background(), hostKey); err == nil {
+			t.Fatalf("expected error when no credentials are available")
 		}
 	})
 }

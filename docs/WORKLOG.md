@@ -251,3 +251,17 @@ All notable changes to this repository are documented here. New entries are appe
   canceled")
   and `contextcheck` (add `//nolint` for the deliberate `context.AfterFunc(c.lifeCtx, …)` that uses the conn lifetime
   rather than the per-caller ctx).
+- **Refactor** `internal/infrastructure/ssh/v2/endpoint.go`: replace `Endpoint.KeyPath` with `KeyData []byte`; delete
+  `expandTilde` and the file-read branch in `clientConfig` so the transport layer never reads files or expands paths.
+  Updated `endpoint_test.go` with `KeyData` signer cases (incl. passphrase-protected). [Possible compatibility break]
+- **Refactor** `internal/provisioning/dvp/config.go`: make `Config` struct path/content pair-based, add `LoadConfig`
+  (injectable env map), accumulating `Validate` with sentinel errors via `errors.Join`, `Resolve`→`Credentials`
+  (single path-expansion/read site), rename `HasJumpHost`→`JumpHostConfigured`; moved `expandUserPath` here. Added
+  `config_test.go` + `credentials_test.go`.
+- **Refactor** `internal/provisioning/dvp/kubeconfig.go`: replace `readKubeconfig` with free function
+  `buildRestConfig([]byte, string)`; drop `expandUserPath` (moved to `config.go`). Added `kubeconfig_test.go`.
+- **Refactor** `internal/provisioning/dvp/provider.go`: split thin `NewDVPProvider` (reads env, resolves creds) from
+  injectable `newProvider`; `buildSSHClient` passes `KeyData` from resolved credentials; log a derived
+  `path`/`inline` kubeconfig source.
+- **Update** `docs/ARCHITECTURE.md`: document `Endpoint.KeyData` and add the DVP base-cluster env-var reference
+  (path/content pairs) to Section 7.

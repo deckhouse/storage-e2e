@@ -19,42 +19,33 @@ package dvp
 import (
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
-func readKubeconfig(path string) ([]byte, error) {
-	resolved, err := expandUserPath(path)
+func buildRestConfig(kubeconfig []byte, localAddr string) (*rest.Config, error) {
+	apiCfg, err := clientcmd.Load(kubeconfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parsing kubeconfig: %w", err)
 	}
-	raw, err := os.ReadFile(resolved)
-	if err != nil {
-		return nil, fmt.Errorf("read kubeconfig %q: %w", resolved, err)
-	}
-	if strings.TrimSpace(string(raw)) == "" {
-		return nil, fmt.Errorf("kubeconfig %q is empty", resolved)
-	}
-	return raw, nil
-}
 
-func expandUserPath(path string) (string, error) {
-	expanded := os.ExpandEnv(path)
-	if !strings.HasPrefix(expanded, "~") {
-		return expanded, nil
+	overrides := &clientcmd.ConfigOverrides{
+		ClusterInfo: clientcmdapi.Cluster{
+			Server: localAddr,
+		},
+		Timeout: (2 * time.Minute).String(),
 	}
-	home, err := os.UserHomeDir()
+
+	restConfig, err := clientcmd.NewDefaultClientConfig(*apiCfg, overrides).ClientConfig()
 	if err != nil {
-		return "", fmt.Errorf("resolve home directory for %q: %w", path, err)
+		return nil, fmt.Errorf("creating client config: %w", err)
 	}
-	if expanded == "~" {
-		return home, nil
-	}
-	return filepath.Join(home, strings.TrimPrefix(expanded, "~/")), nil
+
+	configureTunnelTimeouts(restConfig)
+	return restConfig, nil
 }
 
 func configureTunnelTimeouts(cfg *rest.Config) {
