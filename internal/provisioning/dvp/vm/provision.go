@@ -217,7 +217,7 @@ func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
 	if err != nil {
 		return err
 	}
-	if err := createIfAbsentVirtualDisk(ctx, p.client, vd); err != nil {
+	if err = createIfAbsentVirtualDisk(ctx, p.client, vd); err != nil {
 		return err
 	}
 

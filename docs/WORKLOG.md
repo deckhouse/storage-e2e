@@ -322,3 +322,7 @@ All notable changes to this repository are documented here. New entries are appe
 - **Refactor** `internal/provisioning/dvp/provider.go`: `connect` uses a cleanup-stack so partial failures cannot leak the ssh client/tunnel.
 - **Refactor** `internal/provisioning/dvp/vm/provision.go`: declarative `plan` (masters/workers/`def.Setup` if non-nil, no implicit `DefaultSetupVM`); `Provision` returns `error` and no longer mutates `def` beyond filling node IPs. Removed `Config.SetupVMNameSuffix`.
 - **Refactor** `internal/provisioning/dvp/provider.go`: drop `randomSuffix`/setup-suffix from the bootstrap path; `provisionerConfig(sshPublicKey)` no longer threads a setup suffix; `Provision` result is no longer consumed.
+
+## 2026-06-30
+
+- **Bugfix** Fix golangci-lint failures in `internal/provisioning/dvp/vm`: regroup local imports (goimports) in `client.go`/`provision_test.go`, reuse `err` instead of shadowing in `createDiskAndVM` (`provision.go`), and remove the unused `seedCVI` fake helper (`fake_test.go`).

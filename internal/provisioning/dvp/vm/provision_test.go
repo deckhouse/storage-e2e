@@ -26,9 +26,10 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 	"github.com/deckhouse/virtualization/api/core/v1alpha3"
+
+	"github.com/deckhouse/storage-e2e/internal/config"
 )
 
 func testLogger() *slog.Logger {

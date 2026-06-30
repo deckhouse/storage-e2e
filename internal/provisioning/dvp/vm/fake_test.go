@@ -228,13 +228,6 @@ func (f *fakeClient) CreateVirtualMachineClass(_ context.Context, class *v1alpha
 	return nil
 }
 
-// seedCVI inserts a CVI directly into the store (bypassing Create counters).
-func (f *fakeClient) seedCVI(cvi *v1alpha2.ClusterVirtualImage) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.cvis[cvi.Name] = cvi.DeepCopy()
-}
-
 // seedVMClass inserts a VirtualMachineClass directly into the store.
 func (f *fakeClient) seedVMClass(class *v1alpha3.VirtualMachineClass) {
 	f.mu.Lock()

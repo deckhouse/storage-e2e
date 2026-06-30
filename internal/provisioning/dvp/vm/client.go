@@ -19,9 +19,10 @@ package vm
 import (
 	"context"
 
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 	"github.com/deckhouse/virtualization/api/core/v1alpha3"
+
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 )
 
 type Client interface {
