@@ -65,25 +65,27 @@ storage-e2e/
 │   │           ├── options.go    # functional options
 │   │           └── tunnel.go     # Tunnel, accept loop
 │   │
-│   ├── provisioning/              # Cluster provisioning providers
-│   │   ├── commander/            # Deckhouse Commander provider
-│   │   │   ├── config.go         # provider config
-│   │   │   └── provider.go       # provider implementation
-│   │   └── dvp/                  # Deckhouse Virtualization Platform provider
-│   │       ├── bootstrap.go      # dhctl bootstrap-config rendering (param derivation + render + CIDR calc)
-│   │       ├── bootstrap.tpl     # Embedded dhctl bootstrap config template
-│   │       ├── config.go         # provider config
-│   │       ├── kubeconfig.go     # kubeconfig retrieval
-│   │       ├── provider.go       # provider implementation
-│   │       └── vm/               # VM lifecycle (create, wait, cloud-init, naming, labels)
-│   │           ├── build.go      # VM spec assembly
-│   │           ├── client.go     # virtualization API client
-│   │           ├── cloudinit.go  # cloud-init user-data rendering
-│   │           ├── create.go     # VM creation
-│   │           ├── labels.go     # VM label helpers
-│   │           ├── naming.go     # VM naming
-│   │           ├── provision.go  # provision orchestration
-│   │           └── wait.go       # readiness/deletion polling
+│   ├── provisioning/             # Cluster provisioning strategies (Provider impls)
+│   │   ├── commander/           # Deckhouse Commander provider
+│   │   │   ├── provider.go      # Commander-backed Provider (Bootstrap/Remove)
+│   │   │   └── config.go        # Commander provider configuration
+│   │   └── dvp/                 # DVP (Deckhouse Virtualization Platform) provider
+│   │       ├── provider.go      # dvpProvider: Bootstrap/Remove orchestration
+│   │       ├── connect.go       # dvpConnector: SSH tunnel + base-cluster rest.Config
+│   │       ├── deps.go          # DI seam: baseConnector/kubeOps/fleetFactory + adapters
+│   │       ├── bootstrap.go     # dhctl bootstrap-config rendering (param derivation + render + CIDR calc)
+│   │       ├── bootstrap.tpl    # Embedded dhctl bootstrap config template
+│   │       ├── config.go        # Config, Credentials, env parsing/validation
+│   │       ├── kubeconfig.go    # rest.Config build + ssh public-key derivation
+│   │       └── vm/              # VM graph provisioning in the base cluster
+│   │           ├── client.go    # Virtualization client wrapper
+│   │           ├── build.go     # VM/disk/image resource builders
+│   │           ├── create.go    # Resource creation
+│   │           ├── provision.go # Provision/Teardown orchestration
+│   │           ├── wait.go      # Readiness/deletion polling
+│   │           ├── naming.go    # Resource naming
+│   │           ├── labels.go    # Resource labels
+│   │           └── cloudinit.go # cloud-init rendering
 │   │
 │   └── logger/                    # Structured logging
 │       ├── logger.go             # Logger implementation
