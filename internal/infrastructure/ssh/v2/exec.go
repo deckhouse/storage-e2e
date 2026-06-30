@@ -19,22 +19,20 @@ package ssh
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"sync"
 
 	"golang.org/x/crypto/ssh"
 )
 
-// Exec runs cmd on the remote host and returns the combined stdout+stderr.
-// A non-zero remote exit status returns a non-nil error together with the
-// captured output. The call heals and retries on transient connection
-// failures using the same executor as OpenTunnel.
-func (c *Client) Exec(ctx context.Context, cmd string) (string, error) {
-	// withConn discards its result value whenever the op returns an error, so
-	// the captured output is published through this closure variable instead.
-	// That keeps the output available on a non-zero exit (a non-transient
-	// *ssh.ExitError), where withConn returns the zero result alongside err.
-	var output string
+type ExecResult struct {
+	Stdout   []byte
+	Stderr   []byte
+	ExitCode int
+}
+
+func (c *Client) Exec(ctx context.Context, cmd string) (ExecResult, error) {
+	var res ExecResult
 	_, err := withConn(ctx, c.conn, c.retries, func(ctx context.Context, client *ssh.Client) (struct{}, error) {
 		session, err := client.NewSession()
 		if err != nil {
@@ -42,39 +40,23 @@ func (c *Client) Exec(ctx context.Context, cmd string) (string, error) {
 		}
 		defer session.Close()
 
-		// ssh copies stdout and stderr from two separate goroutines, so the
-		// shared sink must be synchronized to combine them safely.
-		var buf combinedBuffer
-		session.Stdout = &buf
-		session.Stderr = &buf
+		var stdout, stderr bytes.Buffer
+		session.Stdout = &stdout
+		session.Stderr = &stderr
 
 		runErr := runWithContext(ctx, session, cmd)
-		output = buf.String()
+		res.Stdout = stdout.Bytes()
+		res.Stderr = stderr.Bytes()
+
+		var exitErr *ssh.ExitError
+		if errors.As(runErr, &exitErr) {
+			res.ExitCode = exitErr.ExitStatus()
+		}
 		return struct{}{}, runErr
 	})
-	return output, err
+	return res, err
 }
 
-// combinedBuffer is a mutex-guarded buffer that serializes the concurrent
-// stdout/stderr writes ssh performs so their interleaving is race-free.
-type combinedBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *combinedBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *combinedBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
-// runWithContext runs cmd and aborts the session if ctx is cancelled.
 func runWithContext(ctx context.Context, session *ssh.Session, cmd string) error {
 	if err := session.Start(cmd); err != nil {
 		return fmt.Errorf("start command: %w", err)

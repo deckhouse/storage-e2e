@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package ssh provides a self-healing SSH client whose connection strategy
 // ("how we connect" — directly or through jump hosts) is separated from the
-// operations performed over it ("what we do" — currently tunneling).
+// operations performed over it ("what we do").
 //
 // The injection point is the Dialer: Route builds one for a direct connection or
 // an arbitrary chain of jump hosts. New opens a Client over a Dialer and hides

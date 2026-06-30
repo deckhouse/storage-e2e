@@ -18,7 +18,9 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -33,23 +35,26 @@ func newTestClientWithRetries(t *testing.T, d Dialer, retries int) *Client {
 	return c
 }
 
-func TestExecReturnsCombinedOutput(t *testing.T) {
+func TestExecReturnsStdoutAndStderr(t *testing.T) {
 	srv := newTestServer(t)
 	srv.execHandler = func(cmd string) (string, string, uint32) {
 		return "out:" + cmd, "err-stream", 0
 	}
 
-	c := newTestClient(t, &serverDialer{addr: srv.addr()}, 0)
+	c := newTestClientWithRetries(t, &serverDialer{addr: srv.addr()}, 0)
 
-	out, err := c.Exec(context.Background(), "echo hi")
+	res, err := c.Exec(context.Background(), "echo hi")
 	if err != nil {
 		t.Fatalf("Exec() error = %v, want nil", err)
 	}
-	if !strings.Contains(out, "out:echo hi") {
-		t.Errorf("stdout missing from output: %q", out)
+	if got := string(res.Stdout); !strings.Contains(got, "out:echo hi") {
+		t.Errorf("Stdout = %q, want it to contain %q", got, "out:echo hi")
 	}
-	if !strings.Contains(out, "err-stream") {
-		t.Errorf("stderr missing from combined output: %q", out)
+	if got := string(res.Stderr); !strings.Contains(got, "err-stream") {
+		t.Errorf("Stderr = %q, want it to contain %q", got, "err-stream")
+	}
+	if res.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", res.ExitCode)
 	}
 }
 
@@ -59,14 +64,17 @@ func TestExecNonZeroExitReturnsErrorWithOutput(t *testing.T) {
 		return "boom-output", "", 7
 	}
 
-	c := newTestClient(t, &serverDialer{addr: srv.addr()}, 0)
+	c := newTestClientWithRetries(t, &serverDialer{addr: srv.addr()}, 0)
 
-	out, err := c.Exec(context.Background(), "false")
+	res, err := c.Exec(context.Background(), "false")
 	if err == nil {
 		t.Fatal("Exec() error = nil, want non-nil for non-zero exit")
 	}
-	if !strings.Contains(out, "boom-output") {
-		t.Errorf("output not returned on failure: %q", out)
+	if got := string(res.Stdout); !strings.Contains(got, "boom-output") {
+		t.Errorf("Stdout = %q, want it to contain %q", got, "boom-output")
+	}
+	if res.ExitCode != 7 {
+		t.Errorf("ExitCode = %d, want 7", res.ExitCode)
 	}
 }
 
@@ -75,19 +83,17 @@ func TestExecRetriesOnTransientFailure(t *testing.T) {
 	d := &serverDialer{addr: srv.addr()}
 	c := newTestClientWithRetries(t, d, 3)
 
-	// Drop the live connection so the next session attempt fails on a broken
-	// transport and withConn heals + retries against the (still listening)
-	// server. The very first NewSession after the drop can surface a
-	// non-transient channel-open error while x/crypto/ssh tears the dead
-	// transport down; once it observes the clean transport EOF the failure is
-	// transient and withConn reconnects. Poll until the connection self-heals.
+	// Dropping the live connection races x/crypto/ssh tearing the dead transport
+	// down, so the first attempt after the drop can surface a non-transient
+	// channel-open error before the failure settles into a transient EOF; poll
+	// until withConn observes the EOF and self-heals.
 	srv.dropConns()
 
-	var out string
+	var res ExecResult
 	var err error
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
-		out, err = c.Exec(context.Background(), "whoami")
+		res, err = c.Exec(context.Background(), "whoami")
 		if err == nil {
 			break
 		}
@@ -96,23 +102,57 @@ func TestExecRetriesOnTransientFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec() did not heal after dropped connection: %v", err)
 	}
-	if !strings.Contains(out, "whoami") {
-		t.Errorf("unexpected output after heal: %q", out)
+	if got := string(res.Stdout); !strings.Contains(got, "whoami") {
+		t.Errorf("Stdout = %q, want it to contain %q", got, "whoami")
 	}
 	if d.dialCount() < 2 {
 		t.Errorf("dialCount = %d, want >= 2 (initial + reconnect)", d.dialCount())
 	}
 }
 
-func TestExecRespectsContextCancellation(t *testing.T) {
+func TestExecReturnsContextErrorWhenAlreadyCancelled(t *testing.T) {
 	srv := newTestServer(t)
-	c := newTestClient(t, &serverDialer{addr: srv.addr()}, 0)
+	c := newTestClientWithRetries(t, &serverDialer{addr: srv.addr()}, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := c.Exec(ctx, "sleep 1"); err == nil {
-		t.Error("Exec() error = nil, want context error")
+	if _, err := c.Exec(ctx, "sleep 1"); !errors.Is(err, context.Canceled) {
+		t.Errorf("Exec() error = %v, want context.Canceled", err)
 	}
-	_ = time.Second
+}
+
+func TestExecCancelDuringRun(t *testing.T) {
+	srv := newTestServer(t)
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	started := make(chan struct{})
+	var once sync.Once
+	srv.execHandler = func(cmd string) (string, string, uint32) {
+		once.Do(func() { close(started) })
+		<-release
+		return "", "", 0
+	}
+
+	c := newTestClientWithRetries(t, &serverDialer{addr: srv.addr()}, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.Exec(ctx, "sleep")
+		errCh <- err
+	}()
+
+	<-started
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Exec() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Exec() did not return after context cancellation")
+	}
 }
