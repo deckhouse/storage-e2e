@@ -41,6 +41,10 @@ type Config struct {
 
 	SetupVMNameSuffix string
 
+	Timeouts Timeouts
+}
+
+type Timeouts struct {
 	PollInterval                    time.Duration
 	ClusterVirtualImageReadyTimeout time.Duration
 	VMClassReadyTimeout             time.Duration
@@ -155,10 +159,10 @@ func (p *Provisioner) provisionVMClass(ctx context.Context) error {
 }
 
 func (p *Provisioner) waitVMClassReady(ctx context.Context, name string) error {
-	waitCtx, cancel := context.WithTimeout(ctx, p.cfg.VMClassReadyTimeout)
+	waitCtx, cancel := context.WithTimeout(ctx, p.cfg.Timeouts.VMClassReadyTimeout)
 	defer cancel()
 
-	err := waitForCondition(waitCtx, p.cfg.PollInterval,
+	err := waitForCondition(waitCtx, p.cfg.Timeouts.PollInterval,
 		func(ctx context.Context) (*v1alpha3.VirtualMachineClass, error) {
 			return p.client.GetVirtualMachineClass(ctx, name)
 		},
@@ -183,9 +187,9 @@ func (p *Provisioner) provisionClusterVirtualImages(ctx context.Context, planned
 			}
 			p.log.Info("ensured ClusterVirtualImage, waiting for Ready", "name", name)
 
-			waitCtx, cancel := context.WithTimeout(gctx, p.cfg.ClusterVirtualImageReadyTimeout)
+			waitCtx, cancel := context.WithTimeout(gctx, p.cfg.Timeouts.ClusterVirtualImageReadyTimeout)
 			defer cancel()
-			if err := waitForCondition(waitCtx, p.cfg.PollInterval,
+			if err := waitForCondition(waitCtx, p.cfg.Timeouts.PollInterval,
 				func(ctx context.Context) (*v1alpha2.ClusterVirtualImage, error) {
 					return p.client.GetClusterVirtualImage(ctx, name)
 				},
@@ -256,11 +260,11 @@ func (p *Provisioner) waitRunningAndCollectIPs(ctx context.Context, planned []pl
 	for _, pl := range planned {
 		pl := pl
 		g.Go(func() error {
-			waitCtx, cancel := context.WithTimeout(gctx, p.cfg.VMRunningTimeout)
+			waitCtx, cancel := context.WithTimeout(gctx, p.cfg.Timeouts.VMRunningTimeout)
 			defer cancel()
 
 			var ip string
-			err := waitForCondition(waitCtx, p.cfg.PollInterval,
+			err := waitForCondition(waitCtx, p.cfg.Timeouts.PollInterval,
 				func(ctx context.Context) (*v1alpha2.VirtualMachine, error) {
 					return p.client.GetVirtualMachine(ctx, p.cfg.Namespace, pl.node.Hostname)
 				},
@@ -295,13 +299,7 @@ func (p *Provisioner) Teardown(ctx context.Context) error {
 	if err := p.teardownVirtualMachines(ctx); err != nil {
 		return err
 	}
-
-	referencedCVIs, err := p.teardownVirtualDisks(ctx)
-	if err != nil {
-		return err
-	}
-
-	return p.teardownClusterVirtualImages(ctx, referencedCVIs)
+	return p.teardownVirtualDisks(ctx)
 }
 
 func (p *Provisioner) teardownVirtualMachines(ctx context.Context) error {
@@ -321,7 +319,7 @@ func (p *Provisioner) teardownVirtualMachines(ctx context.Context) error {
 			if err := p.client.DeleteVirtualMachine(gctx, machine.Namespace, machine.Name); err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("delete VirtualMachine %s/%s: %w", machine.Namespace, machine.Name, err)
 			}
-			return waitDeleted(gctx, p.cfg.PollInterval, p.cfg.DeleteTimeout,
+			return waitDeleted(gctx, p.cfg.Timeouts.PollInterval, p.cfg.Timeouts.DeleteTimeout,
 				func(ctx context.Context) (*v1alpha2.VirtualMachine, error) {
 					return p.client.GetVirtualMachine(ctx, machine.Namespace, machine.Name)
 				}, "VirtualMachine", machine.Name)
@@ -330,85 +328,27 @@ func (p *Provisioner) teardownVirtualMachines(ctx context.Context) error {
 	return g.Wait()
 }
 
-func (p *Provisioner) teardownVirtualDisks(ctx context.Context) (map[string]struct{}, error) {
+func (p *Provisioner) teardownVirtualDisks(ctx context.Context) error {
 	vds, err := p.client.ListVirtualDisks(ctx, p.cfg.Namespace)
 	if err != nil {
-		return nil, fmt.Errorf("list VirtualDisks: %w", err)
+		return fmt.Errorf("list VirtualDisks: %w", err)
 	}
 
-	referenced := make(map[string]struct{})
 	g, gctx := errgroup.WithContext(ctx)
 	for i := range vds {
 		vd := vds[i]
 		if !isManaged(vd.ObjectMeta) {
 			continue
 		}
-		if name, ok := virtualDiskCVIRef(vd); ok {
-			referenced[name] = struct{}{}
-		}
 		g.Go(func() error {
 			p.log.Info("deleting VirtualDisk", "vd", vd.Name)
 			if err := p.client.DeleteVirtualDisk(gctx, vd.Namespace, vd.Name); err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("delete VirtualDisk %s/%s: %w", vd.Namespace, vd.Name, err)
 			}
-			return waitDeleted(gctx, p.cfg.PollInterval, p.cfg.DeleteTimeout,
+			return waitDeleted(gctx, p.cfg.Timeouts.PollInterval, p.cfg.Timeouts.DeleteTimeout,
 				func(ctx context.Context) (*v1alpha2.VirtualDisk, error) {
 					return p.client.GetVirtualDisk(ctx, vd.Namespace, vd.Name)
 				}, "VirtualDisk", vd.Name)
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-	return referenced, nil
-}
-
-func (p *Provisioner) teardownClusterVirtualImages(ctx context.Context, candidates map[string]struct{}) error {
-	if len(candidates) == 0 {
-		return nil
-	}
-
-	cvis, err := p.client.ListClusterVirtualImages(ctx)
-	if err != nil {
-		return fmt.Errorf("list ClusterVirtualImages: %w", err)
-	}
-	managed := make(map[string]struct{})
-	for i := range cvis {
-		if isManaged(cvis[i].ObjectMeta) {
-			managed[cvis[i].Name] = struct{}{}
-		}
-	}
-
-	allVDs, err := p.client.ListVirtualDisks(ctx, "")
-	if err != nil {
-		return fmt.Errorf("list VirtualDisks for CVI reference counting: %w", err)
-	}
-	inUse := make(map[string]struct{})
-	for i := range allVDs {
-		if name, ok := virtualDiskCVIRef(allVDs[i]); ok {
-			inUse[name] = struct{}{}
-		}
-	}
-
-	g, gctx := errgroup.WithContext(ctx)
-	for name := range candidates {
-		name := name
-		if _, isManaged := managed[name]; !isManaged {
-			continue
-		}
-		if _, used := inUse[name]; used {
-			p.log.Info("ClusterVirtualImage still in use, skipping deletion", "cvi", name)
-			continue
-		}
-		g.Go(func() error {
-			p.log.Info("deleting ClusterVirtualImage", "cvi", name)
-			if err := p.client.DeleteClusterVirtualImage(gctx, name); err != nil && !apierrors.IsNotFound(err) {
-				return fmt.Errorf("delete ClusterVirtualImage %q: %w", name, err)
-			}
-			return waitDeleted(gctx, p.cfg.PollInterval, p.cfg.DeleteTimeout,
-				func(ctx context.Context) (*v1alpha2.ClusterVirtualImage, error) {
-					return p.client.GetClusterVirtualImage(ctx, name)
-				}, "ClusterVirtualImage", name)
 		})
 	}
 	return g.Wait()
@@ -422,12 +362,4 @@ func waitDeleted[T any](ctx context.Context, interval, timeout time.Duration, ge
 		return fmt.Errorf("wait for %s %q deletion: %w", kind, name, err)
 	}
 	return nil
-}
-
-func virtualDiskCVIRef(vd v1alpha2.VirtualDisk) (string, bool) {
-	ds := vd.Spec.DataSource
-	if ds != nil && ds.ObjectRef != nil && ds.ObjectRef.Kind == v1alpha2.VirtualDiskObjectRefKindClusterVirtualImage {
-		return ds.ObjectRef.Name, true
-	}
-	return "", false
 }

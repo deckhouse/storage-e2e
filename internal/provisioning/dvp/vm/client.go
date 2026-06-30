@@ -27,8 +27,6 @@ import (
 type Client interface {
 	GetClusterVirtualImage(ctx context.Context, name string) (*v1alpha2.ClusterVirtualImage, error)
 	CreateClusterVirtualImage(ctx context.Context, cvi *v1alpha2.ClusterVirtualImage) error
-	DeleteClusterVirtualImage(ctx context.Context, name string) error
-	ListClusterVirtualImages(ctx context.Context) ([]v1alpha2.ClusterVirtualImage, error)
 
 	GetVirtualDisk(ctx context.Context, namespace, name string) (*v1alpha2.VirtualDisk, error)
 	CreateVirtualDisk(ctx context.Context, vd *v1alpha2.VirtualDisk) error
@@ -58,14 +56,6 @@ func (a *clientAdapter) GetClusterVirtualImage(ctx context.Context, name string)
 
 func (a *clientAdapter) CreateClusterVirtualImage(ctx context.Context, cvi *v1alpha2.ClusterVirtualImage) error {
 	return a.c.ClusterVirtualImages().Create(ctx, cvi)
-}
-
-func (a *clientAdapter) DeleteClusterVirtualImage(ctx context.Context, name string) error {
-	return a.c.ClusterVirtualImages().Delete(ctx, name)
-}
-
-func (a *clientAdapter) ListClusterVirtualImages(ctx context.Context) ([]v1alpha2.ClusterVirtualImage, error) {
-	return a.c.ClusterVirtualImages().List(ctx)
 }
 
 func (a *clientAdapter) GetVirtualDisk(ctx context.Context, namespace, name string) (*v1alpha2.VirtualDisk, error) {

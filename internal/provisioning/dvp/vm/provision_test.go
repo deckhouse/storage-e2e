@@ -37,17 +37,19 @@ func testLogger() *slog.Logger {
 
 func testConfig() Config {
 	return Config{
-		Namespace:                       "ns",
-		StorageClass:                    "sc",
-		SSHPublicKey:                    "ssh-ed25519 AAAA test",
-		VMClassName:                     "generic",
-		DefaultVMClassName:              "generic",
-		SetupVMNameSuffix:               "123",
-		PollInterval:                    time.Millisecond,
-		ClusterVirtualImageReadyTimeout: time.Minute,
-		VMClassReadyTimeout:             time.Minute,
-		VMRunningTimeout:                2 * time.Second,
-		DeleteTimeout:                   2 * time.Second,
+		Namespace:          "ns",
+		StorageClass:       "sc",
+		SSHPublicKey:       "ssh-ed25519 AAAA test",
+		VMClassName:        "generic",
+		DefaultVMClassName: "generic",
+		SetupVMNameSuffix:  "123",
+		Timeouts: Timeouts{
+			PollInterval:                    time.Millisecond,
+			ClusterVirtualImageReadyTimeout: time.Minute,
+			VMClassReadyTimeout:             time.Minute,
+			VMRunningTimeout:                2 * time.Second,
+			DeleteTimeout:                   2 * time.Second,
+		},
 	}
 }
 
@@ -187,8 +189,11 @@ func TestTeardownIdempotent(t *testing.T) {
 	vms, _ := c.ListVirtualMachines(context.Background(), "ns")
 	vds, _ := c.ListVirtualDisks(context.Background(), "ns")
 	cvis, _ := c.ListClusterVirtualImages(context.Background())
-	if len(vms) != 0 || len(vds) != 0 || len(cvis) != 0 {
-		t.Errorf("after teardown: vms=%d vds=%d cvis=%d, want all 0", len(vms), len(vds), len(cvis))
+	if len(vms) != 0 || len(vds) != 0 {
+		t.Errorf("after teardown: vms=%d vds=%d, want 0/0", len(vms), len(vds))
+	}
+	if len(cvis) == 0 {
+		t.Error("after teardown: cvis=0, want CVIs kept as cache")
 	}
 	if _, err := c.GetVirtualMachineClass(context.Background(), "generic"); err != nil {
 		t.Errorf("VirtualMachineClass should survive teardown: %v", err)

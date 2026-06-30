@@ -112,54 +112,58 @@ func (p *dvpProvider) connect(ctx context.Context) (*rest.Config, func(), error)
 		"kubeconfigSource", kubeconfigSource,
 	)
 
+	var cleanups []func()
+	runCleanups := func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}
+
 	sshClient, sshNewErr := p.buildSSHClient(ctx)
 	if sshNewErr != nil {
 		return nil, nil, fmt.Errorf("creating ssh client: %w", sshNewErr)
 	}
+	cleanups = append(cleanups, func() {
+		if err := sshClient.Close(); err != nil {
+			p.logger.Warn("failed to close ssh client", "err", err)
+		}
+	})
 
 	tun, tunErr := sshClient.OpenTunnel(ctx, apiServerRemotePort)
 	if tunErr != nil {
-		if closeErr := sshClient.Close(); closeErr != nil {
-			p.logger.Warn("failed to close ssh client", "err", closeErr)
-		}
+		runCleanups()
 		return nil, nil, fmt.Errorf("creating tunnel: %w", tunErr)
 	}
+	cleanups = append(cleanups, func() {
+		if err := tun.Close(); err != nil {
+			p.logger.Warn("failed to close tunnel", "err", err)
+		}
+	})
 
 	restConfig, buildRestConfErr := buildRestConfig(p.creds.Kubeconfig, tun.LocalAddr())
 	if buildRestConfErr != nil {
-		if closeErr := tun.Close(); closeErr != nil {
-			p.logger.Warn("failed to close tunnel", "err", closeErr)
-		}
-		if closeErr := sshClient.Close(); closeErr != nil {
-			p.logger.Warn("failed to close ssh client", "err", closeErr)
-		}
+		runCleanups()
 		return nil, nil, fmt.Errorf("creating rest config: %w", buildRestConfErr)
 	}
 
-	cleanup := func() {
-		if tunCloseErr := tun.Close(); tunCloseErr != nil {
-			p.logger.Warn("failed to close tunnel", "err", tunCloseErr)
-		}
-		if sshClientCloseErr := sshClient.Close(); sshClientCloseErr != nil {
-			p.logger.Warn("failed to close ssh client", "err", sshClientCloseErr)
-		}
-	}
-	return restConfig, cleanup, nil
+	return restConfig, runCleanups, nil
 }
 
 func (p *dvpProvider) provisionerConfig(sshPublicKey, setupSuffix string) vm.Config {
 	return vm.Config{
-		Namespace:                       p.dvpConf.Namespace,
-		StorageClass:                    p.dvpConf.StorageClass,
-		SSHPublicKey:                    sshPublicKey,
-		VMClassName:                     p.dvpConf.VMClassName,
-		DefaultVMClassName:              p.dvpConf.DefaultVMClassName,
-		SetupVMNameSuffix:               setupSuffix,
-		PollInterval:                    vmProvisionPollInterval,
-		ClusterVirtualImageReadyTimeout: config.ClusterVirtualImageReadinessTimeout,
-		VMClassReadyTimeout:             config.VirtualMachineClassReadinessTimeout,
-		VMRunningTimeout:                config.VMsRunningTimeout,
-		DeleteTimeout:                   config.ClusterCleanupTimeout,
+		Namespace:          p.dvpConf.Namespace,
+		StorageClass:       p.dvpConf.StorageClass,
+		SSHPublicKey:       sshPublicKey,
+		VMClassName:        p.dvpConf.VMClassName,
+		DefaultVMClassName: p.dvpConf.DefaultVMClassName,
+		SetupVMNameSuffix:  setupSuffix,
+		Timeouts: vm.Timeouts{
+			PollInterval:                    vmProvisionPollInterval,
+			ClusterVirtualImageReadyTimeout: config.ClusterVirtualImageReadinessTimeout,
+			VMClassReadyTimeout:             config.VirtualMachineClassReadinessTimeout,
+			VMRunningTimeout:                config.VMsRunningTimeout,
+			DeleteTimeout:                   config.ClusterCleanupTimeout,
+		},
 	}
 }
 
