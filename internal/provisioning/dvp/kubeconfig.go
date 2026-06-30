@@ -51,10 +51,6 @@ func buildRestConfig(kubeconfig []byte, localAddr string) (*rest.Config, error) 
 	return restConfig, nil
 }
 
-// publicKeyFromPrivateKey derives the OpenSSH authorized-keys line from a PEM
-// private key. It works whether the key arrived as inline content
-// (E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY) or was read from a file, so cloud-init
-// gets the public half without needing a separate ".pub" file next to the key.
 func publicKeyFromPrivateKey(privateKeyPEM []byte, passphrase string) (string, error) {
 	signer, err := parsePrivateKeySigner(privateKeyPEM, passphrase)
 	if err != nil {
@@ -68,9 +64,6 @@ func publicKeyFromPrivateKey(privateKeyPEM []byte, passphrase string) (string, e
 	return key, nil
 }
 
-// parsePrivateKeySigner mirrors internal/infrastructure/ssh/v2 key handling:
-// try unencrypted, then fall back to passphrase decryption when the key is
-// passphrase-protected.
 func parsePrivateKeySigner(raw []byte, passphrase string) (ssh.Signer, error) {
 	signer, err := ssh.ParsePrivateKey(raw)
 	if err == nil {

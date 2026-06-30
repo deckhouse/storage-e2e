@@ -222,9 +222,6 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	p.logger.Info("provisioning virtual machines",
 		"namespace", p.dvpConf.Namespace,
 	)
-	// Each provisioning phase manages its own timeout from vm.Timeouts and the
-	// phases run sequentially, so we pass the caller context through directly
-	// instead of an umbrella timeout that would truncate later phases.
 	if provisionErr := provisioner.Provision(ctx, clusterDef); provisionErr != nil {
 		return fmt.Errorf("provision virtual machines: %w", provisionErr)
 	}

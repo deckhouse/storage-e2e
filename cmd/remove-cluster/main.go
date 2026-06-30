@@ -28,10 +28,6 @@ func main() {
 		log.Fatalf("failed to build provider: %v", err)
 	}
 
-	// Overall safety cap for teardown. The per-resource deletion waits are
-	// bounded by DeleteTimeout, but the bare List/Delete API calls are not, so
-	// we cap the whole teardown here (two sequential phases of up to
-	// ClusterCleanupTimeout each, plus overhead).
 	teardownCtx, teardownCancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	teardownErr := clusterProvider.Remove(teardownCtx)
 	teardownCancel()

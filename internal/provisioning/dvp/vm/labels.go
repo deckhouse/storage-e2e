@@ -23,17 +23,12 @@ const (
 	managedByLabelValue = "storage-e2e"
 )
 
-// managedLabels are the labels stamped on every resource the provisioner
-// creates. Isolation boundary is the namespace (one run per namespace), so no
-// per-run label is needed.
 func managedLabels() map[string]string {
 	return map[string]string{
 		managedByLabelKey: managedByLabelValue,
 	}
 }
 
-// isManaged reports whether a resource was created by this provisioner and is
-// therefore eligible for teardown.
 func isManaged(meta metav1.ObjectMeta) bool {
 	return meta.Labels[managedByLabelKey] == managedByLabelValue
 }

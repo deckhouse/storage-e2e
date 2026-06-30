@@ -49,9 +49,6 @@ func waitForCondition[T any](
 
 		select {
 		case <-ctx.Done():
-			// The condition funcs swallow transient Get errors to keep polling,
-			// so on timeout/cancel we surface the most recent one (if any) while
-			// keeping ctx.Err() wrapped for errors.Is checks.
 			if lastErr != nil {
 				return fmt.Errorf("%w (last error: %v)", ctx.Err(), lastErr)
 			}

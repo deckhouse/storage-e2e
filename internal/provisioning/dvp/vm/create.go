@@ -26,10 +26,6 @@ import (
 	"github.com/deckhouse/virtualization/api/core/v1alpha3"
 )
 
-// ignoreAlreadyExists treats an AlreadyExists error as success. Every ensure
-// function uses it so that "already there" is handled uniformly across all
-// resource types: two concurrent runs (or a retried run) converge instead of
-// failing.
 func ignoreAlreadyExists(err error) error {
 	if err == nil || apierrors.IsAlreadyExists(err) {
 		return nil
@@ -37,10 +33,6 @@ func ignoreAlreadyExists(err error) error {
 	return err
 }
 
-// createIfAbsentClusterVirtualImage creates the CVI if it does not exist. An
-// existing CVI (matched by name) is left untouched — re-running does not
-// reconcile drift. This is what we want: the image is cluster-scoped and may be
-// shared by other runs.
 func createIfAbsentClusterVirtualImage(ctx context.Context, c Client, cvi *v1alpha2.ClusterVirtualImage) error {
 	_, err := c.GetClusterVirtualImage(ctx, cvi.Name)
 	if err == nil {
@@ -55,9 +47,6 @@ func createIfAbsentClusterVirtualImage(ctx context.Context, c Client, cvi *v1alp
 	return nil
 }
 
-// createIfAbsentVirtualDisk creates the VirtualDisk if it does not exist. An
-// existing object (matched by name) is left untouched — re-running does not
-// reconcile drift.
 func createIfAbsentVirtualDisk(ctx context.Context, c Client, vd *v1alpha2.VirtualDisk) error {
 	_, err := c.GetVirtualDisk(ctx, vd.Namespace, vd.Name)
 	if err == nil {
@@ -72,9 +61,6 @@ func createIfAbsentVirtualDisk(ctx context.Context, c Client, vd *v1alpha2.Virtu
 	return nil
 }
 
-// createIfAbsentVirtualMachine creates the VirtualMachine if it does not exist.
-// An existing object (matched by name) is left untouched — re-running does not
-// reconcile drift.
 func createIfAbsentVirtualMachine(ctx context.Context, c Client, machine *v1alpha2.VirtualMachine) error {
 	_, err := c.GetVirtualMachine(ctx, machine.Namespace, machine.Name)
 	if err == nil {
@@ -89,9 +75,6 @@ func createIfAbsentVirtualMachine(ctx context.Context, c Client, machine *v1alph
 	return nil
 }
 
-// createIfAbsentVirtualMachineClass creates the VirtualMachineClass if it does
-// not exist. An existing object (matched by name) is left untouched —
-// re-running does not reconcile drift.
 func createIfAbsentVirtualMachineClass(ctx context.Context, c Client, class *v1alpha3.VirtualMachineClass) error {
 	_, err := c.GetVirtualMachineClass(ctx, class.Name)
 	if err == nil {
@@ -106,10 +89,6 @@ func createIfAbsentVirtualMachineClass(ctx context.Context, c Client, class *v1a
 	return nil
 }
 
-// terminalGetErr reports whether a Get error is permanent (auth/config/request
-// errors) and should abort polling immediately rather than be retried until the
-// timeout. NotFound is intentionally excluded: during readiness waits it is a
-// transient cache-propagation race for an object we just created.
 func terminalGetErr(err error) bool {
 	return apierrors.IsForbidden(err) ||
 		apierrors.IsUnauthorized(err) ||
@@ -118,8 +97,6 @@ func terminalGetErr(err error) bool {
 		apierrors.IsMethodNotSupported(err)
 }
 
-// clusterVirtualImageReady is the readiness condition for a CVI. A transient
-// Get error keeps polling; only terminal phases abort.
 func clusterVirtualImageReady(cvi *v1alpha2.ClusterVirtualImage, getErr error) (bool, error) {
 	if getErr != nil {
 		if terminalGetErr(getErr) {
@@ -137,8 +114,6 @@ func clusterVirtualImageReady(cvi *v1alpha2.ClusterVirtualImage, getErr error) (
 	}
 }
 
-// virtualMachineClassReady is the readiness condition for a VirtualMachineClass.
-// A transient Get error keeps polling; only a terminating class aborts.
 func virtualMachineClassReady(class *v1alpha3.VirtualMachineClass, getErr error) (bool, error) {
 	if getErr != nil {
 		if terminalGetErr(getErr) {
@@ -156,10 +131,6 @@ func virtualMachineClassReady(class *v1alpha3.VirtualMachineClass, getErr error)
 	}
 }
 
-// virtualMachineRunning reports done only when the VM is Running and has an IP
-// address: the hypervisor publishes the IP via the guest agent shortly after
-// the VM enters Running, so we keep polling until both hold. A transient Get
-// error keeps polling; only a degraded VM aborts.
 func virtualMachineRunning(machine *v1alpha2.VirtualMachine, getErr error) (bool, error) {
 	if getErr != nil {
 		if terminalGetErr(getErr) {
@@ -177,10 +148,6 @@ func virtualMachineRunning(machine *v1alpha2.VirtualMachine, getErr error) (bool
 	}
 }
 
-// resourceDeleted is the condition for any get-by-name wait that should finish
-// once the object is gone. NotFound means done; any other transient Get error
-// keeps polling until the object actually disappears. It is generic so it works
-// for VMs, disks and images.
 func resourceDeleted[T any](_ T, getErr error) (bool, error) {
 	if apierrors.IsNotFound(getErr) {
 		return true, nil
