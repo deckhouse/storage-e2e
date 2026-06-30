@@ -94,8 +94,8 @@ func (c *dvpConnector) Connect(ctx context.Context) (*rest.Config, func(), error
 		return nil, nil, fmt.Errorf("creating ssh client: %w", err)
 	}
 	cleanups = append(cleanups, func() {
-		if err := sshClient.Close(); err != nil {
-			c.logger.Warn("failed to close ssh client", "err", err)
+		if closeErr := sshClient.Close(); closeErr != nil {
+			c.logger.Warn("failed to close ssh client", "err", closeErr)
 		}
 	})
 
@@ -105,8 +105,8 @@ func (c *dvpConnector) Connect(ctx context.Context) (*rest.Config, func(), error
 		return nil, nil, fmt.Errorf("creating tunnel: %w", err)
 	}
 	cleanups = append(cleanups, func() {
-		if err := tun.Close(); err != nil {
-			c.logger.Warn("failed to close tunnel", "err", err)
+		if closeErr := tun.Close(); closeErr != nil {
+			c.logger.Warn("failed to close tunnel", "err", closeErr)
 		}
 	})
 

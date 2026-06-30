@@ -94,7 +94,7 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	defer cleanup()
 
 	p.logger.Info("verifying connectivity to DVP base cluster API server")
-	if err := p.deps.kube.CheckReachable(ctx, kube); err != nil {
+	if err = p.deps.kube.CheckReachable(ctx, kube); err != nil {
 		return err
 	}
 	p.logger.Info("DVP base cluster API server is reachable")
@@ -102,7 +102,7 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	p.logger.Info("waiting for virtualization module to become ready",
 		"timeout", config.ModuleCheckTimeout,
 	)
-	if err := p.deps.kube.WaitModuleReady(ctx, kube, "virtualization", config.ModuleCheckTimeout); err != nil {
+	if err = p.deps.kube.WaitModuleReady(ctx, kube, "virtualization", config.ModuleCheckTimeout); err != nil {
 		return err
 	}
 	p.logger.Info("virtualization module is ready")
@@ -113,7 +113,7 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	)
 	nsCtx, cancel := context.WithTimeout(ctx, config.NamespaceTimeout)
 	defer cancel()
-	if err := p.deps.kube.EnsureNamespace(nsCtx, kube, p.dvpConf.Namespace); err != nil {
+	if err = p.deps.kube.EnsureNamespace(nsCtx, kube, p.dvpConf.Namespace); err != nil {
 		return err
 	}
 	p.logger.Info("test namespace is ready", "namespace", p.dvpConf.Namespace)
@@ -126,7 +126,7 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	p.logger.Info("provisioning virtual machines",
 		"namespace", p.dvpConf.Namespace,
 	)
-	if err := fleet.Provision(ctx, clusterDef); err != nil {
+	if err = fleet.Provision(ctx, clusterDef); err != nil {
 		return fmt.Errorf("provision virtual machines: %w", err)
 	}
 	p.logger.Info("virtual machines provisioned", "namespace", p.dvpConf.Namespace)
@@ -151,7 +151,7 @@ func (p *dvpProvider) Remove(ctx context.Context) error {
 	)
 	// Per-resource DeleteTimeout (from vm.Timeouts) governs each deletion wait,
 	// so we pass the caller context through without an umbrella timeout.
-	if err := fleet.Teardown(ctx); err != nil {
+	if err = fleet.Teardown(ctx); err != nil {
 		return fmt.Errorf("teardown virtual machines: %w", err)
 	}
 	p.logger.Info("virtual machines torn down", "namespace", p.dvpConf.Namespace)
