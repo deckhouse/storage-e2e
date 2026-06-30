@@ -31,6 +31,11 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/config"
 )
 
+// maxConcurrentOps caps how many resource operations (image/disk/VM create or
+// delete waits) run concurrently within a single provisioning phase, so large
+// clusters do not open an unbounded number of API calls / tunnel streams at once.
+const maxConcurrentOps = 8
+
 type Config struct {
 	Namespace    string
 	StorageClass string
@@ -172,8 +177,8 @@ func (p *Provisioner) provisionClusterVirtualImages(ctx context.Context, planned
 	images := uniqueImages(planned)
 
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentOps)
 	for name, url := range images {
-		name, url := name, url
 		g.Go(func() error {
 			cvi := buildClusterVirtualImage(name, url, managedLabels())
 			if err := createIfAbsentClusterVirtualImage(gctx, p.client, cvi); err != nil {
@@ -200,8 +205,8 @@ func (p *Provisioner) provisionClusterVirtualImages(ctx context.Context, planned
 
 func (p *Provisioner) provisionDisksAndVMs(ctx context.Context, planned []plannedVM) error {
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentOps)
 	for _, pl := range planned {
-		pl := pl
 		g.Go(func() error {
 			return p.createDiskAndVM(gctx, pl)
 		})
@@ -251,8 +256,8 @@ func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
 
 func (p *Provisioner) waitRunningAndCollectIPs(ctx context.Context, planned []plannedVM) error {
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentOps)
 	for _, pl := range planned {
-		pl := pl
 		g.Go(func() error {
 			waitCtx, cancel := context.WithTimeout(gctx, p.cfg.Timeouts.VMRunningTimeout)
 			defer cancel()
@@ -303,6 +308,7 @@ func (p *Provisioner) teardownVirtualMachines(ctx context.Context) error {
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentOps)
 	for i := range vms {
 		machine := vms[i]
 		if !isManaged(machine.ObjectMeta) {
@@ -329,6 +335,7 @@ func (p *Provisioner) teardownVirtualDisks(ctx context.Context) error {
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentOps)
 	for i := range vds {
 		vd := vds[i]
 		if !isManaged(vd.ObjectMeta) {

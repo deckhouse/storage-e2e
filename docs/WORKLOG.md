@@ -327,3 +327,4 @@ All notable changes to this repository are documented here. New entries are appe
 
 - **Bugfix** Fix golangci-lint failures in `internal/provisioning/dvp/vm`: regroup local imports (goimports) in `client.go`/`provision_test.go`, reuse `err` instead of shadowing in `createDiskAndVM` (`provision.go`), and remove the unused `seedCVI` fake helper (`fake_test.go`).
 - **Update** `pkg/clusterprovider/config.go`: restore doc comments on exported `ClusterConfig` and `NewClusterConfig` (docs-only).
+- **Refactor** `internal/provisioning/dvp/vm/provision.go`: add `maxConcurrentOps=8` and `g.SetLimit` to all five errgroups; drop redundant Go 1.22+ loop-var copies (`name, url := name, url`, `pl := pl`).
