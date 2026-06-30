@@ -16,14 +16,15 @@ limitations under the License.
 
 // Package ssh provides a self-healing SSH client whose connection strategy
 // ("how we connect" — directly or through jump hosts) is separated from the
-// operations performed over it ("what we do" — currently tunneling).
+// operations performed over it ("what we do").
 //
 // The injection point is the Dialer: Route builds one for a direct connection or
 // an arbitrary chain of jump hosts. New opens a Client over a Dialer and hides
 // every reconnect: callers invoke methods and never reason about reconnection.
 // All operations funnel through a single reconnect-aware executor (withConn) over
-// a shared connection core (conn), so future operations such as Run and Upload
-// can be added without touching the healing logic.
+// a shared connection core (conn): OpenTunnel forwards a local port and Exec runs
+// a remote command, and further operations such as Upload can be added later
+// without touching the healing logic.
 //
 // The primary use case is opening a tunnel to the API server of a closed
 // Kubernetes cluster and pointing a kubeconfig at it:

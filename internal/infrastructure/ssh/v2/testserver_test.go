@@ -40,8 +40,21 @@ type testServer struct {
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 
-	mu    sync.Mutex
-	conns []net.Conn
+	mu          sync.Mutex
+	conns       []net.Conn
+	execHandler func(cmd string) (stdout, stderr string, exitStatus uint32)
+}
+
+func (s *testServer) setExecHandler(h func(cmd string) (stdout, stderr string, exitStatus uint32)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.execHandler = h
+}
+
+func (s *testServer) handler() func(cmd string) (stdout, stderr string, exitStatus uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.execHandler
 }
 
 func newTestServer(t *testing.T) *testServer {
@@ -66,6 +79,9 @@ func newTestServer(t *testing.T) *testServer {
 	}
 
 	s := &testServer{ln: ln, cfg: cfg}
+	s.setExecHandler(func(cmd string) (string, string, uint32) {
+		return "ok:" + cmd, "", 0
+	})
 	s.wg.Add(1)
 	go s.acceptLoop()
 	t.Cleanup(s.Close)
@@ -109,11 +125,49 @@ func (s *testServer) handleConn(nConn net.Conn) {
 	}()
 
 	for newCh := range chans {
-		if newCh.ChannelType() != "direct-tcpip" {
-			_ = newCh.Reject(ssh.UnknownChannelType, "only direct-tcpip is supported")
+		switch newCh.ChannelType() {
+		case "direct-tcpip":
+			go handleDirectTCPIP(newCh)
+		case "session":
+			go s.handleSession(newCh)
+		default:
+			_ = newCh.Reject(ssh.UnknownChannelType, "unsupported channel type")
+		}
+	}
+}
+
+type execMsg struct{ Command string }
+
+func (s *testServer) handleSession(newCh ssh.NewChannel) {
+	ch, reqs, err := newCh.Accept()
+	if err != nil {
+		return
+	}
+	defer ch.Close()
+
+	for req := range reqs {
+		if req.Type != "exec" {
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
 			continue
 		}
-		go handleDirectTCPIP(newCh)
+		var m execMsg
+		if err := ssh.Unmarshal(req.Payload, &m); err != nil {
+			if req.WantReply {
+				_ = req.Reply(false, nil)
+			}
+			return
+		}
+		if req.WantReply {
+			_ = req.Reply(true, nil)
+		}
+		stdout, stderr, status := s.handler()(m.Command)
+		_, _ = io.WriteString(ch, stdout)
+		_, _ = ch.Stderr().Write([]byte(stderr))
+		statusPayload := ssh.Marshal(struct{ Status uint32 }{status})
+		_, _ = ch.SendRequest("exit-status", false, statusPayload)
+		return
 	}
 }
 
