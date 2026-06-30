@@ -65,6 +65,26 @@ storage-e2e/
 │   │           ├── options.go    # functional options
 │   │           └── tunnel.go     # Tunnel, accept loop
 │   │
+│   ├── provisioning/              # Cluster provisioning providers
+│   │   ├── commander/            # Deckhouse Commander provider
+│   │   │   ├── config.go         # provider config
+│   │   │   └── provider.go       # provider implementation
+│   │   └── dvp/                  # Deckhouse Virtualization Platform provider
+│   │       ├── bootstrap.go      # dhctl bootstrap-config rendering (param derivation + render + CIDR calc)
+│   │       ├── bootstrap.tpl     # Embedded dhctl bootstrap config template
+│   │       ├── config.go         # provider config
+│   │       ├── kubeconfig.go     # kubeconfig retrieval
+│   │       ├── provider.go       # provider implementation
+│   │       └── vm/               # VM lifecycle (create, wait, cloud-init, naming, labels)
+│   │           ├── build.go      # VM spec assembly
+│   │           ├── client.go     # virtualization API client
+│   │           ├── cloudinit.go  # cloud-init user-data rendering
+│   │           ├── create.go     # VM creation
+│   │           ├── labels.go     # VM label helpers
+│   │           ├── naming.go     # VM naming
+│   │           ├── provision.go  # provision orchestration
+│   │           └── wait.go       # readiness/deletion polling
+│   │
 │   └── logger/                    # Structured logging
 │       ├── logger.go             # Logger implementation
 │       ├── handler.go            # Custom console handler
