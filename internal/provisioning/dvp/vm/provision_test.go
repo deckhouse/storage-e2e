@@ -138,6 +138,13 @@ func TestProvisionIncludesDeclaredSetupNode(t *testing.T) {
 	if !strings.Contains(machine.Spec.Provisioning.UserData, "docker.io") {
 		t.Error("setup node cloud-init missing docker.io (Docker profile not applied)")
 	}
+	master, err := c.GetVirtualMachine(context.Background(), "ns", "master-1")
+	if err != nil {
+		t.Fatalf("get master VM: %v", err)
+	}
+	if strings.Contains(master.Spec.Provisioning.UserData, "docker.io") {
+		t.Error("master cloud-init has docker.io (Docker profile leaked onto a cluster node)")
+	}
 	if def.Setup == nil || def.Setup.IPAddress != "10.0.0.7" {
 		t.Errorf("def.Setup = %+v, want IP 10.0.0.7", def.Setup)
 	}
