@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -84,77 +85,84 @@ func testPrivateKeyPEM(t *testing.T) []byte {
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
+// recorder collects the ordered collaborator calls and the ssh keys handed to
+// the fleet factory, so every fake can share a single source of truth.
+type recorder struct {
+	calls []string
+	keys  []string
+}
+
+func (r *recorder) log(call string) { r.calls = append(r.calls, call) }
+
 // --- fakes ---
 
 type fakeConnector struct {
-	calls      *[]string
-	err        error
-	cleanupRan *bool
+	rec *recorder
+	err error
 }
 
 func (f fakeConnector) Connect(ctx context.Context) (*rest.Config, func(), error) {
-	*f.calls = append(*f.calls, "connect")
+	f.rec.log("connect")
 	if f.err != nil {
 		return nil, nil, f.err
 	}
-	return &rest.Config{}, func() { *f.cleanupRan = true; *f.calls = append(*f.calls, "cleanup") }, nil
+	return &rest.Config{}, func() { f.rec.log("cleanup") }, nil
 }
 
 type fakeKube struct {
-	calls        *[]string
+	rec          *recorder
 	reachableErr error
 	moduleErr    error
 	namespaceErr error
 }
 
 func (f fakeKube) CheckReachable(ctx context.Context, kube *rest.Config) error {
-	*f.calls = append(*f.calls, "reachable")
+	f.rec.log("reachable")
 	return f.reachableErr
 }
 
 func (f fakeKube) WaitModuleReady(ctx context.Context, kube *rest.Config, module string, timeout time.Duration) error {
-	*f.calls = append(*f.calls, "module")
+	f.rec.log("module")
 	return f.moduleErr
 }
 
 func (f fakeKube) EnsureNamespace(ctx context.Context, kube *rest.Config, ns string) error {
-	*f.calls = append(*f.calls, "namespace")
+	f.rec.log("namespace")
 	return f.namespaceErr
 }
 
 type fakeFleet struct {
-	calls        *[]string
+	rec          *recorder
 	provisionErr error
 	teardownErr  error
 }
 
 func (f fakeFleet) Provision(ctx context.Context, def *config.ClusterDefinition) error {
-	*f.calls = append(*f.calls, "provision")
+	f.rec.log("provision")
 	return f.provisionErr
 }
 
 func (f fakeFleet) Teardown(ctx context.Context) error {
-	*f.calls = append(*f.calls, "teardown")
+	f.rec.log("teardown")
 	return f.teardownErr
 }
 
 type fakeFleetFactory struct {
-	calls   *[]string
-	fleet   vmFleet
-	err     error
-	gotKeys *[]string
+	rec   *recorder
+	fleet vmFleet
+	err   error
 }
 
 func (f fakeFleetFactory) New(ctx context.Context, kube *rest.Config, sshPublicKey string) (vmFleet, error) {
-	*f.calls = append(*f.calls, "fleet.New")
-	*f.gotKeys = append(*f.gotKeys, sshPublicKey)
+	f.rec.log("fleet.New")
+	f.rec.keys = append(f.rec.keys, sshPublicKey)
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.fleet, nil
 }
 
-func newTestProvider(t *testing.T, calls *[]string, cleanupRan *bool, gotKeys *[]string, conn fakeConnector, kube fakeKube, factory fakeFleetFactory) *dvpProvider {
+func newTestProvider(t *testing.T, conn fakeConnector, kube fakeKube, factory fakeFleetFactory) *dvpProvider {
 	t.Helper()
 	cfg := &clusterprovider.ClusterConfig{ClusterBootstrapConfigPath: writeClusterConfig(t)}
 	dvpConf := &Config{Namespace: "e2e-test"}
@@ -165,133 +173,137 @@ func newTestProvider(t *testing.T, calls *[]string, cleanupRan *bool, gotKeys *[
 }
 
 func TestBootstrapHappyPath(t *testing.T) {
-	var calls []string
-	var cleanupRan bool
-	var keys []string
+	t.Parallel()
+	rec := &recorder{}
 
-	conn := fakeConnector{calls: &calls, cleanupRan: &cleanupRan}
-	kube := fakeKube{calls: &calls}
-	factory := fakeFleetFactory{calls: &calls, fleet: fakeFleet{calls: &calls}, gotKeys: &keys}
+	conn := fakeConnector{rec: rec}
+	kube := fakeKube{rec: rec}
+	factory := fakeFleetFactory{rec: rec, fleet: fakeFleet{rec: rec}}
 
-	p := newTestProvider(t, &calls, &cleanupRan, &keys, conn, kube, factory)
+	p := newTestProvider(t, conn, kube, factory)
 
 	if err := p.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap() error = %v", err)
 	}
 
 	want := []string{"connect", "reachable", "module", "namespace", "fleet.New", "provision", "cleanup"}
-	if got := join(calls); got != join(want) {
-		t.Errorf("call order = %v, want %v", calls, want)
+	if !slices.Equal(rec.calls, want) {
+		t.Errorf("call order = %v, want %v", rec.calls, want)
 	}
-	if !cleanupRan {
+	if !slices.Contains(rec.calls, "cleanup") {
 		t.Error("cleanup did not run")
 	}
-	if len(keys) != 1 || keys[0] == "" {
-		t.Errorf("fleet.New got ssh key %q, want non-empty derived key", keys)
+	if len(rec.keys) != 1 || rec.keys[0] == "" {
+		t.Errorf("fleet.New got ssh key %q, want non-empty derived key", rec.keys)
 	}
 }
 
 func TestBootstrapConnectErrorShortCircuits(t *testing.T) {
-	var calls []string
-	var cleanupRan bool
-	var keys []string
+	t.Parallel()
+	rec := &recorder{}
 
-	conn := fakeConnector{calls: &calls, cleanupRan: &cleanupRan, err: errors.New("dial fail")}
-	kube := fakeKube{calls: &calls}
-	factory := fakeFleetFactory{calls: &calls, fleet: fakeFleet{calls: &calls}, gotKeys: &keys}
+	conn := fakeConnector{rec: rec, err: errors.New("dial fail")}
+	kube := fakeKube{rec: rec}
+	factory := fakeFleetFactory{rec: rec, fleet: fakeFleet{rec: rec}}
 
-	p := newTestProvider(t, &calls, &cleanupRan, &keys, conn, kube, factory)
+	p := newTestProvider(t, conn, kube, factory)
 
 	if err := p.Bootstrap(context.Background()); err == nil {
 		t.Fatal("Bootstrap() error = nil, want connect error")
 	}
-	if join(calls) != join([]string{"connect"}) {
-		t.Errorf("calls after connect failure = %v, want [connect]", calls)
+	if !slices.Equal(rec.calls, []string{"connect"}) {
+		t.Errorf("calls after connect failure = %v, want [connect]", rec.calls)
 	}
-	if cleanupRan {
+	if slices.Contains(rec.calls, "cleanup") {
 		t.Error("cleanup ran though connect failed (no cleanup returned)")
 	}
 }
 
 func TestBootstrapModuleErrorRunsCleanup(t *testing.T) {
-	var calls []string
-	var cleanupRan bool
-	var keys []string
+	t.Parallel()
+	rec := &recorder{}
 
-	conn := fakeConnector{calls: &calls, cleanupRan: &cleanupRan}
-	kube := fakeKube{calls: &calls, moduleErr: errors.New("not ready")}
-	factory := fakeFleetFactory{calls: &calls, fleet: fakeFleet{calls: &calls}, gotKeys: &keys}
+	conn := fakeConnector{rec: rec}
+	kube := fakeKube{rec: rec, moduleErr: errors.New("not ready")}
+	factory := fakeFleetFactory{rec: rec, fleet: fakeFleet{rec: rec}}
 
-	p := newTestProvider(t, &calls, &cleanupRan, &keys, conn, kube, factory)
+	p := newTestProvider(t, conn, kube, factory)
 
 	if err := p.Bootstrap(context.Background()); err == nil {
 		t.Fatal("Bootstrap() error = nil, want module error")
 	}
-	if !cleanupRan {
+	if !slices.Contains(rec.calls, "cleanup") {
 		t.Error("cleanup did not run after module failure")
 	}
-	if contains(calls, "provision") {
+	if slices.Contains(rec.calls, "provision") {
 		t.Error("provision ran despite module failure")
 	}
 }
 
 func TestBootstrapProvisionError(t *testing.T) {
-	var calls []string
-	var cleanupRan bool
-	var keys []string
+	t.Parallel()
+	rec := &recorder{}
+	provisionErr := errors.New("boom")
 
-	conn := fakeConnector{calls: &calls, cleanupRan: &cleanupRan}
-	kube := fakeKube{calls: &calls}
-	factory := fakeFleetFactory{calls: &calls, fleet: fakeFleet{calls: &calls, provisionErr: errors.New("boom")}, gotKeys: &keys}
+	conn := fakeConnector{rec: rec}
+	kube := fakeKube{rec: rec}
+	factory := fakeFleetFactory{rec: rec, fleet: fakeFleet{rec: rec, provisionErr: provisionErr}}
 
-	p := newTestProvider(t, &calls, &cleanupRan, &keys, conn, kube, factory)
+	p := newTestProvider(t, conn, kube, factory)
 
-	if err := p.Bootstrap(context.Background()); err == nil {
+	err := p.Bootstrap(context.Background())
+	if err == nil {
 		t.Fatal("Bootstrap() error = nil, want provision error")
 	}
-	if !cleanupRan {
+	if !errors.Is(err, provisionErr) {
+		t.Errorf("Bootstrap() error = %v, want wrap of %v", err, provisionErr)
+	}
+	if !slices.Contains(rec.calls, "cleanup") {
 		t.Error("cleanup did not run after provision failure")
 	}
 }
 
 func TestRemoveTearsDownAndCleans(t *testing.T) {
-	var calls []string
-	var cleanupRan bool
-	var keys []string
+	t.Parallel()
+	rec := &recorder{}
 
-	conn := fakeConnector{calls: &calls, cleanupRan: &cleanupRan}
-	kube := fakeKube{calls: &calls}
-	factory := fakeFleetFactory{calls: &calls, fleet: fakeFleet{calls: &calls}, gotKeys: &keys}
+	conn := fakeConnector{rec: rec}
+	kube := fakeKube{rec: rec}
+	factory := fakeFleetFactory{rec: rec, fleet: fakeFleet{rec: rec}}
 
-	p := newTestProvider(t, &calls, &cleanupRan, &keys, conn, kube, factory)
+	p := newTestProvider(t, conn, kube, factory)
 
 	if err := p.Remove(context.Background()); err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}
 	want := []string{"connect", "fleet.New", "teardown", "cleanup"}
-	if join(calls) != join(want) {
-		t.Errorf("call order = %v, want %v", calls, want)
+	if !slices.Equal(rec.calls, want) {
+		t.Errorf("call order = %v, want %v", rec.calls, want)
 	}
-	if len(keys) != 1 || keys[0] != "" {
-		t.Errorf("Remove fleet.New ssh key = %q, want empty", keys)
+	if len(rec.keys) != 1 || rec.keys[0] != "" {
+		t.Errorf("Remove fleet.New ssh key = %q, want empty", rec.keys)
 	}
 }
 
-// helpers
+func TestRemoveTeardownError(t *testing.T) {
+	t.Parallel()
+	rec := &recorder{}
+	teardownErr := errors.New("stuck")
 
-func join(s []string) string {
-	out := ""
-	for _, v := range s {
-		out += v + ","
-	}
-	return out
-}
+	conn := fakeConnector{rec: rec}
+	kube := fakeKube{rec: rec}
+	factory := fakeFleetFactory{rec: rec, fleet: fakeFleet{rec: rec, teardownErr: teardownErr}}
 
-func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
+	p := newTestProvider(t, conn, kube, factory)
+
+	err := p.Remove(context.Background())
+	if err == nil {
+		t.Fatal("Remove() error = nil, want teardown error")
 	}
-	return false
+	if !errors.Is(err, teardownErr) {
+		t.Errorf("Remove() error = %v, want wrap of %v", err, teardownErr)
+	}
+	if !slices.Contains(rec.calls, "cleanup") {
+		t.Error("cleanup did not run after teardown failure")
+	}
 }

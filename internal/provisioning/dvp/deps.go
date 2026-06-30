@@ -31,6 +31,11 @@ import (
 )
 
 // baseConnector connects to the base cluster API and returns a cleanup.
+//
+// On error, implementations MUST release any partially-acquired resources
+// themselves and return a nil cleanup: callers register the cleanup with defer
+// only after checking the error, so a cleanup returned alongside an error would
+// be dropped and leak.
 type baseConnector interface {
 	Connect(ctx context.Context) (*rest.Config, func(), error)
 }

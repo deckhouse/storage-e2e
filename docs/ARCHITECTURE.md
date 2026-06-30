@@ -65,6 +65,26 @@ storage-e2e/
 │   │           ├── options.go    # functional options
 │   │           └── tunnel.go     # Tunnel, accept loop
 │   │
+│   ├── provisioning/             # Cluster provisioning strategies (Provider impls)
+│   │   ├── commander/           # Deckhouse Commander provider
+│   │   │   ├── provider.go      # Commander-backed Provider (Bootstrap/Remove)
+│   │   │   └── config.go        # Commander provider configuration
+│   │   └── dvp/                 # DVP (Deckhouse Virtualization Platform) provider
+│   │       ├── provider.go      # dvpProvider: Bootstrap/Remove orchestration
+│   │       ├── connect.go       # dvpConnector: SSH tunnel + base-cluster rest.Config
+│   │       ├── deps.go          # DI seam: baseConnector/kubeOps/fleetFactory + adapters
+│   │       ├── config.go        # Config, Credentials, env parsing/validation
+│   │       ├── kubeconfig.go    # rest.Config build + ssh public-key derivation
+│   │       └── vm/              # VM graph provisioning in the base cluster
+│   │           ├── client.go    # Virtualization client wrapper
+│   │           ├── build.go     # VM/disk/image resource builders
+│   │           ├── create.go    # Resource creation
+│   │           ├── provision.go # Provision/Teardown orchestration
+│   │           ├── wait.go      # Readiness/deletion polling
+│   │           ├── naming.go    # Resource naming
+│   │           ├── labels.go    # Resource labels
+│   │           └── cloudinit.go # cloud-init rendering
+│   │
 │   └── logger/                    # Structured logging
 │       ├── logger.go             # Logger implementation
 │       ├── handler.go            # Custom console handler
