@@ -221,11 +221,11 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 
 	p.logger.Info("provisioning virtual machines",
 		"namespace", p.dvpConf.Namespace,
-		"timeout", config.VMCreationTimeout,
 	)
-	provisionCtx, provisionCancel := context.WithTimeout(ctx, config.VMCreationTimeout)
-	defer provisionCancel()
-	if provisionErr := provisioner.Provision(provisionCtx, clusterDef); provisionErr != nil {
+	// Each provisioning phase manages its own timeout from vm.Timeouts and the
+	// phases run sequentially, so we pass the caller context through directly
+	// instead of an umbrella timeout that would truncate later phases.
+	if provisionErr := provisioner.Provision(ctx, clusterDef); provisionErr != nil {
 		return fmt.Errorf("provision virtual machines: %w", provisionErr)
 	}
 	p.logger.Info("virtual machines provisioned", "namespace", p.dvpConf.Namespace)
@@ -249,11 +249,10 @@ func (p *dvpProvider) Remove(ctx context.Context) error {
 
 	p.logger.Info("tearing down virtual machines",
 		"namespace", p.dvpConf.Namespace,
-		"timeout", config.ClusterCleanupTimeout,
 	)
-	teardownCtx, teardownCancel := context.WithTimeout(ctx, config.ClusterCleanupTimeout)
-	defer teardownCancel()
-	if err := provisioner.Teardown(teardownCtx); err != nil {
+	// Per-resource DeleteTimeout (from vm.Timeouts) governs each deletion wait,
+	// so we pass the caller context through without an umbrella timeout.
+	if err := provisioner.Teardown(ctx); err != nil {
 		return fmt.Errorf("teardown virtual machines: %w", err)
 	}
 	p.logger.Info("virtual machines torn down", "namespace", p.dvpConf.Namespace)

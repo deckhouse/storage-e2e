@@ -330,3 +330,5 @@ All notable changes to this repository are documented here. New entries are appe
 - **Refactor** `internal/provisioning/dvp/vm/provision.go`: add `maxConcurrentOps=8` and `g.SetLimit` to all five errgroups; drop redundant Go 1.22+ loop-var copies (`name, url := name, url`, `pl := pl`).
 - **Bugfix** `internal/provisioning/dvp/vm/naming.go`: make `cviNameFromImageURL` collision-resistant and DNS-1123-safe by appending `sha256(url)[:8]` to a length-capped sanitized base (<=63 chars); add `sanitizeCVIBase` and note on `uniqueImages`.
 - **Bugfix** `internal/provisioning/dvp/vm/cloudinit.go`: quote interpolated values — SSH key as a YAML double-quoted scalar and hostname single-quoted in `runcmd`.
+- **Bugfix** `internal/provisioning/dvp/provider.go`: drop the umbrella `context.WithTimeout` wraps around `Provision`/`Teardown` so each sequential phase keeps its full per-phase/per-resource timeout from `vm.Timeouts`.
+- **Bugfix** `cmd/remove-cluster/main.go`: cap teardown with a 30m caller context so bare List/Delete API calls cannot hang after the umbrella timeout was removed.
