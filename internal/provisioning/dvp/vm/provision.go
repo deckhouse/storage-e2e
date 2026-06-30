@@ -145,7 +145,7 @@ func (p *Provisioner) provisionVMClass(ctx context.Context) error {
 	}
 
 	class := buildVirtualMachineClass(name, template.Spec, managedLabels())
-	if err := ensureVirtualMachineClass(ctx, p.client, class); err != nil {
+	if err := createIfAbsentVirtualMachineClass(ctx, p.client, class); err != nil {
 		return err
 	}
 	p.log.Info("created VirtualMachineClass from template",
@@ -178,7 +178,7 @@ func (p *Provisioner) provisionClusterVirtualImages(ctx context.Context, planned
 		name, url := name, url
 		g.Go(func() error {
 			cvi := buildClusterVirtualImage(name, url, managedLabels())
-			if err := ensureClusterVirtualImage(gctx, p.client, cvi); err != nil {
+			if err := createIfAbsentClusterVirtualImage(gctx, p.client, cvi); err != nil {
 				return err
 			}
 			p.log.Info("ensured ClusterVirtualImage, waiting for Ready", "name", name)
@@ -219,7 +219,7 @@ func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureVirtualDisk(ctx, p.client, vd); err != nil {
+	if err := createIfAbsentVirtualDisk(ctx, p.client, vd); err != nil {
 		return err
 	}
 
@@ -244,7 +244,7 @@ func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureVirtualMachine(ctx, p.client, machine); err != nil {
+	if err := createIfAbsentVirtualMachine(ctx, p.client, machine); err != nil {
 		return err
 	}
 	p.log.Info("ensured VirtualDisk and VirtualMachine", "vm", pl.node.Hostname)

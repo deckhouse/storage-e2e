@@ -37,10 +37,11 @@ func ignoreAlreadyExists(err error) error {
 	return err
 }
 
-// ensureClusterVirtualImage creates the CVI if it does not exist. An existing
-// CVI (matched by name) is left untouched, which is what we want: the image is
-// cluster-scoped and may be shared by other runs.
-func ensureClusterVirtualImage(ctx context.Context, c Client, cvi *v1alpha2.ClusterVirtualImage) error {
+// createIfAbsentClusterVirtualImage creates the CVI if it does not exist. An
+// existing CVI (matched by name) is left untouched — re-running does not
+// reconcile drift. This is what we want: the image is cluster-scoped and may be
+// shared by other runs.
+func createIfAbsentClusterVirtualImage(ctx context.Context, c Client, cvi *v1alpha2.ClusterVirtualImage) error {
 	_, err := c.GetClusterVirtualImage(ctx, cvi.Name)
 	if err == nil {
 		return nil
@@ -54,7 +55,10 @@ func ensureClusterVirtualImage(ctx context.Context, c Client, cvi *v1alpha2.Clus
 	return nil
 }
 
-func ensureVirtualDisk(ctx context.Context, c Client, vd *v1alpha2.VirtualDisk) error {
+// createIfAbsentVirtualDisk creates the VirtualDisk if it does not exist. An
+// existing object (matched by name) is left untouched — re-running does not
+// reconcile drift.
+func createIfAbsentVirtualDisk(ctx context.Context, c Client, vd *v1alpha2.VirtualDisk) error {
 	_, err := c.GetVirtualDisk(ctx, vd.Namespace, vd.Name)
 	if err == nil {
 		return nil
@@ -68,8 +72,10 @@ func ensureVirtualDisk(ctx context.Context, c Client, vd *v1alpha2.VirtualDisk) 
 	return nil
 }
 
-// ensureVirtualMachine creates the VirtualMachine if it does not exist.
-func ensureVirtualMachine(ctx context.Context, c Client, machine *v1alpha2.VirtualMachine) error {
+// createIfAbsentVirtualMachine creates the VirtualMachine if it does not exist.
+// An existing object (matched by name) is left untouched — re-running does not
+// reconcile drift.
+func createIfAbsentVirtualMachine(ctx context.Context, c Client, machine *v1alpha2.VirtualMachine) error {
 	_, err := c.GetVirtualMachine(ctx, machine.Namespace, machine.Name)
 	if err == nil {
 		return nil
@@ -83,9 +89,10 @@ func ensureVirtualMachine(ctx context.Context, c Client, machine *v1alpha2.Virtu
 	return nil
 }
 
-// ensureVirtualMachineClass creates the VirtualMachineClass if it does not
-// exist.
-func ensureVirtualMachineClass(ctx context.Context, c Client, class *v1alpha3.VirtualMachineClass) error {
+// createIfAbsentVirtualMachineClass creates the VirtualMachineClass if it does
+// not exist. An existing object (matched by name) is left untouched —
+// re-running does not reconcile drift.
+func createIfAbsentVirtualMachineClass(ctx context.Context, c Client, class *v1alpha3.VirtualMachineClass) error {
 	_, err := c.GetVirtualMachineClass(ctx, class.Name)
 	if err == nil {
 		return nil

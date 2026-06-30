@@ -24,12 +24,12 @@ import (
 	"github.com/deckhouse/virtualization/api/core/v1alpha3"
 )
 
-func TestEnsureClusterVirtualImageIdempotent(t *testing.T) {
+func TestCreateIfAbsentClusterVirtualImageIdempotent(t *testing.T) {
 	c := newFakeClient()
 	cvi := buildClusterVirtualImage("ubuntu", "http://example/img.qcow2", managedLabels())
 
 	for i := 0; i < 3; i++ {
-		if err := ensureClusterVirtualImage(context.Background(), c, cvi); err != nil {
+		if err := createIfAbsentClusterVirtualImage(context.Background(), c, cvi); err != nil {
 			t.Fatalf("ensure #%d: %v", i, err)
 		}
 	}
@@ -38,7 +38,7 @@ func TestEnsureClusterVirtualImageIdempotent(t *testing.T) {
 	}
 }
 
-func TestEnsureVirtualMachineIdempotent(t *testing.T) {
+func TestCreateIfAbsentVirtualMachineIdempotent(t *testing.T) {
 	c := newFakeClient()
 	machine, err := buildVirtualMachine(vmParams{Name: "m1", Namespace: "ns", VMClassName: "generic", DiskName: "m1-system", CPU: 2, RAMGi: 4})
 	if err != nil {
@@ -46,7 +46,7 @@ func TestEnsureVirtualMachineIdempotent(t *testing.T) {
 	}
 
 	for i := 0; i < 2; i++ {
-		if err := ensureVirtualMachine(context.Background(), c, machine); err != nil {
+		if err := createIfAbsentVirtualMachine(context.Background(), c, machine); err != nil {
 			t.Fatalf("ensure #%d: %v", i, err)
 		}
 	}
