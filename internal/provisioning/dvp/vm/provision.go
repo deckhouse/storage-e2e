@@ -286,6 +286,9 @@ func (p *Provisioner) waitRunningAndCollectIPs(ctx context.Context, planned []pl
 	return g.Wait()
 }
 
+// uniqueImages maps each distinct CVI name to its source image URL. Because
+// cviNameFromImageURL appends a hash of the full URL, the name is unique per
+// URL, so distinct images can no longer collide onto the same map key.
 func uniqueImages(planned []plannedVM) map[string]string {
 	images := make(map[string]string, len(planned))
 	for _, pl := range planned {

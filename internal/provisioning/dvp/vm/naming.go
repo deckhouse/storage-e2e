@@ -16,9 +16,38 @@
 
 package vm
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
 
+const (
+	// cviNameMaxLen is the DNS-1123 label limit Kubernetes enforces on object names.
+	cviNameMaxLen = 63
+	// cviHashLen is how many hex chars of the URL hash we append for uniqueness.
+	cviHashLen = 8
+	// cviBaseMaxLen reserves room for the "-<hash8>" suffix within the 63-char limit.
+	cviBaseMaxLen = cviNameMaxLen - cviHashLen - 1
+)
+
+// cviNameFromImageURL builds a deterministic, collision-resistant, DNS-1123-safe
+// CVI name from an image URL: a sanitized basename plus the first cviHashLen hex
+// chars of sha256(imageURL). Two URLs with the same basename therefore yield
+// different names, and the result is always a valid label of length <= 63.
 func cviNameFromImageURL(imageURL string) string {
+	base := sanitizeCVIBase(imageURL)
+
+	sum := sha256.Sum256([]byte(imageURL))
+	hash8 := hex.EncodeToString(sum[:])[:cviHashLen]
+
+	return base + "-" + hash8
+}
+
+// sanitizeCVIBase reduces the image URL's basename to a DNS-1123-safe fragment
+// of at most cviBaseMaxLen chars, falling back to "image" when nothing usable
+// remains. The trailing hash suffix (hex) guarantees a valid alphanumeric end.
+func sanitizeCVIBase(imageURL string) string {
 	parts := strings.Split(imageURL, "/")
 	name := parts[len(parts)-1]
 
@@ -27,7 +56,12 @@ func cviNameFromImageURL(imageURL string) string {
 	}
 
 	name = strings.ToLower(name)
-	name = strings.NewReplacer("_", "-", ".", "-").Replace(name)
+	name = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '-'
+	}, name)
 	for strings.Contains(name, "--") {
 		name = strings.ReplaceAll(name, "--", "-")
 	}
@@ -35,11 +69,18 @@ func cviNameFromImageURL(imageURL string) string {
 	if name == "" {
 		return "image"
 	}
+
+	if len(name) > cviBaseMaxLen {
+		name = strings.TrimRight(name[:cviBaseMaxLen], "-")
+		if name == "" {
+			return "image"
+		}
+	}
 	return name
 }
 
 // systemDiskName returns the deterministic VirtualDisk name for a VM's system
-// disk.
+// disk. vmName is already a DNS-safe hostname, so no sanitization is needed here.
 func systemDiskName(vmName string) string {
 	return vmName + "-system"
 }
