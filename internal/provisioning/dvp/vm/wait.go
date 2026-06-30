@@ -18,6 +18,7 @@ package vm
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -32,8 +33,12 @@ func waitForCondition[T any](
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	var lastErr error
 	for {
 		obj, getErr := get(ctx)
+		if getErr != nil {
+			lastErr = getErr
+		}
 		done, err := cond(obj, getErr)
 		if err != nil {
 			return err
@@ -44,6 +49,12 @@ func waitForCondition[T any](
 
 		select {
 		case <-ctx.Done():
+			// The condition funcs swallow transient Get errors to keep polling,
+			// so on timeout/cancel we surface the most recent one (if any) while
+			// keeping ctx.Err() wrapped for errors.Is checks.
+			if lastErr != nil {
+				return fmt.Errorf("%w (last error: %v)", ctx.Err(), lastErr)
+			}
 			return ctx.Err()
 		case <-ticker.C:
 		}

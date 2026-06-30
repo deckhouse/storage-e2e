@@ -19,6 +19,7 @@ package vm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -83,5 +84,53 @@ func TestWaitForConditionTimeout(t *testing.T) {
 	err := waitForCondition(ctx, time.Millisecond, get, cond)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestWaitForConditionTransientGetErrorsThenSuccess(t *testing.T) {
+	transient := errors.New("transient")
+	calls := 0
+	get := func(context.Context) (int, error) {
+		calls++
+		if calls < 3 {
+			return 0, transient
+		}
+		return calls, nil
+	}
+	// cond mimics the readiness funcs: transient getErr keeps polling.
+	cond := func(_ int, getErr error) (bool, error) {
+		if getErr != nil {
+			return false, nil
+		}
+		return true, nil
+	}
+
+	if err := waitForCondition(context.Background(), time.Millisecond, get, cond); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("get called %d times, want 3 (kept polling through transient errors)", calls)
+	}
+}
+
+func TestWaitForConditionTimeoutWrapsLastError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	underlying := errors.New("api unavailable")
+	get := func(context.Context) (int, error) { return 0, underlying }
+	cond := func(_ int, getErr error) (bool, error) {
+		if getErr != nil {
+			return false, nil
+		}
+		return false, nil
+	}
+
+	err := waitForCondition(ctx, time.Millisecond, get, cond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want it to wrap context.DeadlineExceeded", err)
+	}
+	if !strings.Contains(err.Error(), "api unavailable") {
+		t.Errorf("err = %v, want it to mention the last underlying error", err)
 	}
 }

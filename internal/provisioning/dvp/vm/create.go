@@ -106,10 +106,26 @@ func createIfAbsentVirtualMachineClass(ctx context.Context, c Client, class *v1a
 	return nil
 }
 
-// clusterVirtualImageReady is the readiness condition for a CVI.
+// terminalGetErr reports whether a Get error is permanent (auth/config/request
+// errors) and should abort polling immediately rather than be retried until the
+// timeout. NotFound is intentionally excluded: during readiness waits it is a
+// transient cache-propagation race for an object we just created.
+func terminalGetErr(err error) bool {
+	return apierrors.IsForbidden(err) ||
+		apierrors.IsUnauthorized(err) ||
+		apierrors.IsBadRequest(err) ||
+		apierrors.IsInvalid(err) ||
+		apierrors.IsMethodNotSupported(err)
+}
+
+// clusterVirtualImageReady is the readiness condition for a CVI. A transient
+// Get error keeps polling; only terminal phases abort.
 func clusterVirtualImageReady(cvi *v1alpha2.ClusterVirtualImage, getErr error) (bool, error) {
 	if getErr != nil {
-		return false, fmt.Errorf("get ClusterVirtualImage: %w", getErr)
+		if terminalGetErr(getErr) {
+			return false, getErr
+		}
+		return false, nil
 	}
 	switch cvi.Status.Phase {
 	case v1alpha2.ImageReady:
@@ -122,9 +138,13 @@ func clusterVirtualImageReady(cvi *v1alpha2.ClusterVirtualImage, getErr error) (
 }
 
 // virtualMachineClassReady is the readiness condition for a VirtualMachineClass.
+// A transient Get error keeps polling; only a terminating class aborts.
 func virtualMachineClassReady(class *v1alpha3.VirtualMachineClass, getErr error) (bool, error) {
 	if getErr != nil {
-		return false, fmt.Errorf("get VirtualMachineClass: %w", getErr)
+		if terminalGetErr(getErr) {
+			return false, getErr
+		}
+		return false, nil
 	}
 	switch class.Status.Phase {
 	case v1alpha3.ClassPhaseReady:
@@ -138,10 +158,14 @@ func virtualMachineClassReady(class *v1alpha3.VirtualMachineClass, getErr error)
 
 // virtualMachineRunning reports done only when the VM is Running and has an IP
 // address: the hypervisor publishes the IP via the guest agent shortly after
-// the VM enters Running, so we keep polling until both hold.
+// the VM enters Running, so we keep polling until both hold. A transient Get
+// error keeps polling; only a degraded VM aborts.
 func virtualMachineRunning(machine *v1alpha2.VirtualMachine, getErr error) (bool, error) {
 	if getErr != nil {
-		return false, fmt.Errorf("get VirtualMachine: %w", getErr)
+		if terminalGetErr(getErr) {
+			return false, getErr
+		}
+		return false, nil
 	}
 	switch machine.Status.Phase {
 	case v1alpha2.MachineRunning:
@@ -154,13 +178,12 @@ func virtualMachineRunning(machine *v1alpha2.VirtualMachine, getErr error) (bool
 }
 
 // resourceDeleted is the condition for any get-by-name wait that should finish
-// once the object is gone. It is generic so it works for VMs, disks and images.
+// once the object is gone. NotFound means done; any other transient Get error
+// keeps polling until the object actually disappears. It is generic so it works
+// for VMs, disks and images.
 func resourceDeleted[T any](_ T, getErr error) (bool, error) {
 	if apierrors.IsNotFound(getErr) {
 		return true, nil
-	}
-	if getErr != nil {
-		return false, getErr
 	}
 	return false, nil
 }

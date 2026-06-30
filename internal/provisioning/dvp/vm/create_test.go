@@ -18,7 +18,10 @@ package vm
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 	"github.com/deckhouse/virtualization/api/core/v1alpha3"
@@ -129,5 +132,62 @@ func TestResourceDeletedCondition(t *testing.T) {
 	}
 	if done, err := resourceDeleted[*v1alpha2.VirtualMachine](&v1alpha2.VirtualMachine{}, nil); done || err != nil {
 		t.Errorf("exists: done=%v err=%v, want done=false err=nil", done, err)
+	}
+}
+
+func TestClusterVirtualImageReadyTransientError(t *testing.T) {
+	done, err := clusterVirtualImageReady(nil, errors.New("transient"))
+	if done || err != nil {
+		t.Errorf("transient getErr: done=%v err=%v, want done=false err=nil", done, err)
+	}
+}
+
+func TestVirtualMachineClassReadyTransientError(t *testing.T) {
+	done, err := virtualMachineClassReady(nil, errors.New("transient"))
+	if done || err != nil {
+		t.Errorf("transient getErr: done=%v err=%v, want done=false err=nil", done, err)
+	}
+}
+
+func TestVirtualMachineRunningTransientError(t *testing.T) {
+	done, err := virtualMachineRunning(nil, errors.New("transient"))
+	if done || err != nil {
+		t.Errorf("transient getErr: done=%v err=%v, want done=false err=nil", done, err)
+	}
+}
+
+func TestResourceDeletedTransientError(t *testing.T) {
+	done, err := resourceDeleted[*v1alpha2.VirtualMachine](nil, errors.New("transient"))
+	if done || err != nil {
+		t.Errorf("transient getErr: done=%v err=%v, want done=false err=nil (keep polling)", done, err)
+	}
+}
+
+func TestClusterVirtualImageReadyPermanentErrorFailsFast(t *testing.T) {
+	done, err := clusterVirtualImageReady(nil, apierrors.NewUnauthorized("no creds"))
+	if done || err == nil {
+		t.Errorf("permanent getErr: done=%v err=%v, want done=false err!=nil (fail fast)", done, err)
+	}
+}
+
+func TestVirtualMachineClassReadyPermanentErrorFailsFast(t *testing.T) {
+	done, err := virtualMachineClassReady(nil, apierrors.NewUnauthorized("no creds"))
+	if done || err == nil {
+		t.Errorf("permanent getErr: done=%v err=%v, want done=false err!=nil (fail fast)", done, err)
+	}
+}
+
+func TestVirtualMachineRunningPermanentErrorFailsFast(t *testing.T) {
+	done, err := virtualMachineRunning(nil, apierrors.NewUnauthorized("no creds"))
+	if done || err == nil {
+		t.Errorf("permanent getErr: done=%v err=%v, want done=false err!=nil (fail fast)", done, err)
+	}
+}
+
+func TestClusterVirtualImageReadyNotFoundKeepsPolling(t *testing.T) {
+	// NotFound during readiness is transient (object just created) — keep polling.
+	done, err := clusterVirtualImageReady(nil, notFound("clustervirtualimages", "x"))
+	if done || err != nil {
+		t.Errorf("NotFound during readiness: done=%v err=%v, want done=false err=nil", done, err)
 	}
 }
