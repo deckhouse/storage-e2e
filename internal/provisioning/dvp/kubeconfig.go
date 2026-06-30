@@ -17,10 +17,13 @@ limitations under the License.
 package dvp
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -46,6 +49,37 @@ func buildRestConfig(kubeconfig []byte, localAddr string) (*rest.Config, error) 
 
 	configureTunnelTimeouts(restConfig)
 	return restConfig, nil
+}
+
+func publicKeyFromPrivateKey(privateKeyPEM []byte, passphrase string) (string, error) {
+	signer, err := parsePrivateKeySigner(privateKeyPEM, passphrase)
+	if err != nil {
+		return "", err
+	}
+	authorized := ssh.MarshalAuthorizedKey(signer.PublicKey())
+	key := strings.TrimSpace(string(authorized))
+	if key == "" {
+		return "", fmt.Errorf("derived SSH public key is empty")
+	}
+	return key, nil
+}
+
+func parsePrivateKeySigner(raw []byte, passphrase string) (ssh.Signer, error) {
+	signer, err := ssh.ParsePrivateKey(raw)
+	if err == nil {
+		return signer, nil
+	}
+	if _, ok := errors.AsType[*ssh.PassphraseMissingError](err); !ok {
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+	if passphrase == "" {
+		return nil, fmt.Errorf("private key is passphrase-protected but no passphrase was provided")
+	}
+	signer, err = ssh.ParsePrivateKeyWithPassphrase(raw, []byte(passphrase))
+	if err != nil {
+		return nil, fmt.Errorf("decrypt private key with passphrase: %w", err)
+	}
+	return signer, nil
 }
 
 func configureTunnelTimeouts(cfg *rest.Config) {

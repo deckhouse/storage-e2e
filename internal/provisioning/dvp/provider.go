@@ -25,11 +25,17 @@ import (
 
 	"github.com/caarlos0/env/v11"
 
+	"k8s.io/client-go/rest"
+
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
+	"github.com/deckhouse/storage-e2e/internal/provisioning/dvp/vm"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
+
+const vmProvisionPollInterval = 5 * time.Second
 
 type dvpProvider struct {
 	cfg     *clusterprovider.ClusterConfig
@@ -93,6 +99,71 @@ func (p *dvpProvider) buildSSHClient(ctx context.Context) (*ssh.Client, error) {
 	return sshClient, nil
 }
 
+func (p *dvpProvider) connect(ctx context.Context) (*rest.Config, func(), error) {
+	kubeconfigSource := "path"
+	if p.dvpConf.KubeConfigContent != "" {
+		kubeconfigSource = "inline"
+	}
+	p.logger.Info("connecting to DVP base cluster",
+		"host", p.dvpConf.SSHHost,
+		"jumpHost", p.dvpConf.SSHJumpHost,
+		"kubeconfigSource", kubeconfigSource,
+	)
+
+	var cleanups []func()
+	runCleanups := func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
+		}
+	}
+
+	sshClient, sshNewErr := p.buildSSHClient(ctx)
+	if sshNewErr != nil {
+		return nil, nil, fmt.Errorf("creating ssh client: %w", sshNewErr)
+	}
+	cleanups = append(cleanups, func() {
+		if err := sshClient.Close(); err != nil {
+			p.logger.Warn("failed to close ssh client", "err", err)
+		}
+	})
+
+	tun, tunErr := sshClient.OpenTunnel(ctx, apiServerRemotePort)
+	if tunErr != nil {
+		runCleanups()
+		return nil, nil, fmt.Errorf("creating tunnel: %w", tunErr)
+	}
+	cleanups = append(cleanups, func() {
+		if err := tun.Close(); err != nil {
+			p.logger.Warn("failed to close tunnel", "err", err)
+		}
+	})
+
+	restConfig, buildRestConfErr := buildRestConfig(p.creds.Kubeconfig, tun.LocalAddr())
+	if buildRestConfErr != nil {
+		runCleanups()
+		return nil, nil, fmt.Errorf("creating rest config: %w", buildRestConfErr)
+	}
+
+	return restConfig, runCleanups, nil
+}
+
+func (p *dvpProvider) provisionerConfig(sshPublicKey string) vm.Config {
+	return vm.Config{
+		Namespace:          p.dvpConf.Namespace,
+		StorageClass:       p.dvpConf.StorageClass,
+		SSHPublicKey:       sshPublicKey,
+		VMClassName:        p.dvpConf.VMClassName,
+		DefaultVMClassName: p.dvpConf.DefaultVMClassName,
+		Timeouts: vm.Timeouts{
+			PollInterval:                    vmProvisionPollInterval,
+			ClusterVirtualImageReadyTimeout: config.ClusterVirtualImageReadinessTimeout,
+			VMClassReadyTimeout:             config.VirtualMachineClassReadinessTimeout,
+			VMRunningTimeout:                config.VMsRunningTimeout,
+			DeleteTimeout:                   config.ClusterCleanupTimeout,
+		},
+	}
+}
+
 func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	clusterDef, err := config.LoadClusterDefinition(p.cfg.ClusterBootstrapConfigPath)
 	if err != nil {
@@ -105,42 +176,16 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		"workers", len(clusterDef.Workers),
 	)
 
-	kubeconfigSource := "path"
-	if p.dvpConf.KubeConfigContent != "" {
-		kubeconfigSource = "inline"
+	sshPublicKey, pubKeyErr := publicKeyFromPrivateKey(p.creds.SSHKey, p.dvpConf.SSHPassphrase)
+	if pubKeyErr != nil {
+		return fmt.Errorf("derive ssh public key: %w", pubKeyErr)
 	}
-	p.logger.Info("connecting to DVP base cluster",
-		"host", p.dvpConf.SSHHost,
-		"jumpHost", p.dvpConf.SSHJumpHost,
-		"kubeconfigSource", kubeconfigSource,
-	)
 
-	sshClient, sshNewErr := p.buildSSHClient(ctx)
-	if sshNewErr != nil {
-		return fmt.Errorf("creating ssh client: %w", sshNewErr)
+	kubeconfig, cleanup, connErr := p.connect(ctx)
+	if connErr != nil {
+		return connErr
 	}
-	defer func() {
-		sshClientCloseErr := sshClient.Close()
-		if sshClientCloseErr != nil {
-			p.logger.Warn("failed to close ssh client", "err", sshClientCloseErr)
-		}
-	}()
-
-	tun, tunErr := sshClient.OpenTunnel(ctx, apiServerRemotePort)
-	if tunErr != nil {
-		return fmt.Errorf("creating tunnel: %w", tunErr)
-	}
-	defer func() {
-		tunCloseErr := tun.Close()
-		if tunCloseErr != nil {
-			p.logger.Warn("failed to close tunnel", "err", tunCloseErr)
-		}
-	}()
-
-	kubeconfig, buildRestConfErr := buildRestConfig(p.creds.Kubeconfig, tun.LocalAddr())
-	if buildRestConfErr != nil {
-		return fmt.Errorf("creating rest config: %w", buildRestConfErr)
-	}
+	defer cleanup()
 
 	p.logger.Info("verifying connectivity to DVP base cluster API server")
 	if _, err := kubernetes.NewClientsetWithRetry(ctx, kubeconfig); err != nil {
@@ -167,9 +212,47 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	}
 	p.logger.Info("test namespace is ready", "namespace", p.dvpConf.Namespace)
 
+	virtClient, virtClientErr := virtualization.NewClient(ctx, kubeconfig)
+	if virtClientErr != nil {
+		return fmt.Errorf("create virtualization client: %w", virtClientErr)
+	}
+
+	provisioner := vm.NewProvisioner(vm.NewClient(virtClient), p.logger, p.provisionerConfig(sshPublicKey))
+
+	p.logger.Info("provisioning virtual machines",
+		"namespace", p.dvpConf.Namespace,
+	)
+	if provisionErr := provisioner.Provision(ctx, clusterDef); provisionErr != nil {
+		return fmt.Errorf("provision virtual machines: %w", provisionErr)
+	}
+	p.logger.Info("virtual machines provisioned", "namespace", p.dvpConf.Namespace)
+
 	return nil
 }
 
 func (p *dvpProvider) Remove(ctx context.Context) error {
+	kubeconfig, cleanup, connErr := p.connect(ctx)
+	if connErr != nil {
+		return connErr
+	}
+	defer cleanup()
+
+	virtClient, virtClientErr := virtualization.NewClient(ctx, kubeconfig)
+	if virtClientErr != nil {
+		return fmt.Errorf("create virtualization client: %w", virtClientErr)
+	}
+
+	provisioner := vm.NewProvisioner(vm.NewClient(virtClient), p.logger, p.provisionerConfig(""))
+
+	p.logger.Info("tearing down virtual machines",
+		"namespace", p.dvpConf.Namespace,
+	)
+	// Per-resource DeleteTimeout (from vm.Timeouts) governs each deletion wait,
+	// so we pass the caller context through without an umbrella timeout.
+	if err := provisioner.Teardown(ctx); err != nil {
+		return fmt.Errorf("teardown virtual machines: %w", err)
+	}
+	p.logger.Info("virtual machines torn down", "namespace", p.dvpConf.Namespace)
+
 	return nil
 }

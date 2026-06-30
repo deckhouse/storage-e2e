@@ -301,3 +301,35 @@ All notable changes to this repository are documented here. New entries are appe
 - **Add** `internal/provisioning/dvp/provider.go`: explicit API-server connectivity check in `Bootstrap`
   (calls `kubernetes.NewClientsetWithRetry` right after `buildRestConfig`) so a dead SSH tunnel / bad
   kubeconfig fails fast with a clear error instead of timing out inside `WaitForModuleReady`.
+- **Add** `internal/provisioning/dvp/vm/` package: VM provisioning resource graph
+  `ClusterVirtualImage → VirtualDisk → VirtualMachine (+ VirtualMachineClass)` with idempotent ensure, cloud-init
+  generation, readiness/deletion waits, and label-based idempotent teardown.
+- **Add** `internal/provisioning/dvp/vm/provision.go`: `Config.SetupVMNameSuffix` applied to the
+  `config.DefaultSetupVM` hostname so the bootstrap node gets a unique name per run.
+- **Update** `internal/provisioning/dvp/{provider.go,config.go,kubeconfig.go}`: wire the VM provisioner into
+  `Bootstrap` and `Teardown` into `Remove` via a shared `connect` helper (built on the merged `Credentials` /
+  free-function `buildRestConfig`); add `readSSHPublicKey` (reads `<SSHKeyPath>.pub` for cloud-init) and a random
+  setup-VM name suffix; add `StorageClass`, `VMClassName`, `DefaultVMClassName` env-configurable fields to the DVP
+  `Config` (`E2E_DVP_BASE_CLUSTER_STORAGE_CLASS` / `_VM_CLASS` / `_DEFAULT_VM_CLASS`).
+- **Merge** reconcile `origin/main` (ssh/v2 `KeyData`, DVP `Credentials`/`LoadConfig` config refactor, Commander
+  provider) with the DVP VM-provisioning branch: rewrote `connect`/`Bootstrap`/`Remove` to use the merged
+  credentials-based `buildRestConfig`, dropped the duplicate `expandUserPath` (kept in `config.go`).
+- **Bugfix** `internal/provisioning/dvp/{kubeconfig.go,provider.go}`: derive the cloud-init SSH public key from the resolved private key (`publicKeyFromPrivateKey`) instead of reading a `<path>.pub` file, fixing bootstrap failure when keys are passed inline (`E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY`). Removed `readSSHPublicKey`.
+- **Refactor** `internal/provisioning/dvp/vm/labels.go`: drop the per-run label; isolation is one run per namespace. `managedLabels()` (no arg) + `isManaged(meta)` replace the `run`-parameterized versions; removed `Config.RunLabel` and the `provisionerConfig` wiring.
+- **Update** `internal/provisioning/dvp/vm/cloudinit.go`: remove committed password hash and password auth (`ssh_pwauth: false`, SSH-key-only); add role-based profiles via `withStorageTools`/`withDocker`; restore storage tooling (`stress-ng`, `yq`, `rsync`, `fio`) + kubectl aliases for cluster nodes; remove stale hostname TODO. Wired flags from node `Role` in `provision.go`.
+- **Rename** `internal/provisioning/dvp/vm/ensure.go` → `create.go`; `ensureX` helpers → `createIfAbsentX` (create-only semantics unchanged) so the names no longer imply reconcile.
+- **Update** `internal/provisioning/dvp/vm/{provision.go,client.go}`: keep ClusterVirtualImages on `Teardown` (cache) — removed CVI teardown + cluster-wide ref-counting and trimmed `Delete/ListClusterVirtualImage` from the `Client` interface/adapter. Grouped Config timeouts into a `Timeouts` sub-struct.
+- **Refactor** `internal/provisioning/dvp/provider.go`: `connect` uses a cleanup-stack so partial failures cannot leak the ssh client/tunnel.
+- **Refactor** `internal/provisioning/dvp/vm/provision.go`: declarative `plan` (masters/workers/`def.Setup` if non-nil, no implicit `DefaultSetupVM`); `Provision` returns `error` and no longer mutates `def` beyond filling node IPs. Removed `Config.SetupVMNameSuffix`.
+- **Refactor** `internal/provisioning/dvp/provider.go`: drop `randomSuffix`/setup-suffix from the bootstrap path; `provisionerConfig(sshPublicKey)` no longer threads a setup suffix; `Provision` result is no longer consumed.
+
+## 2026-06-30
+
+- **Bugfix** Fix golangci-lint failures in `internal/provisioning/dvp/vm`: regroup local imports (goimports) in `client.go`/`provision_test.go`, reuse `err` instead of shadowing in `createDiskAndVM` (`provision.go`), and remove the unused `seedCVI` fake helper (`fake_test.go`).
+- **Update** `pkg/clusterprovider/config.go`: restore doc comments on exported `ClusterConfig` and `NewClusterConfig` (docs-only).
+- **Refactor** `internal/provisioning/dvp/vm/provision.go`: add `maxConcurrentOps=8` and `g.SetLimit` to all five errgroups; drop redundant Go 1.22+ loop-var copies (`name, url := name, url`, `pl := pl`).
+- **Bugfix** `internal/provisioning/dvp/vm/naming.go`: make `cviNameFromImageURL` collision-resistant and DNS-1123-safe by appending `sha256(url)[:8]` to a length-capped sanitized base (<=63 chars); add `sanitizeCVIBase` and note on `uniqueImages`.
+- **Bugfix** `internal/provisioning/dvp/vm/cloudinit.go`: quote interpolated values — SSH key as a YAML double-quoted scalar and hostname single-quoted in `runcmd`.
+- **Bugfix** `internal/provisioning/dvp/provider.go`: drop the umbrella `context.WithTimeout` wraps around `Provision`/`Teardown` so each sequential phase keeps its full per-phase/per-resource timeout from `vm.Timeouts`.
+- **Bugfix** `cmd/remove-cluster/main.go`: cap teardown with a 30m caller context so bare List/Delete API calls cannot hang after the umbrella timeout was removed.
+- **Bugfix** `internal/provisioning/dvp/vm/{create.go,wait.go}`: tolerate transient Get errors during polling — readiness/deletion conditions keep polling on non-terminal Get errors (and fail fast on permanent API errors (Forbidden/Unauthorized/BadRequest/Invalid) instead of polling until timeout), and `waitForCondition` wraps the last underlying error into the timeout/cancel error (`%w` on `ctx.Err()`).

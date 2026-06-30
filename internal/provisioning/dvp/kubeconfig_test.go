@@ -17,11 +17,16 @@ limitations under the License.
 package dvp
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"k8s.io/client-go/rest"
 )
 
@@ -92,5 +97,57 @@ func TestConfigureTunnelTimeouts(t *testing.T) {
 	}
 	if transport.IdleConnTimeout != 90*time.Second {
 		t.Errorf("IdleConnTimeout = %v, want 90s", transport.IdleConnTimeout)
+	}
+}
+
+func TestPublicKeyFromPrivateKeyInline(t *testing.T) {
+	t.Parallel()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	pemBytes := pem.EncodeToMemory(block)
+
+	got, err := publicKeyFromPrivateKey(pemBytes, "")
+	if err != nil {
+		t.Fatalf("publicKeyFromPrivateKey() = %v, want nil", err)
+	}
+
+	signer, err := ssh.ParsePrivateKey(pemBytes)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
+	if got != want {
+		t.Errorf("public key = %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(got, "ssh-ed25519 ") {
+		t.Errorf("public key = %q, want ssh-ed25519 prefix", got)
+	}
+}
+
+func TestPublicKeyFromPrivateKeyEncryptedWithPassphrase(t *testing.T) {
+	t.Parallel()
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	block, err := ssh.MarshalPrivateKeyWithPassphrase(priv, "", []byte("s3cret"))
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	pemBytes := pem.EncodeToMemory(block)
+
+	if _, err := publicKeyFromPrivateKey(pemBytes, "s3cret"); err != nil {
+		t.Errorf("with correct passphrase: %v, want nil", err)
+	}
+	if _, err := publicKeyFromPrivateKey(pemBytes, ""); err == nil {
+		t.Error("missing passphrase: err = nil, want error")
 	}
 }
