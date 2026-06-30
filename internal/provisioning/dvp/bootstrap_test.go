@@ -1,0 +1,62 @@
+/*
+Copyright 2026 Flant JSC
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package dvp
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestRenderBootstrapConfig(t *testing.T) {
+	t.Parallel()
+
+	p := bootstrapParams{
+		PodSubnetCIDR:        "10.112.0.0/16",
+		ServiceSubnetCIDR:    "10.225.0.0/16",
+		KubernetesVersion:    "Automatic",
+		ClusterDomain:        "cluster.local",
+		ImagesRepo:           "dev-registry.deckhouse.io/sys/deckhouse-oss",
+		RegistryDockerCfg:    "eyJhdXRocyI6e30=",
+		PublicDomainTemplate: "%s.10.10.1.5.sslip.io",
+		InternalNetworkCIDR:  "10.10.1.0/24",
+		DevBranch:            "main",
+	}
+
+	out, err := renderBootstrapConfig(p)
+	if err != nil {
+		t.Fatalf("renderBootstrapConfig() error = %v", err)
+	}
+	s := string(out)
+
+	for _, want := range []string{
+		"podSubnetCIDR: 10.112.0.0/16",
+		"serviceSubnetCIDR: 10.225.0.0/16",
+		`kubernetesVersion: "Automatic"`,
+		`clusterDomain: "cluster.local"`,
+		"imagesRepo: dev-registry.deckhouse.io/sys/deckhouse-oss",
+		"registryDockerCfg: eyJhdXRocyI6e30=",
+		"devBranch: main",
+		`publicDomainTemplate: "%s.10.10.1.5.sslip.io"`,
+		"- 10.10.1.0/24",
+		"kind: ClusterConfiguration",
+		"kind: StaticClusterConfiguration",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("rendered config missing %q\n---\n%s", want, s)
+		}
+	}
+}
