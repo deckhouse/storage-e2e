@@ -33,28 +33,37 @@ type ExecResult struct {
 
 func (c *Client) Exec(ctx context.Context, cmd string) (ExecResult, error) {
 	var res ExecResult
-	_, err := withConn(ctx, c.conn, c.retries, func(ctx context.Context, client *ssh.Client) (struct{}, error) {
-		session, err := client.NewSession()
+
+	// Only opening the session is retried through withConn: a transient failure
+	// here means no command has run yet, so healing and reopening is safe. The
+	// command itself runs exactly once outside the healing loop — a mid-flight
+	// drop surfaces the error instead of re-running the command and producing
+	// duplicate side effects.
+	session, err := withConn(ctx, c.conn, c.retries, func(_ context.Context, client *ssh.Client) (*ssh.Session, error) {
+		s, err := client.NewSession()
 		if err != nil {
-			return struct{}{}, fmt.Errorf("open ssh session: %w", err)
+			return nil, fmt.Errorf("open ssh session: %w", err)
 		}
-		defer session.Close()
-
-		var stdout, stderr bytes.Buffer
-		session.Stdout = &stdout
-		session.Stderr = &stderr
-
-		runErr := runWithContext(ctx, session, cmd)
-		res.Stdout = stdout.Bytes()
-		res.Stderr = stderr.Bytes()
-
-		var exitErr *ssh.ExitError
-		if errors.As(runErr, &exitErr) {
-			res.ExitCode = exitErr.ExitStatus()
-		}
-		return struct{}{}, runErr
+		return s, nil
 	})
-	return res, err
+	if err != nil {
+		return res, err
+	}
+	defer session.Close()
+
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+
+	runErr := runWithContext(ctx, session, cmd)
+	res.Stdout = stdout.Bytes()
+	res.Stderr = stderr.Bytes()
+
+	var exitErr *ssh.ExitError
+	if errors.As(runErr, &exitErr) {
+		res.ExitCode = exitErr.ExitStatus()
+	}
+	return res, runErr
 }
 
 func runWithContext(ctx context.Context, session *ssh.Session, cmd string) error {

@@ -37,9 +37,9 @@ func newTestClientWithRetries(t *testing.T, d Dialer, retries int) *Client {
 
 func TestExecReturnsStdoutAndStderr(t *testing.T) {
 	srv := newTestServer(t)
-	srv.execHandler = func(cmd string) (string, string, uint32) {
+	srv.setExecHandler(func(cmd string) (string, string, uint32) {
 		return "out:" + cmd, "err-stream", 0
-	}
+	})
 
 	c := newTestClientWithRetries(t, &serverDialer{addr: srv.addr()}, 0)
 
@@ -60,9 +60,9 @@ func TestExecReturnsStdoutAndStderr(t *testing.T) {
 
 func TestExecNonZeroExitReturnsErrorWithOutput(t *testing.T) {
 	srv := newTestServer(t)
-	srv.execHandler = func(cmd string) (string, string, uint32) {
+	srv.setExecHandler(func(cmd string) (string, string, uint32) {
 		return "boom-output", "", 7
-	}
+	})
 
 	c := newTestClientWithRetries(t, &serverDialer{addr: srv.addr()}, 0)
 
@@ -129,11 +129,11 @@ func TestExecCancelDuringRun(t *testing.T) {
 	t.Cleanup(func() { close(release) })
 	started := make(chan struct{})
 	var once sync.Once
-	srv.execHandler = func(cmd string) (string, string, uint32) {
+	srv.setExecHandler(func(cmd string) (string, string, uint32) {
 		once.Do(func() { close(started) })
 		<-release
 		return "", "", 0
-	}
+	})
 
 	c := newTestClientWithRetries(t, &serverDialer{addr: srv.addr()}, 0)
 

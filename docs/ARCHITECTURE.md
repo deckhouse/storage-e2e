@@ -514,8 +514,8 @@ infrastructure/ssh/
 
 A ground-up rewrite that lives in parallel with the legacy package (no consumers
 migrated yet). It separates **how we connect** (directly or via jump hosts) from
-**what we do over the connection** (currently only tunneling), and hides every
-reconnect from callers.
+**what we do over the connection** (tunneling and remote command execution), and
+hides every reconnect from callers.
 
 **Design**:
 
@@ -538,7 +538,14 @@ reconnect from callers.
   shared flight, yet `Close` aborts an in-flight reconnect immediately.
 - A single generic executor `withConn[T]` runs an operation against the live
   client and heals on transient failures (bounded by `WithRetries`); the tunnel
-  uses it today and `Run`/`Upload` are designed to reuse it unchanged.
+  and `Exec` use it today and `Upload` is designed to reuse it unchanged.
+- `Exec` (`exec.go`) follows the only-open-retry contract: just the
+  `client.NewSession()` step runs through `withConn`, so a transient open failure
+  heals and reopens before any command has run. The command itself (`Start` +
+  `Wait`, in `runWithContext`) then runs **exactly once** outside the healing
+  loop — a mid-flight drop surfaces the error instead of re-running the command,
+  to avoid duplicate side effects. Context cancellation signals `SIGKILL`, closes
+  the session, and returns `ctx.Err()`.
 - Optional keepalive (`WithKeepalive`) probes the link and heals through the same
   `refresh` path; every heal is logged at WARN. The probe reply timeout is
   independent of the probe interval (`WithKeepaliveTimeout`, default
@@ -546,18 +553,19 @@ reconnect from callers.
 
 **Public API v1**: `New(ctx, Dialer, ...Option)`, `Client.Tunnel(ctx, remotePort)`
 (self-healing local forward on a free `127.0.0.1` port; `Tunnel.LocalAddr`,
-`Tunnel.Close`), `Client.Close`. Options: `WithKeepalive`, `WithKeepaliveTimeout`,
+`Tunnel.Close`), `Client.Exec(ctx, cmd)` (returns `ExecResult{Stdout, Stderr,
+ExitCode}`; `ExitCode` is meaningful only when `err` is nil or a non-zero command
+exit — on transport/cancel errors it stays `0` and the caller must inspect `err`),
+`Client.Close`. Options: `WithKeepalive`, `WithKeepaliveTimeout`,
 `WithRetries`, `WithLogger`, `WithHostKeyCallback`, `WithInsecureIgnoreHostKey`
 (host key defaults to `InsecureIgnoreHostKey` — a conscious default for ephemeral
 e2e VMs; `New` logs a WARN whenever this insecure default is active). The host key
 default is injected only into `Route`-built dialers; a custom `Dialer` handles its
 own host key verification.
 
-**Extension points (designed, not yet implemented)**: `Run` (transparent retry
-only when the session fails to open; mid-flight drops heal but surface the error
-to avoid double side effects; opt-in `Idempotent` for true retry) and `Upload`.
-Transient-error classification uses `errors.Is`/`errors.As` against standard
-types — never error-string matching.
+**Extension points (designed, not yet implemented)**: `Upload`. Transient-error
+classification uses `errors.Is`/`errors.As` against standard types — never
+error-string matching.
 
 ### 3.5 Logger Module (`internal/logger/`)
 

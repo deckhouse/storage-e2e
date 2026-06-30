@@ -40,10 +40,21 @@ type testServer struct {
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 
+	mu          sync.Mutex
+	conns       []net.Conn
 	execHandler func(cmd string) (stdout, stderr string, exitStatus uint32)
+}
 
-	mu    sync.Mutex
-	conns []net.Conn
+func (s *testServer) setExecHandler(h func(cmd string) (stdout, stderr string, exitStatus uint32)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.execHandler = h
+}
+
+func (s *testServer) handler() func(cmd string) (stdout, stderr string, exitStatus uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.execHandler
 }
 
 func newTestServer(t *testing.T) *testServer {
@@ -68,9 +79,9 @@ func newTestServer(t *testing.T) *testServer {
 	}
 
 	s := &testServer{ln: ln, cfg: cfg}
-	s.execHandler = func(cmd string) (string, string, uint32) {
+	s.setExecHandler(func(cmd string) (string, string, uint32) {
 		return "ok:" + cmd, "", 0
-	}
+	})
 	s.wg.Add(1)
 	go s.acceptLoop()
 	t.Cleanup(s.Close)
@@ -151,7 +162,7 @@ func (s *testServer) handleSession(newCh ssh.NewChannel) {
 		if req.WantReply {
 			_ = req.Reply(true, nil)
 		}
-		stdout, stderr, status := s.execHandler(m.Command)
+		stdout, stderr, status := s.handler()(m.Command)
 		_, _ = io.WriteString(ch, stdout)
 		_, _ = ch.Stderr().Write([]byte(stderr))
 		statusPayload := ssh.Marshal(struct{ Status uint32 }{status})
