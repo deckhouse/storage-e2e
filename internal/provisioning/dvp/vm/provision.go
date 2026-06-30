@@ -104,6 +104,12 @@ func (p *Provisioner) Provision(ctx context.Context, def *config.ClusterDefiniti
 		return fmt.Errorf("no VM nodes to provision")
 	}
 
+	storageClass := p.cfg.StorageClass
+	if storageClass == "" {
+		storageClass = "<cluster default>"
+	}
+	p.log.Info("provisioning VMs", "count", len(planned), "storageClass", storageClass)
+
 	if err := p.provisionVMClass(ctx); err != nil {
 		return err
 	}
@@ -222,8 +228,8 @@ func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
 	if err != nil {
 		return err
 	}
-	if err = createIfAbsentVirtualDisk(ctx, p.client, vd); err != nil {
-		return err
+	if createErr := createIfAbsentVirtualDisk(ctx, p.client, vd); createErr != nil {
+		return createErr
 	}
 
 	cloudInit := buildCloudInit(cloudInitOptions{
@@ -247,8 +253,8 @@ func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
 	if err != nil {
 		return err
 	}
-	if err := createIfAbsentVirtualMachine(ctx, p.client, machine); err != nil {
-		return err
+	if createErr := createIfAbsentVirtualMachine(ctx, p.client, machine); createErr != nil {
+		return createErr
 	}
 	p.log.Info("ensured VirtualDisk and VirtualMachine", "vm", pl.node.Hostname)
 	return nil

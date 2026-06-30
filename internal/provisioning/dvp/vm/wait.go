@@ -50,7 +50,7 @@ func waitForCondition[T any](
 		select {
 		case <-ctx.Done():
 			if lastErr != nil {
-				return fmt.Errorf("%w (last error: %v)", ctx.Err(), lastErr)
+				return fmt.Errorf("%w (last error: %w)", ctx.Err(), lastErr)
 			}
 			return ctx.Err()
 		case <-ticker.C:

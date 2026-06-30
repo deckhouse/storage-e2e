@@ -100,7 +100,7 @@ func TestWaitForConditionTransientGetErrorsThenSuccess(t *testing.T) {
 	// cond mimics the readiness funcs: transient getErr keeps polling.
 	cond := func(_ int, getErr error) (bool, error) {
 		if getErr != nil {
-			return false, nil
+			return false, nil //nolint:nilerr // transient Get error: keep polling
 		}
 		return true, nil
 	}
@@ -119,12 +119,9 @@ func TestWaitForConditionTimeoutWrapsLastError(t *testing.T) {
 
 	underlying := errors.New("api unavailable")
 	get := func(context.Context) (int, error) { return 0, underlying }
-	cond := func(_ int, getErr error) (bool, error) {
-		if getErr != nil {
-			return false, nil
-		}
-		return false, nil
-	}
+	// Never completes: every poll keeps waiting, so the context eventually
+	// times out and waitForCondition must surface the last underlying error.
+	cond := func(int, error) (bool, error) { return false, nil }
 
 	err := waitForCondition(ctx, time.Millisecond, get, cond)
 	if !errors.Is(err, context.DeadlineExceeded) {
