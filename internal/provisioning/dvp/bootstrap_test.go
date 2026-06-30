@@ -145,3 +145,86 @@ func TestBuildBootstrapParamsNoIPs(t *testing.T) {
 		t.Error("buildBootstrapParams() err = nil, want error when no IPs filled")
 	}
 }
+
+// withRequiredDKP fills the required DKP fields so Task 1 validation passes.
+func withRequiredDKP(def *config.ClusterDefinition) *config.ClusterDefinition {
+	def.DKPParameters.PodSubnetCIDR = "10.112.0.0/16"
+	def.DKPParameters.ServiceSubnetCIDR = "10.225.0.0/16"
+	def.DKPParameters.KubernetesVersion = "Automatic"
+	def.DKPParameters.ClusterDomain = "cluster.local"
+	def.DKPParameters.RegistryRepo = "dev-registry.deckhouse.io/sys/deckhouse-oss"
+	return def
+}
+
+func TestBuildBootstrapParamsCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		def      *config.ClusterDefinition
+		wantErr  bool
+		wantCIDR string
+	}{
+		{
+			name: "setup node widens CIDR",
+			def: withRequiredDKP(&config.ClusterDefinition{
+				Masters: []config.ClusterNode{
+					{Hostname: "m1", HostType: config.HostTypeVM, IPAddress: "10.10.1.5"},
+				},
+				Setup: &config.ClusterNode{Hostname: "s1", HostType: config.HostTypeVM, IPAddress: "10.10.2.5"},
+			}),
+			// 10.10.1.5 and 10.10.2.5: /24 and /23 (10.10.0.0-10.10.1.255) don't
+			// contain both; /22 (10.10.0.0-10.10.3.255) does → 10.10.0.0/22.
+			wantCIDR: "10.10.0.0/22",
+		},
+		{
+			name: "workers only, no master IP",
+			def: withRequiredDKP(&config.ClusterDefinition{
+				Masters: []config.ClusterNode{
+					{Hostname: "m1", HostType: config.HostTypeVM}, // no IP
+				},
+				Workers: []config.ClusterNode{
+					{Hostname: "w1", HostType: config.HostTypeVM, IPAddress: "10.10.1.6"},
+				},
+			}),
+			wantErr: true,
+		},
+		{
+			name:    "nil def",
+			def:     nil,
+			wantErr: true,
+		},
+		{
+			name: "bare-metal node excluded from CIDR",
+			def: withRequiredDKP(&config.ClusterDefinition{
+				Masters: []config.ClusterNode{
+					{Hostname: "m1", HostType: config.HostTypeVM, IPAddress: "10.10.1.5"},
+				},
+				Workers: []config.ClusterNode{
+					{Hostname: "bm1", HostType: config.HostTypeBareMetal, IPAddress: "10.10.99.99"},
+				},
+			}),
+			// Bare-metal IP must not widen the CIDR; only the master VM counts.
+			wantCIDR: "10.10.1.0/24",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := buildBootstrapParams(tt.def, "DOCKERCFG")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("buildBootstrapParams() err = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildBootstrapParams() error = %v", err)
+			}
+			if p.InternalNetworkCIDR != tt.wantCIDR {
+				t.Errorf("InternalNetworkCIDR = %q, want %q", p.InternalNetworkCIDR, tt.wantCIDR)
+			}
+		})
+	}
+}

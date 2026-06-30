@@ -19,6 +19,7 @@ package dvp
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"net"
 	"text/template"
@@ -28,6 +29,9 @@ import (
 
 //go:embed bootstrap.tpl
 var bootstrapTemplate string
+
+// bootstrapTmpl is parsed once at package load; reused on every render.
+var bootstrapTmpl = template.Must(template.New("bootstrap-config").Parse(bootstrapTemplate))
 
 // bootstrapParams are the inputs to the dhctl bootstrap config template.
 type bootstrapParams struct {
@@ -44,12 +48,8 @@ type bootstrapParams struct {
 
 // renderBootstrapConfig renders the embedded bootstrap template with p.
 func renderBootstrapConfig(p bootstrapParams) ([]byte, error) {
-	tmpl, err := template.New("bootstrap-config").Parse(bootstrapTemplate)
-	if err != nil {
-		return nil, fmt.Errorf("parse bootstrap template: %w", err)
-	}
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, p); err != nil {
+	if err := bootstrapTmpl.Execute(&buf, p); err != nil {
 		return nil, fmt.Errorf("render bootstrap template: %w", err)
 	}
 	return buf.Bytes(), nil
@@ -61,6 +61,23 @@ func renderBootstrapConfig(p bootstrapParams) ([]byte, error) {
 func buildBootstrapParams(def *config.ClusterDefinition, registryDockerCfg string) (bootstrapParams, error) {
 	if def == nil {
 		return bootstrapParams{}, fmt.Errorf("cluster definition is nil")
+	}
+
+	// Validate required DKP fields here rather than assuming def.Validate() ran.
+	required := []struct {
+		value string
+		msg   string
+	}{
+		{def.DKPParameters.PodSubnetCIDR, "dkpParameters.podSubnetCIDR is required"},
+		{def.DKPParameters.ServiceSubnetCIDR, "dkpParameters.serviceSubnetCIDR is required"},
+		{def.DKPParameters.KubernetesVersion, "dkpParameters.kubernetesVersion is required"},
+		{def.DKPParameters.ClusterDomain, "dkpParameters.clusterDomain is required"},
+		{def.DKPParameters.RegistryRepo, "dkpParameters.registryRepo is required"},
+	}
+	for _, r := range required {
+		if r.value == "" {
+			return bootstrapParams{}, errors.New(r.msg)
+		}
 	}
 
 	var vmIPs []string
