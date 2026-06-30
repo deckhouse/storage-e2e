@@ -84,7 +84,7 @@ func buildCloudInit(opts cloudInitOptions) string {
 
 	runcmd := []string{
 		"systemctl restart ssh",
-		fmt.Sprintf("hostnamectl set-hostname %s", opts.hostname),
+		fmt.Sprintf("hostnamectl set-hostname '%s'", opts.hostname),
 		"systemctl daemon-reload",
 		"systemctl enable --now qemu-guest-agent.service",
 	}
@@ -115,7 +115,7 @@ users:
     shell: /bin/bash
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
-      - %s
+      - "%s"
 write_files:
 %s  - path: /etc/ssh/sshd_config.d/allow_tcp_forwarding.conf
     content: |

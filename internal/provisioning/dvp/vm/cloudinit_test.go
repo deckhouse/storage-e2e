@@ -46,8 +46,8 @@ func TestBuildCloudInit(t *testing.T) {
 				"http://mirror.yandex.ru/ubuntu",
 				`Acquire::ForceIPv4 "true";`,
 				"AllowTcpForwarding yes",
-				"ssh-ed25519 AAAA test",
-				"hostnamectl set-hostname node-1",
+				`- "ssh-ed25519 AAAA test"`,
+				`hostnamectl set-hostname 'node-1'`,
 				"ssh_pwauth: false",
 			}
 			for _, s := range mustContain {
