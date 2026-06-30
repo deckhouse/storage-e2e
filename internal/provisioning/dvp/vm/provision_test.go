@@ -42,7 +42,6 @@ func testConfig() Config {
 		SSHPublicKey:       "ssh-ed25519 AAAA test",
 		VMClassName:        "generic",
 		DefaultVMClassName: "generic",
-		SetupVMNameSuffix:  "123",
 		Timeouts: Timeouts{
 			PollInterval:                    time.Millisecond,
 			ClusterVirtualImageReadyTimeout: time.Minute,
@@ -85,30 +84,62 @@ func TestProvisionHappyPath(t *testing.T) {
 	}
 
 	p := NewProvisioner(c, testLogger(), testConfig())
-	setupName, err := p.Provision(context.Background(), def)
-	if err != nil {
+	if err := p.Provision(context.Background(), def); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 
-	if setupName != "bootstrap-node-123" {
-		t.Errorf("setup VM name = %q, want bootstrap-node-123", setupName)
-	}
 	if def.Masters[0].IPAddress != "10.0.0.5" || def.Workers[0].IPAddress != "10.0.0.5" {
 		t.Errorf("IPs not written back: master=%q worker=%q", def.Masters[0].IPAddress, def.Workers[0].IPAddress)
 	}
-	if def.Setup == nil || def.Setup.IPAddress != "10.0.0.5" {
-		t.Errorf("setup node = %+v, want IP set", def.Setup)
+	if def.Setup != nil {
+		t.Errorf("def.Setup = %+v, want nil (no implicit setup VM)", def.Setup)
 	}
 
-	if got := c.createCount("vm"); got != 3 {
-		t.Errorf("VMs created = %d, want 3 (master+worker+setup)", got)
+	if got := c.createCount("vm"); got != 2 {
+		t.Errorf("VMs created = %d, want 2 (master+worker)", got)
 	}
-	if got := c.createCount("vd"); got != 3 {
-		t.Errorf("VDs created = %d, want 3", got)
+	if got := c.createCount("vd"); got != 2 {
+		t.Errorf("VDs created = %d, want 2", got)
 	}
-	// Two unique images: os-a (master+worker) and the setup VM's default image.
-	if got := c.createCount("cvi"); got != 2 {
-		t.Errorf("CVIs created = %d, want 2", got)
+	// One unique image shared by master+worker.
+	if got := c.createCount("cvi"); got != 1 {
+		t.Errorf("CVIs created = %d, want 1", got)
+	}
+}
+
+func TestProvisionIncludesDeclaredSetupNode(t *testing.T) {
+	c := newFakeClient()
+	c.seedVMClass(readyVMClass("generic"))
+	c.onGetCVI = func(cvi *v1alpha2.ClusterVirtualImage) { cvi.Status.Phase = v1alpha2.ImageReady }
+	c.onGetVM = func(machine *v1alpha2.VirtualMachine) {
+		machine.Status.Phase = v1alpha2.MachineRunning
+		machine.Status.IPAddress = "10.0.0.7"
+	}
+
+	setup := vmNode("bootstrap-1", "http://example/os-b.qcow2")
+	setup.Role = config.ClusterRoleSetup
+	def := &config.ClusterDefinition{
+		Masters: []config.ClusterNode{vmNode("master-1", "http://example/os-a.qcow2")},
+		Setup:   &setup,
+	}
+
+	p := NewProvisioner(c, testLogger(), testConfig())
+	if err := p.Provision(context.Background(), def); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	if got := c.createCount("vm"); got != 2 {
+		t.Errorf("VMs created = %d, want 2 (master+setup)", got)
+	}
+	machine, err := c.GetVirtualMachine(context.Background(), "ns", "bootstrap-1")
+	if err != nil {
+		t.Fatalf("get setup VM: %v", err)
+	}
+	if !strings.Contains(machine.Spec.Provisioning.UserData, "docker.io") {
+		t.Error("setup node cloud-init missing docker.io (Docker profile not applied)")
+	}
+	if def.Setup == nil || def.Setup.IPAddress != "10.0.0.7" {
+		t.Errorf("def.Setup = %+v, want IP 10.0.0.7", def.Setup)
 	}
 }
 
@@ -119,7 +150,7 @@ func TestProvisionMissingDefaultVMClassFailsFast(t *testing.T) {
 	}
 
 	p := NewProvisioner(c, testLogger(), testConfig())
-	if _, err := p.Provision(context.Background(), def); err == nil {
+	if err := p.Provision(context.Background(), def); err == nil {
 		t.Fatal("expected error for missing default VirtualMachineClass, got nil")
 	}
 }
@@ -147,8 +178,7 @@ func TestProvisionFailFastOnDegradedVM(t *testing.T) {
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
-		_, err := p.Provision(context.Background(), def)
-		done <- err
+		done <- p.Provision(context.Background(), def)
 	}()
 
 	select {
@@ -178,7 +208,7 @@ func TestTeardownIdempotent(t *testing.T) {
 	}
 
 	p := NewProvisioner(c, testLogger(), testConfig())
-	if _, err := p.Provision(context.Background(), def); err != nil {
+	if err := p.Provision(context.Background(), def); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
 

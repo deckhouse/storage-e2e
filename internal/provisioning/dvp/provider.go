@@ -18,8 +18,6 @@ package dvp
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -149,14 +147,13 @@ func (p *dvpProvider) connect(ctx context.Context) (*rest.Config, func(), error)
 	return restConfig, runCleanups, nil
 }
 
-func (p *dvpProvider) provisionerConfig(sshPublicKey, setupSuffix string) vm.Config {
+func (p *dvpProvider) provisionerConfig(sshPublicKey string) vm.Config {
 	return vm.Config{
 		Namespace:          p.dvpConf.Namespace,
 		StorageClass:       p.dvpConf.StorageClass,
 		SSHPublicKey:       sshPublicKey,
 		VMClassName:        p.dvpConf.VMClassName,
 		DefaultVMClassName: p.dvpConf.DefaultVMClassName,
-		SetupVMNameSuffix:  setupSuffix,
 		Timeouts: vm.Timeouts{
 			PollInterval:                    vmProvisionPollInterval,
 			ClusterVirtualImageReadyTimeout: config.ClusterVirtualImageReadinessTimeout,
@@ -182,11 +179,6 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	sshPublicKey, pubKeyErr := publicKeyFromPrivateKey(p.creds.SSHKey, p.dvpConf.SSHPassphrase)
 	if pubKeyErr != nil {
 		return fmt.Errorf("derive ssh public key: %w", pubKeyErr)
-	}
-
-	setupSuffix, suffixErr := randomSuffix()
-	if suffixErr != nil {
-		return fmt.Errorf("generate setup VM name suffix: %w", suffixErr)
 	}
 
 	kubeconfig, cleanup, connErr := p.connect(ctx)
@@ -225,7 +217,7 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		return fmt.Errorf("create virtualization client: %w", virtClientErr)
 	}
 
-	provisioner := vm.NewProvisioner(vm.NewClient(virtClient), p.logger, p.provisionerConfig(sshPublicKey, setupSuffix))
+	provisioner := vm.NewProvisioner(vm.NewClient(virtClient), p.logger, p.provisionerConfig(sshPublicKey))
 
 	p.logger.Info("provisioning virtual machines",
 		"namespace", p.dvpConf.Namespace,
@@ -233,11 +225,10 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	)
 	provisionCtx, provisionCancel := context.WithTimeout(ctx, config.VMCreationTimeout)
 	defer provisionCancel()
-	setupVMName, provisionErr := provisioner.Provision(provisionCtx, clusterDef)
-	if provisionErr != nil {
+	if provisionErr := provisioner.Provision(provisionCtx, clusterDef); provisionErr != nil {
 		return fmt.Errorf("provision virtual machines: %w", provisionErr)
 	}
-	p.logger.Info("virtual machines provisioned", "setupVM", setupVMName)
+	p.logger.Info("virtual machines provisioned", "namespace", p.dvpConf.Namespace)
 
 	return nil
 }
@@ -254,7 +245,7 @@ func (p *dvpProvider) Remove(ctx context.Context) error {
 		return fmt.Errorf("create virtualization client: %w", virtClientErr)
 	}
 
-	provisioner := vm.NewProvisioner(vm.NewClient(virtClient), p.logger, p.provisionerConfig("", ""))
+	provisioner := vm.NewProvisioner(vm.NewClient(virtClient), p.logger, p.provisionerConfig(""))
 
 	p.logger.Info("tearing down virtual machines",
 		"namespace", p.dvpConf.Namespace,
@@ -268,12 +259,4 @@ func (p *dvpProvider) Remove(ctx context.Context) error {
 	p.logger.Info("virtual machines torn down", "namespace", p.dvpConf.Namespace)
 
 	return nil
-}
-
-func randomSuffix() (string, error) {
-	b := make([]byte, 4)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("read random bytes: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }

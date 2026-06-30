@@ -39,8 +39,6 @@ type Config struct {
 	VMClassName        string
 	DefaultVMClassName string
 
-	SetupVMNameSuffix string
-
 	Timeouts Timeouts
 }
 
@@ -69,11 +67,11 @@ type plannedVM struct {
 	cviName          string
 }
 
-func (p *Provisioner) plan(def *config.ClusterDefinition, setup *config.ClusterNode) []plannedVM {
+func (p *Provisioner) plan(def *config.ClusterDefinition) []plannedVM {
 	var planned []plannedVM
 
 	add := func(n *config.ClusterNode) {
-		if n.HostType != config.HostTypeVM {
+		if n == nil || n.HostType != config.HostTypeVM {
 			return
 		}
 		planned = append(planned, plannedVM{
@@ -90,39 +88,35 @@ func (p *Provisioner) plan(def *config.ClusterDefinition, setup *config.ClusterN
 	for i := range def.Workers {
 		add(&def.Workers[i])
 	}
-	add(setup)
+	add(def.Setup)
 
 	return planned
 }
 
-func (p *Provisioner) Provision(ctx context.Context, def *config.ClusterDefinition) (string, error) {
-	setup := config.DefaultSetupVM
-	setup.Hostname += p.cfg.SetupVMNameSuffix
-
-	planned := p.plan(def, &setup)
+func (p *Provisioner) Provision(ctx context.Context, def *config.ClusterDefinition) error {
+	planned := p.plan(def)
 	if len(planned) == 0 {
-		return "", fmt.Errorf("no VM nodes to provision")
+		return fmt.Errorf("no VM nodes to provision")
 	}
 
 	if err := p.provisionVMClass(ctx); err != nil {
-		return "", err
+		return err
 	}
 
 	if err := p.provisionClusterVirtualImages(ctx, planned); err != nil {
-		return "", err
+		return err
 	}
 
 	if err := p.provisionDisksAndVMs(ctx, planned); err != nil {
-		return "", err
+		return err
 	}
 
 	if err := p.waitRunningAndCollectIPs(ctx, planned); err != nil {
-		return "", err
+		return err
 	}
 
-	def.Setup = &setup
-	p.log.Info("all VMs are running", "count", len(planned), "setupVM", setup.Hostname)
-	return setup.Hostname, nil
+	p.log.Info("all VMs are running", "count", len(planned))
+	return nil
 }
 
 func (p *Provisioner) provisionVMClass(ctx context.Context) error {
