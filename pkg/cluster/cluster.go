@@ -19,6 +19,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -47,6 +48,7 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/commander"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/internal/logger"
+	commanderprov "github.com/deckhouse/storage-e2e/internal/provisioning/commander"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 	"github.com/deckhouse/storage-e2e/pkg/testkit"
 )
@@ -946,32 +948,29 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 	return clusterResources, nil
 }
 
-// ConnectViaKubeconfig connects to an already-running cluster directly from the
-// kubeconfig file pointed to by KUBE_CONFIG_PATH, with NO SSH tunnel. The
-// cluster API server must be reachable from where the suite runs. It acquires
-// the cluster lock and verifies health, mirroring UseExistingCluster minus the
-// SSH plumbing. Used by the CI run-tests step against a cluster bootstrapped
-// out-of-band (e.g. by the Commander provider, whose kubeconfig is handed off as
-// an artifact). The returned resources carry only the Kubeconfig; teardown only
-// needs to release the lock (the separate teardown job removes the cluster).
-func ConnectViaKubeconfig(ctx context.Context) (*TestClusterResources, error) {
-	if config.KubeConfigPath == "" {
-		return nil, fmt.Errorf("KUBE_CONFIG_PATH is required for kubeconfig connect mode")
-	}
-	resolvedPath, expandErr := expandPath(config.KubeConfigPath)
-	if expandErr != nil {
-		return nil, fmt.Errorf("failed to expand KUBE_CONFIG_PATH (%s): %w", config.KubeConfigPath, expandErr)
-	}
-
-	logger.Step(1, "Building rest config from kubeconfig %s", resolvedPath)
-	restConfig, buildErr := clientcmd.BuildConfigFromFlags("", resolvedPath)
-	if buildErr != nil {
-		return nil, fmt.Errorf("failed to build rest config from kubeconfig %s: %w", resolvedPath, buildErr)
+// ConnectToCommanderCluster connects the suite to a Commander-bootstrapped
+// cluster through the commander provider's connector: it SSHes to the master
+// (via the bastion), fetches the kubeconfig off the master and opens an
+// in-process API tunnel, then acquires the cluster lock and verifies health.
+// The tunnel + SSH client are torn down by CleanupTestCluster via the returned
+// resources' TunnelInfo.StopFunc. Used by the CI run-tests step against a
+// cluster created out-of-band by cmd/bootstrap-cluster; the separate teardown
+// job removes the cluster itself.
+func ConnectToCommanderCluster(ctx context.Context) (*TestClusterResources, error) {
+	logger.Step(1, "Connecting to Commander cluster (SSH tunnel + kubeconfig)")
+	restConfig, cleanup, err := commanderprov.Connect(ctx, envMap(), logger.GetLogger())
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Commander cluster: %w", err)
 	}
 	configureExtendedTimeouts(restConfig)
-	logger.StepComplete(1, "Rest config built from kubeconfig")
+	logger.StepComplete(1, "Connected to Commander cluster API through tunnel")
 
-	clusterResources := &TestClusterResources{Kubeconfig: restConfig}
+	// Route teardown of the tunnel + SSH client through the standard cleanup
+	// path (TunnelInfo.StopFunc), so no bespoke cleanup wiring is needed.
+	clusterResources := &TestClusterResources{
+		Kubeconfig: restConfig,
+		TunnelInfo: &ssh.TunnelInfo{StopFunc: func() error { cleanup(); return nil }},
+	}
 
 	logger.Step(2, "Acquiring cluster lock")
 	testName := config.TestClusterNamespace
@@ -979,6 +978,7 @@ func ConnectViaKubeconfig(ctx context.Context) (*TestClusterResources, error) {
 		testName = fmt.Sprintf("e2e-test-%d", time.Now().UnixNano())
 	}
 	if err := AcquireClusterLock(ctx, restConfig, testName); err != nil {
+		cleanup()
 		return nil, fmt.Errorf("failed to acquire cluster lock: %w", err)
 	}
 	logger.StepComplete(2, "Cluster lock acquired")
@@ -1007,12 +1007,25 @@ func ConnectViaKubeconfig(ctx context.Context) (*TestClusterResources, error) {
 	}
 	if healthErr != nil {
 		_ = ReleaseClusterLock(ctx, restConfig)
+		cleanup()
 		return nil, fmt.Errorf("cluster health check failed after %d attempts: %w", maxHealthRetries, healthErr)
 	}
 	logger.StepComplete(3, "Cluster is healthy")
 
-	logger.Success("Connected to cluster via kubeconfig")
+	logger.Success("Connected to Commander cluster")
 	return clusterResources, nil
+}
+
+// envMap snapshots the process environment as a map for commander.Connect.
+func envMap() map[string]string {
+	environ := os.Environ()
+	m := make(map[string]string, len(environ))
+	for _, kv := range environ {
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			m[kv[:i]] = kv[i+1:]
+		}
+	}
+	return m
 }
 
 // CleanupExistingCluster releases the cluster lock and closes connections.
@@ -1626,18 +1639,27 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 		return nil // Nothing to clean up
 	}
 
-	// Kubeconfig mode owns no VMs/SSH/tunnels — it only holds the cluster lock.
-	// The cluster itself is removed by the separate teardown step, so cleanup
-	// here is just releasing the lock.
-	if config.TestClusterCreateMode == config.ClusterCreateModeKubeconfig {
+	// CommanderConnect mode owns no VMs — the cluster is removed by the separate
+	// teardown step. Cleanup releases the lock and tears down the in-process SSH
+	// tunnel / client recorded in TunnelInfo.StopFunc by ConnectToCommanderCluster.
+	if config.TestClusterCreateMode == config.ClusterCreateModeCommanderConnect {
+		var errs []error
 		if resources.Kubeconfig != nil {
 			if err := ReleaseClusterLock(ctx, resources.Kubeconfig); err != nil {
 				logger.Error("Failed to release cluster lock: %v", err)
-				return fmt.Errorf("failed to release cluster lock: %w", err)
+				errs = append(errs, fmt.Errorf("failed to release cluster lock: %w", err))
+			} else {
+				logger.Success("Cluster lock released")
 			}
-			logger.Success("Cluster lock released")
 		}
-		return nil
+		if resources.TunnelInfo != nil && resources.TunnelInfo.StopFunc != nil {
+			if err := resources.TunnelInfo.StopFunc(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to stop commander tunnel: %w", err))
+			} else {
+				logger.Success("Commander tunnel/SSH closed")
+			}
+		}
+		return errors.Join(errs...)
 	}
 
 	logger.Step(1, "Stopping test cluster tunnel and closing SSH client")
@@ -2477,21 +2499,22 @@ func CreateOrConnectToTestCluster() *TestClusterResources {
 			}
 		})
 
-	case config.ClusterCreateModeKubeconfig:
-		// Connect to an already-running cluster straight from a kubeconfig file
-		// (no SSH). Used by CI run-tests against an out-of-band bootstrapped cluster.
-		By("Connecting to cluster via kubeconfig", func() {
+	case config.ClusterCreateModeCommanderConnect:
+		// Connect to a Commander-bootstrapped cluster through the commander
+		// connector (in-process SSH tunnel + kubeconfig fetched off the master).
+		// Used by CI run-tests against a cluster created by cmd/bootstrap-cluster.
+		By("Connecting to Commander cluster", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), config.ClusterCreationTimeout)
 			defer cancel()
 
-			GinkgoWriter.Printf("    ▶️ Connecting via kubeconfig (mode: %s, KUBE_CONFIG_PATH=%s)\n", config.TestClusterCreateMode, config.KubeConfigPath)
+			GinkgoWriter.Printf("    ▶️ Connecting to Commander cluster (mode: %s)\n", config.TestClusterCreateMode)
 			var err error
-			testClusterResources, err = ConnectViaKubeconfig(ctx)
+			testClusterResources, err = ConnectToCommanderCluster(ctx)
 			if err != nil {
-				GinkgoWriter.Printf("    ❌ Failed to connect via kubeconfig: %v\n", err)
-				Expect(err).NotTo(HaveOccurred(), "Should connect via kubeconfig successfully")
+				GinkgoWriter.Printf("    ❌ Failed to connect to Commander cluster: %v\n", err)
+				Expect(err).NotTo(HaveOccurred(), "Should connect to Commander cluster successfully")
 			}
-			GinkgoWriter.Printf("    ✅ Connected via kubeconfig successfully (cluster lock acquired)\n")
+			GinkgoWriter.Printf("    ✅ Connected to Commander cluster successfully (cluster lock acquired)\n")
 		})
 
 	case config.ClusterCreateModeAlwaysCreateNew:

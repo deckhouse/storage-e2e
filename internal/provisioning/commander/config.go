@@ -16,12 +16,32 @@ limitations under the License.
 
 package commander
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/caarlos0/env/v11"
+)
+
+// apiServerRemotePort is the node-local kube-api-proxy port the fetched
+// kubeconfig points at; the connector tunnels to it over SSH.
+const apiServerRemotePort = 6445
+
+var (
+	ErrSSHKeySource       = errors.New("exactly one of E2E_COMMANDER_SSH_PRIVATE_KEY_PATH or E2E_COMMANDER_SSH_PRIVATE_KEY must be set")
+	ErrJumpHostIncomplete = errors.New("jump host requires both E2E_COMMANDER_SSH_JUMP_HOST and E2E_COMMANDER_SSH_JUMP_USER")
+	ErrJumpKeySource      = errors.New("at most one of E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY_PATH or E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY may be set (defaults to the master key)")
+)
 
 // Config holds the Deckhouse Commander provider settings, populated from
-// environment variables. Unlike the legacy COMMANDER_* knobs read by
-// pkg/cluster, the provider uses the E2E_COMMANDER_* prefix so it lines up with
-// the other provider configs (E2E_DVP_BASE_CLUSTER_*) and the CI secret naming.
+// environment variables. The SSH fields mirror the DVP provider's shape
+// (path-or-inline credentials, optional jump host) so the two providers can
+// eventually share a neutral env-var vocabulary; only the master host differs —
+// it is resolved from the Commander connection info rather than configured.
 type Config struct {
 	// URL and Token authenticate against the Commander API.
 	URL   string `env:"E2E_COMMANDER_URL,required"`
@@ -58,21 +78,122 @@ type Config struct {
 	// WaitTimeout bounds the wait for the created cluster to reach Ready.
 	WaitTimeout time.Duration `env:"E2E_COMMANDER_WAIT_TIMEOUT" envDefault:"30m"`
 
-	// KubeconfigOut, when set, is a file path the provider writes the created
-	// cluster's kubeconfig to after it becomes Ready. The pipeline uploads it as
-	// an artifact so the later enable-modules and run-tests steps can reach the
-	// cluster. It is fetched via the Commander API when available, otherwise over
-	// SSH from the master (see the SSH* fields below).
-	KubeconfigOut string `env:"E2E_COMMANDER_KUBECONFIG_OUT"`
+	// SSH* reach the master over SSH (via a jump host when configured) to fetch
+	// the kubeconfig and open the API tunnel. The master host comes from the
+	// Commander connection info; SSHUser overrides the Commander-reported user.
+	// Keys are supplied either by path (local runs) or inline content (CI).
+	SSHUser       string `env:"E2E_COMMANDER_SSH_USER"`
+	SSHPassphrase string `env:"E2E_COMMANDER_SSH_PASSPHRASE"`
+	SSHKeyPath    string `env:"E2E_COMMANDER_SSH_PRIVATE_KEY_PATH"`
+	SSHKeyContent string `env:"E2E_COMMANDER_SSH_PRIVATE_KEY"`
 
-	// SSH* configure the fallback kubeconfig fetch over SSH (used when the
-	// Commander deployment does not expose the kubeconfig over its API). The
-	// master host/user come from the Commander connection info; these supply the
-	// key and the (usually required) jump host. SSHUser overrides the
-	// Commander-reported master user; the jump key defaults to the master key.
-	SSHPrivateKeyPath string `env:"E2E_COMMANDER_SSH_PRIVATE_KEY_PATH"`
-	SSHUser           string `env:"E2E_COMMANDER_SSH_USER"`
 	SSHJumpHost       string `env:"E2E_COMMANDER_SSH_JUMP_HOST"`
 	SSHJumpUser       string `env:"E2E_COMMANDER_SSH_JUMP_USER"`
+	SSHJumpPassphrase string `env:"E2E_COMMANDER_SSH_JUMP_KEY_PASSPHRASE"`
 	SSHJumpKeyPath    string `env:"E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY_PATH"`
+	SSHJumpKeyContent string `env:"E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY"`
 }
+
+// Credentials holds the resolved (inline or file-loaded) SSH key material.
+type Credentials struct {
+	SSHKey  []byte
+	JumpKey []byte
+}
+
+// LoadConfig parses the Commander config from the given environment and
+// validates it.
+func LoadConfig(environ map[string]string) (*Config, error) {
+	cfg, err := env.ParseAsWithOptions[Config](env.Options{Environment: environ})
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+// Validate checks the SSH credential sources are unambiguous.
+func (c *Config) Validate() error {
+	var errs []error
+	if !exactlyOne(c.SSHKeyPath != "", c.SSHKeyContent != "") {
+		errs = append(errs, ErrSSHKeySource)
+	}
+	if c.jumpHostMentioned() && !c.JumpHostConfigured() {
+		errs = append(errs, ErrJumpHostIncomplete)
+	}
+	if c.SSHJumpKeyPath != "" && c.SSHJumpKeyContent != "" {
+		errs = append(errs, ErrJumpKeySource)
+	}
+	return errors.Join(errs...)
+}
+
+// JumpHostConfigured reports whether a jump-host hop is configured. The jump key
+// is optional — it defaults to the master key (a bastion commonly shares it).
+func (c *Config) JumpHostConfigured() bool {
+	return c.SSHJumpHost != "" && c.SSHJumpUser != ""
+}
+
+func (c *Config) jumpHostMentioned() bool {
+	return c.SSHJumpHost != "" ||
+		c.SSHJumpUser != "" ||
+		c.SSHJumpKeyPath != "" ||
+		c.SSHJumpKeyContent != ""
+}
+
+// Resolve loads the SSH key material from inline content or files. When a jump
+// host is configured without its own key, the master key is reused.
+func (c *Config) Resolve() (Credentials, error) {
+	var creds Credentials
+	var err error
+
+	creds.SSHKey, err = resolveBytes(c.SSHKeyPath, c.SSHKeyContent)
+	if err != nil {
+		return Credentials{}, fmt.Errorf("resolving ssh private key: %w", err)
+	}
+
+	if c.JumpHostConfigured() {
+		if c.SSHJumpKeyPath != "" || c.SSHJumpKeyContent != "" {
+			creds.JumpKey, err = resolveBytes(c.SSHJumpKeyPath, c.SSHJumpKeyContent)
+			if err != nil {
+				return Credentials{}, fmt.Errorf("resolving jump ssh private key: %w", err)
+			}
+		} else {
+			creds.JumpKey = creds.SSHKey
+		}
+	}
+
+	return creds, nil
+}
+
+func resolveBytes(path, content string) ([]byte, error) {
+	if content != "" {
+		return []byte(content), nil
+	}
+	expanded, err := expandUserPath(path)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(expanded)
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", expanded, err)
+	}
+	return raw, nil
+}
+
+func expandUserPath(path string) (string, error) {
+	expanded := os.ExpandEnv(path)
+	if !strings.HasPrefix(expanded, "~") {
+		return expanded, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory for %q: %w", path, err)
+	}
+	if expanded == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, strings.TrimPrefix(expanded, "~/")), nil
+}
+
+func exactlyOne(a, b bool) bool { return a != b }

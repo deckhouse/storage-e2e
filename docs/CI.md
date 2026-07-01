@@ -13,8 +13,8 @@ resolve ──> bootstrap ──> run-tests ──> teardown
 | Job | `needs` | Runs when | What it does |
 |-----|---------|-----------|--------------|
 | `resolve` | — | always (workflow invoked) | Sparse-checks-out `.github/scripts`, runs `e2e-resolve-labels.sh` → outputs `keep_cluster`, `ginkgo_filter`, `namespace` |
-| `bootstrap` | resolve | always when reached | `e2e-prune-workspace.sh` + `go run ./cmd/bootstrap-cluster`. For `commander`, also uploads the new cluster's kubeconfig as an artifact |
-| `run-tests` | resolve, bootstrap | bootstrap succeeded | `e2e-run-tests.sh` (`go mod replace` + `go test`). For `commander`, downloads the kubeconfig, opens an SSH tunnel to the master, enables the module-under-test (`go run ./cmd/enable-modules`, driven by `cluster_config`), then runs the suite with `TEST_CLUSTER_CREATE_MODE=kubeconfig` + `KUBE_CONFIG_PATH` — all in commander-gated steps |
+| `bootstrap` | resolve | always when reached | `e2e-prune-workspace.sh` + `go run ./cmd/bootstrap-cluster`. For `commander` this only talks to the Commander API (create + wait Ready) — no kubeconfig artifact |
+| `run-tests` | resolve, bootstrap | bootstrap succeeded | `e2e-run-tests.sh` (`go mod replace` + `go test`). For `commander`, a gated step injects the connection env (`TEST_CLUSTER_CREATE_MODE=commanderConnect` + `E2E_COMMANDER_*`); enable-modules (`go run ./cmd/enable-modules`) and the suite each connect **in-process** via the commander connector (SSH to the master through the bastion, kubeconfig fetched off the master, API tunnel) — no artifact, no external tunnel |
 | `teardown` | resolve, bootstrap, run-tests | `always() && bootstrap succeeded && keep_cluster != 'true'` | `e2e-prune-workspace.sh` + `go run ./cmd/remove-cluster` |
 
 > **Provider neutrality.** All commander-specific behavior lives in

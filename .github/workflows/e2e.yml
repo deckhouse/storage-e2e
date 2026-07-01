@@ -137,20 +137,6 @@ jobs:
       - name: Prune stale workspace caches
         run: bash _storage-e2e/.github/scripts/e2e-prune-workspace.sh
 
-      # The commander provider fetches the new cluster's kubeconfig over SSH
-      # (the Commander API does not expose it), typically via a jump host, so the
-      # SSH key secret is materialized to disk here.
-      - name: Materialize commander SSH key
-        if: ${{ inputs.cluster_provider == 'commander' }}
-        env:
-          E2E_COMMANDER_SSH_PRIVATE_KEY: ${{ secrets.E2E_COMMANDER_SSH_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          key_path="$(mktemp "${RUNNER_TEMP:-/tmp}/e2e_commander_ssh_key.XXXXXX")"
-          printf '%s\n' "${E2E_COMMANDER_SSH_PRIVATE_KEY:?E2E_COMMANDER_SSH_PRIVATE_KEY is required for the commander provider}" >"$key_path"
-          chmod 600 "$key_path"
-          echo "E2E_COMMANDER_SSH_PRIVATE_KEY_PATH=${key_path}" >>"$GITHUB_ENV"
-
       - name: Bootstrap cluster
         working-directory: _storage-e2e
         env:
@@ -183,15 +169,9 @@ jobs:
           E2E_COMMANDER_API_PREFIX: ${{ vars.E2E_COMMANDER_API_PREFIX || '/api/v1' }}
           E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY: ${{ vars.E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY || 'false' }}
           E2E_COMMANDER_WAIT_TIMEOUT: ${{ vars.E2E_COMMANDER_WAIT_TIMEOUT || '60m' }}
-          # SSH fallback for kubeconfig retrieval (Commander API does not expose
-          # it). Master host/user come from Commander; key + jump host from here.
-          E2E_COMMANDER_SSH_PRIVATE_KEY_PATH: ${{ env.E2E_COMMANDER_SSH_PRIVATE_KEY_PATH }}
-          E2E_COMMANDER_SSH_USER: ${{ vars.E2E_COMMANDER_SSH_USER }}
-          E2E_COMMANDER_SSH_JUMP_HOST: ${{ vars.E2E_COMMANDER_SSH_JUMP_HOST }}
-          E2E_COMMANDER_SSH_JUMP_USER: ${{ vars.E2E_COMMANDER_SSH_JUMP_USER }}
-          # Commander provider writes the new cluster's kubeconfig here; the step
-          # below uploads it so enable-modules and run-tests can reach the cluster.
-          E2E_COMMANDER_KUBECONFIG_OUT: ${{ github.workspace }}/e2e-kubeconfig.yml
+          # Bootstrap only talks to the Commander API (create + wait Ready); no SSH
+          # is needed here. Connecting to the created cluster (SSH to the master,
+          # kubeconfig fetch, API tunnel) happens in-process at run-tests time.
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
@@ -200,22 +180,6 @@ jobs:
           E2E_DVP_BASE_CLUSTER_KUBECONFIG="$(printf '%s' "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64}" | base64 -d)"
           export E2E_DVP_BASE_CLUSTER_KUBECONFIG
           go run ./cmd/bootstrap-cluster
-
-      # The kubeconfig is short-lived (the cluster is removed at teardown) but is
-      # cluster-admin material, so retention is kept to 1 day.
-      - name: Upload cluster kubeconfig
-        if: ${{ inputs.cluster_provider == 'commander' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-kubeconfig-${{ inputs.module_slug }}-pr${{ github.event.pull_request.number }}
-          # Includes the .sshinfo sidecar (master host/user) used to open the API tunnel.
-          path: ${{ github.workspace }}/e2e-kubeconfig.yml*
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Cleanup commander SSH key
-        if: ${{ always() && inputs.cluster_provider == 'commander' }}
-        run: rm -f "${E2E_COMMANDER_SSH_PRIVATE_KEY_PATH:-}" 2>/dev/null || true
 
   run-tests:
     name: run-tests
@@ -243,52 +207,53 @@ jobs:
           go-version-file: ${{ inputs.module_path }}/go.mod
           cache: false
 
-      # Commander: connect the suite to the bootstrapped cluster via its
-      # kubeconfig, reached through an SSH tunnel to the master (the kubeconfig
-      # server is the node-local 127.0.0.1:<port>). ALL commander wiring lives in
-      # the commander-gated steps below, so for other providers (dvp, …) the
-      # "Run E2E tests" step runs with exactly its previous environment.
-      - name: Download cluster kubeconfig
-        if: ${{ inputs.cluster_provider == 'commander' }}
-        uses: actions/download-artifact@v7
-        with:
-          name: e2e-kubeconfig-${{ inputs.module_slug }}-pr${{ github.event.pull_request.number }}
-          path: ${{ github.workspace }}
-
-      - name: Materialize commander SSH key
+      # Commander: inject the connection env for enable-modules + the suite. The
+      # commander connector runs IN-PROCESS — it SSHes to the master via the
+      # bastion, fetches the kubeconfig off the master and opens an API tunnel —
+      # so there is no kubeconfig artifact and no external SSH tunnel. ALL commander
+      # wiring lives in this gated step (writing to $GITHUB_ENV), so for other
+      # providers (dvp, …) the "Run E2E tests" step keeps its exact environment.
+      - name: Configure commander connection
         if: ${{ inputs.cluster_provider == 'commander' }}
         env:
+          E2E_COMMANDER_URL: ${{ secrets.E2E_COMMANDER_URL }}
+          E2E_COMMANDER_TOKEN: ${{ secrets.E2E_COMMANDER_TOKEN }}
+          E2E_COMMANDER_CA_CERT: ${{ secrets.E2E_COMMANDER_CA_CERT }}
           E2E_COMMANDER_SSH_PRIVATE_KEY: ${{ secrets.E2E_COMMANDER_SSH_PRIVATE_KEY }}
+          E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY: ${{ secrets.E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY }}
+          E2E_COMMANDER_SSH_USER: ${{ vars.E2E_COMMANDER_SSH_USER }}
+          E2E_COMMANDER_SSH_JUMP_HOST: ${{ vars.E2E_COMMANDER_SSH_JUMP_HOST }}
+          E2E_COMMANDER_SSH_JUMP_USER: ${{ vars.E2E_COMMANDER_SSH_JUMP_USER }}
+          E2E_COMMANDER_AUTH_METHOD: ${{ vars.E2E_COMMANDER_AUTH_METHOD || 'x-auth-token' }}
+          E2E_COMMANDER_API_PREFIX: ${{ vars.E2E_COMMANDER_API_PREFIX || '/api/v1' }}
+          E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY: ${{ vars.E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY || 'false' }}
+          NAMESPACE: ${{ needs.resolve.outputs.namespace }}
         run: |
           set -euo pipefail
-          key_path="$(mktemp "${RUNNER_TEMP:-/tmp}/e2e_commander_ssh_key.XXXXXX")"
-          printf '%s\n' "${E2E_COMMANDER_SSH_PRIVATE_KEY:?}" >"$key_path"
-          chmod 600 "$key_path"
-          echo "E2E_COMMANDER_SSH_PRIVATE_KEY_PATH=${key_path}" >>"$GITHUB_ENV"
+          emit() { printf '%s=%s\n' "$1" "$2" >>"$GITHUB_ENV"; }
+          emit_multiline() {
+            local d="__E2E_EOF_${RANDOM}${RANDOM}__"
+            { printf '%s<<%s\n' "$1" "$d"; printf '%s\n' "$2"; printf '%s\n' "$d"; } >>"$GITHUB_ENV"
+          }
+          emit TEST_CLUSTER_CREATE_MODE commanderConnect
+          emit TEST_CLUSTER_NAMESPACE "${NAMESPACE}"
+          emit E2E_COMMANDER_CLUSTER_NAME "${NAMESPACE}"
+          emit E2E_COMMANDER_URL "${E2E_COMMANDER_URL}"
+          emit E2E_COMMANDER_TOKEN "${E2E_COMMANDER_TOKEN}"
+          emit E2E_COMMANDER_AUTH_METHOD "${E2E_COMMANDER_AUTH_METHOD}"
+          emit E2E_COMMANDER_API_PREFIX "${E2E_COMMANDER_API_PREFIX}"
+          emit E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY "${E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY}"
+          emit E2E_COMMANDER_SSH_USER "${E2E_COMMANDER_SSH_USER}"
+          emit E2E_COMMANDER_SSH_JUMP_HOST "${E2E_COMMANDER_SSH_JUMP_HOST}"
+          emit E2E_COMMANDER_SSH_JUMP_USER "${E2E_COMMANDER_SSH_JUMP_USER}"
+          emit_multiline E2E_COMMANDER_SSH_PRIVATE_KEY "${E2E_COMMANDER_SSH_PRIVATE_KEY}"
+          [ -n "${E2E_COMMANDER_CA_CERT:-}" ] && emit_multiline E2E_COMMANDER_CA_CERT "${E2E_COMMANDER_CA_CERT}" || true
+          [ -n "${E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY:-}" ] && emit_multiline E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY "${E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY}" || true
 
-      # Opens a detached SSH tunnel (persists across steps) and injects the suite
-      # connection env via $GITHUB_ENV. Skipped for other providers, leaving the
-      # run-tests step's environment untouched.
-      - name: Open API tunnel and configure connection
-        if: ${{ inputs.cluster_provider == 'commander' }}
-        env:
-          E2E_KUBECONFIG: ${{ github.workspace }}/e2e-kubeconfig.yml
-          JUMP_HOST: ${{ vars.E2E_COMMANDER_SSH_JUMP_HOST }}
-          JUMP_USER: ${{ vars.E2E_COMMANDER_SSH_JUMP_USER }}
-        run: |
-          set -euo pipefail
-          source "${GITHUB_WORKSPACE}/_storage-e2e/.github/scripts/e2e-api-tunnel.sh"
-          open_api_tunnel
-          {
-            echo "TEST_CLUSTER_CREATE_MODE=kubeconfig"
-            echo "KUBE_CONFIG_PATH=${E2E_KUBECONFIG}"
-            echo "TEST_CLUSTER_NAMESPACE=${{ needs.resolve.outputs.namespace }}"
-          } >>"$GITHUB_ENV"
-
-      # Enable the module-under-test on the freshly created cluster, over the
-      # tunnel opened above (ModuleConfig + ModulePullOverride from cluster_config,
-      # driven by the same EnableAndConfigureModules used by the other flows). Runs
-      # in the run-tests job so it reuses the one tunnel; skipped for other providers.
+      # Enable the module-under-test on the freshly created cluster (ModuleConfig +
+      # ModulePullOverride from cluster_config, via the same EnableAndConfigureModules
+      # used by the other flows). It connects in-process through the commander
+      # connector (env from the step above). Skipped for other providers.
       - name: Enable and configure modules
         if: ${{ inputs.cluster_provider == 'commander' }}
         working-directory: _storage-e2e
@@ -303,7 +268,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
-          # KUBE_CONFIG_PATH was exported to $GITHUB_ENV by the tunnel step above.
           go run ./cmd/enable-modules
 
       - name: Run E2E tests
@@ -321,12 +285,6 @@ jobs:
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
           bash _storage-e2e/.github/scripts/e2e-run-tests.sh
-
-      - name: Close API tunnel
-        if: ${{ always() && inputs.cluster_provider == 'commander' }}
-        run: |
-          source "${GITHUB_WORKSPACE}/_storage-e2e/.github/scripts/e2e-api-tunnel.sh"
-          close_api_tunnel
 
       - name: Upload E2E logs
         if: ${{ always() }}

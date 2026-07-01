@@ -15,32 +15,33 @@ limitations under the License.
 */
 
 // Command enable-modules is the e2e pipeline's module-enablement step. It runs
-// AFTER the cluster is bootstrapped and BEFORE the tests: given a kubeconfig
-// (KUBE_CONFIG_PATH) and the cluster YAML (E2E_CLUSTER_CONFIG_YAML_PATH), it
-// enables and configures the modules declared under dkpParameters.modules
-// (ModuleConfig + ModulePullOverride) and waits for them to become Ready.
+// AFTER the cluster is bootstrapped and BEFORE the tests: given the cluster YAML
+// (E2E_CLUSTER_CONFIG_YAML_PATH), it enables and configures the modules declared
+// under dkpParameters.modules (ModuleConfig + ModulePullOverride) and waits for
+// them to become Ready.
 //
-// It connects to the target cluster directly from the kubeconfig file — it does
-// NOT open an SSH tunnel — so the cluster API must be reachable from the runner
-// (e.g. a kubeconfig exported by the Commander provider, see
-// E2E_COMMANDER_KUBECONFIG_OUT). modulePullOverride values may reference
-// environment variables as ${NAME} (resolved by LoadClusterDefinition), which is
-// how a per-PR image tag is injected, e.g.
-// `modulePullOverride: "${SDS_OBJECT_IMAGE_TAG}"`.
+// It connects to the Commander-created cluster the same way the test suite does:
+// through the commander connector, which resolves the master over SSH (via the
+// bastion), fetches the kubeconfig off the master and opens an in-process API
+// tunnel — no kubeconfig artifact and no external SSH tunnel are needed.
+// modulePullOverride values may reference environment variables as ${NAME}
+// (resolved by LoadClusterDefinition), which is how a per-PR image tag is
+// injected, e.g. `modulePullOverride: "${SDS_OBJECT_IMAGE_TAG}"`.
 package main
 
 import (
 	"context"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/logger"
+	"github.com/deckhouse/storage-e2e/internal/provisioning/commander"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
 
@@ -90,11 +91,18 @@ func (e *waitTimeoutError) Error() string {
 	return "timeout waiting for the Deckhouse ModuleConfig API: " + e.last
 }
 
-func main() {
-	kubeconfigPath := os.Getenv("KUBE_CONFIG_PATH")
-	if kubeconfigPath == "" {
-		log.Fatalf("KUBE_CONFIG_PATH is required (path to the target cluster kubeconfig)")
+func envMap() map[string]string {
+	environ := os.Environ()
+	m := make(map[string]string, len(environ))
+	for _, kv := range environ {
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			m[kv[:i]] = kv[i+1:]
+		}
 	}
+	return m
+}
+
+func main() {
 	clusterConfigPath := os.Getenv("E2E_CLUSTER_CONFIG_YAML_PATH")
 	if clusterConfigPath == "" {
 		log.Fatalf("E2E_CLUSTER_CONFIG_YAML_PATH is required (path to the cluster YAML)")
@@ -111,13 +119,17 @@ func main() {
 		"modules", len(clusterDef.DKPParameters.Modules),
 	)
 
-	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-	if err != nil {
-		log.Fatalf("failed to build rest config from kubeconfig %q: %v", kubeconfigPath, err)
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
+
+	// Connect to the Commander cluster in-process (SSH to master via bastion,
+	// fetch kubeconfig, open API tunnel). cleanup tears the tunnel down.
+	slogger.Info("connecting to the Commander cluster")
+	restConfig, cleanup, err := commander.Connect(ctx, envMap(), slogger)
+	if err != nil {
+		log.Fatalf("failed to connect to the Commander cluster: %v", err)
+	}
+	defer cleanup()
 
 	// The cluster can be Ready in Commander before Deckhouse has registered its
 	// ModuleConfig API; wait for it (also absorbs a transient tunnel EOF).
