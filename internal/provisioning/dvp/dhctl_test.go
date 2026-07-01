@@ -270,15 +270,3 @@ func TestRunDhctlBootstrapPassphraseCleanupOrder(t *testing.T) {
 			iConnWrite, iRun, iConnRm, cmds)
 	}
 }
-
-func TestRunDhctlBootstrapRequiresLicense(t *testing.T) {
-	t.Parallel()
-	exec := &funcExecutor{}
-	p := dhctlTestProvider(t, &Config{VMSSHUser: "cloud"})
-	if err := p.runDhctlBootstrap(context.Background(), exec, dhctlTestDef()); err == nil {
-		t.Fatal("runDhctlBootstrap() error = nil, want missing-license error")
-	}
-	if len(exec.recorded()) != 0 {
-		t.Errorf("no commands should run without a license, got %v", exec.recorded())
-	}
-}

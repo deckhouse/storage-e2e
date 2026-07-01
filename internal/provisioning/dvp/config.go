@@ -67,9 +67,9 @@ type Config struct {
 
 	VMSSHUser string `env:"E2E_DVP_VM_SSH_USER" envDefault:"cloud"`
 
-	DKPLicenseKey string `env:"E2E_DVP_DKP_LICENSE_KEY,required"`
+	DKPLicenseKey string `env:"E2E_DVP_DKP_LICENSE_KEY"`
 
-	RegistryDockerCfg string `env:"E2E_DVP_REGISTRY_DOCKER_CFG,required"`
+	RegistryDockerCfg string `env:"E2E_DVP_REGISTRY_DOCKER_CFG"`
 }
 
 type Credentials struct {
