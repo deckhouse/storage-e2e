@@ -161,10 +161,6 @@ func (p *dvpProvider) dhctlBootstrap(ctx context.Context, def *config.ClusterDef
 }
 
 func (p *dvpProvider) runDhctlBootstrap(ctx context.Context, exec remoteExecutor, def *config.ClusterDefinition) error {
-	if p.dvpConf.DKPLicenseKey == "" {
-		return fmt.Errorf("dhctl bootstrap: DKP license key is empty (set E2E_DVP_DKP_LICENSE_KEY)")
-	}
-
 	masterIP, err := firstMasterVMIP(def)
 	if err != nil {
 		return fmt.Errorf("dhctl bootstrap: %w", err)

@@ -35,6 +35,9 @@ var (
 	ErrSSHKeySource       = errors.New("exactly one of E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY_PATH or E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY must be set")
 	ErrJumpHostIncomplete = errors.New("jump host requires E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST, E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER and exactly one of E2E_DVP_BASE_CLUSTER_SSH_JUMP_PRIVATE_KEY_PATH or E2E_DVP_BASE_CLUSTER_SSH_JUMP_PRIVATE_KEY")
 	ErrEmptyKubeconfig    = errors.New("kubeconfig is empty")
+
+	ErrDKPLicenseKeyRequired     = errors.New("E2E_DVP_DKP_LICENSE_KEY is required for bootstrap")
+	ErrRegistryDockerCfgRequired = errors.New("E2E_DVP_REGISTRY_DOCKER_CFG is required for bootstrap")
 )
 
 type Config struct {
@@ -64,9 +67,9 @@ type Config struct {
 
 	VMSSHUser string `env:"E2E_DVP_VM_SSH_USER" envDefault:"cloud"`
 
-	DKPLicenseKey string `env:"E2E_DVP_DKP_LICENSE_KEY"`
+	DKPLicenseKey string `env:"E2E_DVP_DKP_LICENSE_KEY,required"`
 
-	RegistryDockerCfg string `env:"E2E_DVP_REGISTRY_DOCKER_CFG"`
+	RegistryDockerCfg string `env:"E2E_DVP_REGISTRY_DOCKER_CFG,required"`
 }
 
 type Credentials struct {
@@ -105,6 +108,17 @@ func (c *Config) Validate() error {
 		errs = append(errs, ErrJumpHostIncomplete)
 	}
 
+	return errors.Join(errs...)
+}
+
+func (c *Config) ValidateForBootstrap() error {
+	var errs []error
+	if c.DKPLicenseKey == "" {
+		errs = append(errs, ErrDKPLicenseKeyRequired)
+	}
+	if c.RegistryDockerCfg == "" {
+		errs = append(errs, ErrRegistryDockerCfgRequired)
+	}
 	return errors.Join(errs...)
 }
 

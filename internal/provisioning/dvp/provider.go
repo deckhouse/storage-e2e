@@ -92,6 +92,10 @@ func (s *cleanupStack) run() {
 }
 
 func (p *dvpProvider) Bootstrap(ctx context.Context) error {
+	if err := p.dvpConf.ValidateForBootstrap(); err != nil {
+		return fmt.Errorf("bootstrap config validation: %w", err)
+	}
+
 	cleanups := cleanupStack{}
 	defer cleanups.run()
 
