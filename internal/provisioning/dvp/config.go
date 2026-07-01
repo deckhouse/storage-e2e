@@ -61,6 +61,12 @@ type Config struct {
 	VMClassName string `env:"E2E_DVP_BASE_CLUSTER_VM_CLASS" envDefault:"generic"`
 
 	DefaultVMClassName string `env:"E2E_DVP_BASE_CLUSTER_DEFAULT_VM_CLASS" envDefault:"generic"`
+
+	VMSSHUser string `env:"E2E_DVP_VM_SSH_USER" envDefault:"cloud"`
+
+	DKPLicenseKey string `env:"E2E_DVP_DKP_LICENSE_KEY"`
+
+	RegistryDockerCfg string `env:"E2E_DVP_REGISTRY_DOCKER_CFG"`
 }
 
 type Credentials struct {

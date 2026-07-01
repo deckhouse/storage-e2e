@@ -26,9 +26,7 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/deckhouse"
 )
 
-// CreateStaticNodeGroup creates a NodeGroup resource with Static nodeType
 func CreateStaticNodeGroup(ctx context.Context, config *rest.Config, name string) error {
-	// Check if NodeGroup already exists
 	_, err := deckhouse.GetNodeGroup(ctx, config, name)
 	if err == nil {
 		// NodeGroup already exists, nothing to do
@@ -38,7 +36,6 @@ func CreateStaticNodeGroup(ctx context.Context, config *rest.Config, name string
 		return fmt.Errorf("failed to check if nodegroup %s exists: %w", name, err)
 	}
 
-	// Create NodeGroup with Static nodeType
 	if err := deckhouse.CreateNodeGroup(ctx, config, name, "Static"); err != nil {
 		return fmt.Errorf("failed to create nodegroup %s: %w", name, err)
 	}

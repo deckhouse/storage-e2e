@@ -29,6 +29,39 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
+func rewriteKubeconfigServer(kubeconfig []byte, localAddr string) ([]byte, error) {
+	lines := strings.Split(string(kubeconfig), "\n")
+	replaced := false
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), "server:") {
+			continue
+		}
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		lines[i] = fmt.Sprintf("%sserver: https://%s", indent, localAddr)
+		replaced = true
+	}
+	if !replaced {
+		return nil, fmt.Errorf("no server field found in kubeconfig")
+	}
+	return []byte(strings.Join(lines, "\n")), nil
+}
+
+func buildRestConfigFromKubeconfig(kubeconfig []byte) (*rest.Config, error) {
+	apiCfg, err := clientcmd.Load(kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("parsing kubeconfig: %w", err)
+	}
+
+	overrides := &clientcmd.ConfigOverrides{Timeout: (2 * time.Minute).String()}
+	restConfig, err := clientcmd.NewDefaultClientConfig(*apiCfg, overrides).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("creating client config: %w", err)
+	}
+
+	configureTunnelTimeouts(restConfig)
+	return restConfig, nil
+}
+
 func buildRestConfig(kubeconfig []byte, localAddr string) (*rest.Config, error) {
 	apiCfg, err := clientcmd.Load(kubeconfig)
 	if err != nil {
