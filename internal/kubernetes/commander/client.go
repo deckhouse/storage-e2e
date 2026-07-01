@@ -75,6 +75,11 @@ type ClientOptions struct {
 	// APIPrefix specifies the API path prefix (default: "/api/v1")
 	// Common values: "/api/v1", "/api", ""
 	APIPrefix string
+
+	// RequestTimeout bounds a single HTTP request to the Commander API.
+	// Defaults to 120s when zero — cluster-create (POST /clusters) can take
+	// well over the old 30s to return its headers on some deployments.
+	RequestTimeout time.Duration
 }
 
 // NewClient creates a new Commander client with default options
@@ -137,6 +142,11 @@ func NewClientWithOptions(baseURL, token string, opts ClientOptions) (*Client, e
 	// Remove trailing slash from API prefix
 	apiPrefix = strings.TrimSuffix(apiPrefix, "/")
 
+	requestTimeout := opts.RequestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = 120 * time.Second
+	}
+
 	return &Client{
 		baseURL:    baseURL,
 		apiPrefix:  apiPrefix,
@@ -145,7 +155,7 @@ func NewClientWithOptions(baseURL, token string, opts ClientOptions) (*Client, e
 		authUser:   opts.AuthUser,
 		httpClient: &http.Client{
 			Transport: transport,
-			Timeout:   30 * time.Second,
+			Timeout:   requestTimeout,
 		},
 	}, nil
 }

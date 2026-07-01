@@ -28,9 +28,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"github.com/caarlos0/env/v11"
 
+	internalcluster "github.com/deckhouse/storage-e2e/internal/cluster"
+	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh"
 	commanderapi "github.com/deckhouse/storage-e2e/internal/kubernetes/commander"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
@@ -105,15 +109,113 @@ func (p *commanderProvider) Bootstrap(ctx context.Context) error {
 
 	if cluster.Status.Phase == commanderapi.ClusterPhaseReady {
 		p.logger.Info("cluster is already Ready", "cluster", name)
+	} else {
+		p.logger.Info("waiting for cluster to become Ready",
+			"cluster", name, "timeout", p.conf.WaitTimeout)
+		if _, err := p.client.WaitForClusterReady(ctx, name, p.conf.WaitTimeout); err != nil {
+			return fmt.Errorf("wait for cluster %q to become Ready: %w", name, err)
+		}
+		p.logger.Info("cluster is Ready", "cluster", name)
+	}
+
+	return p.exportKubeconfig(ctx, name)
+}
+
+// exportKubeconfig writes the cluster's kubeconfig to conf.KubeconfigOut (when
+// set) so downstream pipeline steps can reach the cluster. It first tries the
+// Commander API; deployments that do not expose the kubeconfig over the API
+// fall back to fetching it over SSH from the master (typically via a jump host),
+// which is how storage-e2e's own commander path retrieves it.
+func (p *commanderProvider) exportKubeconfig(ctx context.Context, name string) error {
+	if p.conf.KubeconfigOut == "" {
 		return nil
 	}
 
-	p.logger.Info("waiting for cluster to become Ready",
-		"cluster", name, "timeout", p.conf.WaitTimeout)
-	if _, err := p.client.WaitForClusterReady(ctx, name, p.conf.WaitTimeout); err != nil {
-		return fmt.Errorf("wait for cluster %q to become Ready: %w", name, err)
+	if kubeconfig, err := p.client.GetClusterKubeconfig(ctx, name); err == nil && kubeconfig != "" {
+		if writeErr := os.WriteFile(p.conf.KubeconfigOut, []byte(kubeconfig), 0o600); writeErr != nil {
+			return fmt.Errorf("write kubeconfig to %q: %w", p.conf.KubeconfigOut, writeErr)
+		}
+		p.logger.Info("wrote cluster kubeconfig (Commander API)", "cluster", name, "path", p.conf.KubeconfigOut)
+		return nil
+	} else {
+		p.logger.Warn("kubeconfig not available via Commander API; falling back to SSH", "cluster", name, "err", err)
 	}
-	p.logger.Info("cluster is Ready", "cluster", name)
+
+	return p.exportKubeconfigViaSSH(ctx, name)
+}
+
+// exportKubeconfigViaSSH fetches the kubeconfig from the master over SSH (via a
+// jump host when configured) and writes it to conf.KubeconfigOut. The master
+// host/user come from the Commander connection info; the SSH key (and jump
+// host) come from the provider config.
+func (p *commanderProvider) exportKubeconfigViaSSH(ctx context.Context, name string) error {
+	if p.conf.SSHPrivateKeyPath == "" {
+		return fmt.Errorf("kubeconfig unavailable via Commander API and no SSH key configured (E2E_COMMANDER_SSH_PRIVATE_KEY_PATH); cannot fetch kubeconfig for %q", name)
+	}
+
+	conn, err := p.client.GetClusterConnectionInfo(ctx, name)
+	if err != nil {
+		return fmt.Errorf("get connection info for cluster %q: %w", name, err)
+	}
+	if conn.SSHHost == "" {
+		return fmt.Errorf("Commander returned no SSH host for cluster %q (connection_hosts.masters empty)", name)
+	}
+
+	user := p.conf.SSHUser
+	if user == "" {
+		user = conn.SSHUser
+	}
+	if user == "" {
+		return fmt.Errorf("no SSH user for the master of cluster %q (set E2E_COMMANDER_SSH_USER)", name)
+	}
+
+	var sshClient ssh.SSHClient
+	if p.conf.SSHJumpHost != "" {
+		jumpUser := p.conf.SSHJumpUser
+		if jumpUser == "" {
+			jumpUser = user
+		}
+		jumpKey := p.conf.SSHJumpKeyPath
+		if jumpKey == "" {
+			jumpKey = p.conf.SSHPrivateKeyPath
+		}
+		p.logger.Info("fetching kubeconfig over SSH via jump host",
+			"cluster", name, "jump", fmt.Sprintf("%s@%s", jumpUser, p.conf.SSHJumpHost), "master", fmt.Sprintf("%s@%s", user, conn.SSHHost))
+		sshClient, err = ssh.NewClientWithJumpHost(jumpUser, p.conf.SSHJumpHost, jumpKey, user, conn.SSHHost, p.conf.SSHPrivateKeyPath)
+	} else {
+		p.logger.Info("fetching kubeconfig over SSH", "cluster", name, "master", fmt.Sprintf("%s@%s", user, conn.SSHHost))
+		sshClient, err = ssh.NewClient(user, conn.SSHHost, p.conf.SSHPrivateKeyPath)
+	}
+	if err != nil {
+		return fmt.Errorf("create SSH client to master of cluster %q: %w", name, err)
+	}
+	defer sshClient.Close()
+
+	outDir := filepath.Dir(p.conf.KubeconfigOut)
+	_, fetchedPath, err := internalcluster.GetKubeconfig(ctx, conn.SSHHost, user, p.conf.SSHPrivateKeyPath, sshClient, outDir)
+	if err != nil {
+		return fmt.Errorf("fetch kubeconfig over SSH for cluster %q: %w", name, err)
+	}
+
+	data, err := os.ReadFile(fetchedPath)
+	if err != nil {
+		return fmt.Errorf("read fetched kubeconfig %q: %w", fetchedPath, err)
+	}
+	if err := os.WriteFile(p.conf.KubeconfigOut, data, 0o600); err != nil {
+		return fmt.Errorf("write kubeconfig to %q: %w", p.conf.KubeconfigOut, err)
+	}
+	p.logger.Info("wrote cluster kubeconfig (SSH)", "cluster", name, "path", p.conf.KubeconfigOut)
+
+	// The fetched kubeconfig points the API server at the node-local proxy
+	// (e.g. https://127.0.0.1:6445), so it is only usable through an SSH tunnel
+	// to the master. Record the master host/user in a sidecar file so downstream
+	// pipeline steps (enable-modules, run-tests) can open that tunnel.
+	sshInfo := fmt.Sprintf("host=%s\nuser=%s\n", conn.SSHHost, user)
+	sshInfoPath := p.conf.KubeconfigOut + ".sshinfo"
+	if err := os.WriteFile(sshInfoPath, []byte(sshInfo), 0o600); err != nil {
+		return fmt.Errorf("write kubeconfig ssh-info to %q: %w", sshInfoPath, err)
+	}
+	p.logger.Info("wrote kubeconfig ssh-info", "path", sshInfoPath, "master", fmt.Sprintf("%s@%s", user, conn.SSHHost))
 	return nil
 }
 

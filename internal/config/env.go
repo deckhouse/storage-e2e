@@ -22,6 +22,11 @@ const (
 	ClusterCreateModeAlwaysCreateNew = "alwaysCreateNew"
 	// ClusterCreateModeCommander indicates to create or use a cluster from Deckhouse Commander
 	ClusterCreateModeCommander = "commander"
+	// ClusterCreateModeKubeconfig connects to an already-running cluster directly
+	// from a kubeconfig file (KUBE_CONFIG_PATH) with no SSH tunnel. Used by the CI
+	// pipeline's run-tests step, where the cluster was bootstrapped out-of-band
+	// (e.g. by the Commander provider) and its kubeconfig handed off as an artifact.
+	ClusterCreateModeKubeconfig = "kubeconfig"
 
 	// ImagePullPolicyAlways indicates to always create ClusterVirtualImage and fail if it exists
 	ImagePullPolicyAlways = "Always"
@@ -309,16 +314,22 @@ func ValidateEnvironment() error {
 
 	if TestClusterCreateMode == "" {
 		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE environment variable is required but not set; "+
-			"please set it to '%s', '%s', or '%s'",
-			ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander)
+			"please set it to '%s', '%s', '%s', or '%s'",
+			ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander, ClusterCreateModeKubeconfig)
 	}
 
 	if TestClusterCreateMode != ClusterCreateModeAlwaysUseExisting &&
 		TestClusterCreateMode != ClusterCreateModeAlwaysCreateNew &&
-		TestClusterCreateMode != ClusterCreateModeCommander {
+		TestClusterCreateMode != ClusterCreateModeCommander &&
+		TestClusterCreateMode != ClusterCreateModeKubeconfig {
 		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE has invalid value '%s'; "+
-			"must be '%s', '%s', or '%s'",
-			TestClusterCreateMode, ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander)
+			"must be '%s', '%s', '%s', or '%s'",
+			TestClusterCreateMode, ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander, ClusterCreateModeKubeconfig)
+	}
+
+	// The kubeconfig mode connects straight from a file; require the path.
+	if TestClusterCreateMode == ClusterCreateModeKubeconfig && KubeConfigPath == "" {
+		return fmt.Errorf("KUBE_CONFIG_PATH environment variable is required when TEST_CLUSTER_CREATE_MODE is '%s'", ClusterCreateModeKubeconfig)
 	}
 
 	// Validate Commander-specific environment variables when in Commander mode

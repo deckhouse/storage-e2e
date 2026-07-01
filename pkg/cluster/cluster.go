@@ -946,6 +946,75 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 	return clusterResources, nil
 }
 
+// ConnectViaKubeconfig connects to an already-running cluster directly from the
+// kubeconfig file pointed to by KUBE_CONFIG_PATH, with NO SSH tunnel. The
+// cluster API server must be reachable from where the suite runs. It acquires
+// the cluster lock and verifies health, mirroring UseExistingCluster minus the
+// SSH plumbing. Used by the CI run-tests step against a cluster bootstrapped
+// out-of-band (e.g. by the Commander provider, whose kubeconfig is handed off as
+// an artifact). The returned resources carry only the Kubeconfig; teardown only
+// needs to release the lock (the separate teardown job removes the cluster).
+func ConnectViaKubeconfig(ctx context.Context) (*TestClusterResources, error) {
+	if config.KubeConfigPath == "" {
+		return nil, fmt.Errorf("KUBE_CONFIG_PATH is required for kubeconfig connect mode")
+	}
+	resolvedPath, expandErr := expandPath(config.KubeConfigPath)
+	if expandErr != nil {
+		return nil, fmt.Errorf("failed to expand KUBE_CONFIG_PATH (%s): %w", config.KubeConfigPath, expandErr)
+	}
+
+	logger.Step(1, "Building rest config from kubeconfig %s", resolvedPath)
+	restConfig, buildErr := clientcmd.BuildConfigFromFlags("", resolvedPath)
+	if buildErr != nil {
+		return nil, fmt.Errorf("failed to build rest config from kubeconfig %s: %w", resolvedPath, buildErr)
+	}
+	configureExtendedTimeouts(restConfig)
+	logger.StepComplete(1, "Rest config built from kubeconfig")
+
+	clusterResources := &TestClusterResources{Kubeconfig: restConfig}
+
+	logger.Step(2, "Acquiring cluster lock")
+	testName := config.TestClusterNamespace
+	if testName == "" {
+		testName = fmt.Sprintf("e2e-test-%d", time.Now().UnixNano())
+	}
+	if err := AcquireClusterLock(ctx, restConfig, testName); err != nil {
+		return nil, fmt.Errorf("failed to acquire cluster lock: %w", err)
+	}
+	logger.StepComplete(2, "Cluster lock acquired")
+
+	logger.Step(3, "Verifying cluster health (with retries)")
+	const maxHealthRetries = 10
+	const healthRetryInterval = 30 * time.Second
+	var healthErr error
+	for attempt := 1; attempt <= maxHealthRetries; attempt++ {
+		healthCtx, cancel := context.WithTimeout(ctx, config.ClusterHealthTimeout)
+		healthErr = CheckClusterHealth(healthCtx, restConfig, CheckClusterHealthOptions{
+			CheckBootstrapSecrets: false,
+		})
+		cancel()
+		if healthErr == nil {
+			break
+		}
+		if attempt < maxHealthRetries {
+			logger.Warn("Health check attempt %d/%d failed: %v. Retrying in %v...", attempt, maxHealthRetries, healthErr, healthRetryInterval)
+			select {
+			case <-ctx.Done():
+				healthErr = fmt.Errorf("context cancelled during health check retries: %w", ctx.Err())
+			case <-time.After(healthRetryInterval):
+			}
+		}
+	}
+	if healthErr != nil {
+		_ = ReleaseClusterLock(ctx, restConfig)
+		return nil, fmt.Errorf("cluster health check failed after %d attempts: %w", maxHealthRetries, healthErr)
+	}
+	logger.StepComplete(3, "Cluster is healthy")
+
+	logger.Success("Connected to cluster via kubeconfig")
+	return clusterResources, nil
+}
+
 // CleanupExistingCluster releases the cluster lock and closes connections.
 // This should be called after using an existing cluster with UseExistingCluster.
 // Note: Stress namespace cleanup should be done by the caller before calling this function.
@@ -1555,6 +1624,20 @@ func configureExtendedTimeouts(config *rest.Config) {
 func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) error {
 	if resources == nil {
 		return nil // Nothing to clean up
+	}
+
+	// Kubeconfig mode owns no VMs/SSH/tunnels — it only holds the cluster lock.
+	// The cluster itself is removed by the separate teardown step, so cleanup
+	// here is just releasing the lock.
+	if config.TestClusterCreateMode == config.ClusterCreateModeKubeconfig {
+		if resources.Kubeconfig != nil {
+			if err := ReleaseClusterLock(ctx, resources.Kubeconfig); err != nil {
+				logger.Error("Failed to release cluster lock: %v", err)
+				return fmt.Errorf("failed to release cluster lock: %w", err)
+			}
+			logger.Success("Cluster lock released")
+		}
+		return nil
 	}
 
 	logger.Step(1, "Stopping test cluster tunnel and closing SSH client")
@@ -2392,6 +2475,23 @@ func CreateOrConnectToTestCluster() *TestClusterResources {
 			} else {
 				GinkgoWriter.Printf("    ✅ Connected to existing cluster '%s' via Commander successfully\n", cmdResources.ClusterName)
 			}
+		})
+
+	case config.ClusterCreateModeKubeconfig:
+		// Connect to an already-running cluster straight from a kubeconfig file
+		// (no SSH). Used by CI run-tests against an out-of-band bootstrapped cluster.
+		By("Connecting to cluster via kubeconfig", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), config.ClusterCreationTimeout)
+			defer cancel()
+
+			GinkgoWriter.Printf("    ▶️ Connecting via kubeconfig (mode: %s, KUBE_CONFIG_PATH=%s)\n", config.TestClusterCreateMode, config.KubeConfigPath)
+			var err error
+			testClusterResources, err = ConnectViaKubeconfig(ctx)
+			if err != nil {
+				GinkgoWriter.Printf("    ❌ Failed to connect via kubeconfig: %v\n", err)
+				Expect(err).NotTo(HaveOccurred(), "Should connect via kubeconfig successfully")
+			}
+			GinkgoWriter.Printf("    ✅ Connected via kubeconfig successfully (cluster lock acquired)\n")
 		})
 
 	case config.ClusterCreateModeAlwaysCreateNew:

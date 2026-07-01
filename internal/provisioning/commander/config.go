@@ -57,4 +57,22 @@ type Config struct {
 
 	// WaitTimeout bounds the wait for the created cluster to reach Ready.
 	WaitTimeout time.Duration `env:"E2E_COMMANDER_WAIT_TIMEOUT" envDefault:"30m"`
+
+	// KubeconfigOut, when set, is a file path the provider writes the created
+	// cluster's kubeconfig to after it becomes Ready. The pipeline uploads it as
+	// an artifact so the later enable-modules and run-tests steps can reach the
+	// cluster. It is fetched via the Commander API when available, otherwise over
+	// SSH from the master (see the SSH* fields below).
+	KubeconfigOut string `env:"E2E_COMMANDER_KUBECONFIG_OUT"`
+
+	// SSH* configure the fallback kubeconfig fetch over SSH (used when the
+	// Commander deployment does not expose the kubeconfig over its API). The
+	// master host/user come from the Commander connection info; these supply the
+	// key and the (usually required) jump host. SSHUser overrides the
+	// Commander-reported master user; the jump key defaults to the master key.
+	SSHPrivateKeyPath string `env:"E2E_COMMANDER_SSH_PRIVATE_KEY_PATH"`
+	SSHUser           string `env:"E2E_COMMANDER_SSH_USER"`
+	SSHJumpHost       string `env:"E2E_COMMANDER_SSH_JUMP_HOST"`
+	SSHJumpUser       string `env:"E2E_COMMANDER_SSH_JUMP_USER"`
+	SSHJumpKeyPath    string `env:"E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY_PATH"`
 }
