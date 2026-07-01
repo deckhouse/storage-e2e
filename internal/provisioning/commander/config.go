@@ -54,9 +54,11 @@ type Config struct {
 	ClusterName string `env:"E2E_COMMANDER_CLUSTER_NAME" envDefault:"e2e-test-cluster"`
 
 	// TemplateName selects the cluster template the new cluster is created from.
-	// TemplateVersion optionally pins a specific version (by name or ID); when
-	// empty the template's current version (or first available) is used.
-	TemplateName    string `env:"E2E_COMMANDER_TEMPLATE_NAME,required"`
+	// Required only for Bootstrap (create); the connect path (enable-modules /
+	// suite) does not need it, so it is validated in createCluster rather than
+	// via a struct tag. TemplateVersion optionally pins a specific version (by
+	// name or ID); when empty the template's current version (or first) is used.
+	TemplateName    string `env:"E2E_COMMANDER_TEMPLATE_NAME"`
 	TemplateVersion string `env:"E2E_COMMANDER_TEMPLATE_VERSION"`
 
 	// RegistryName, when set, is resolved to a registry_id passed to the create

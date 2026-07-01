@@ -152,6 +152,10 @@ func (p *commanderProvider) Remove(ctx context.Context) error {
 // createCluster resolves the template, its version and (optionally) the
 // registry, then issues the create request.
 func (p *commanderProvider) createCluster(ctx context.Context, name string) (*commanderapi.Cluster, error) {
+	if p.conf.TemplateName == "" {
+		return nil, fmt.Errorf("E2E_COMMANDER_TEMPLATE_NAME is required to create cluster %q", name)
+	}
+
 	template, err := p.client.GetClusterTemplateByName(ctx, p.conf.TemplateName)
 	if err != nil {
 		return nil, fmt.Errorf("resolve template %q: %w", p.conf.TemplateName, err)
