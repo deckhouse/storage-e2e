@@ -25,49 +25,41 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
+	ssh "github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/internal/provisioning/dvp/vm"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
 
-// baseConnector connects to the base cluster API and returns a cleanup.
-//
-// On error, implementations MUST release any partially-acquired resources
-// themselves and return a nil cleanup: callers register the cleanup with defer
-// only after checking the error, so a cleanup returned alongside an error would
-// be dropped and leak.
-type baseConnector interface {
-	Connect(ctx context.Context) (*rest.Config, func(), error)
+type remoteExecutor interface {
+	Exec(ctx context.Context, cmd string) (ssh.ExecResult, error)
 }
 
-// kubeOps are the base-cluster Kubernetes operations the bootstrap pipeline
-// needs so far. Grown per PR (YAGNI).
+type baseConnector interface {
+	Connect(ctx context.Context) (*rest.Config, func(), error)
+	VMExecutor(ctx context.Context, vmIP string) (remoteExecutor, func(), error)
+}
+
 type kubeOps interface {
 	CheckReachable(ctx context.Context, kube *rest.Config) error
 	WaitModuleReady(ctx context.Context, kube *rest.Config, module string, timeout time.Duration) error
 	EnsureNamespace(ctx context.Context, kube *rest.Config, namespace string) error
 }
 
-// vmFleet provisions and tears down the VM graph in the base cluster.
 type vmFleet interface {
 	Provision(ctx context.Context, def *config.ClusterDefinition) error
 	Teardown(ctx context.Context) error
 }
 
-// fleetFactory builds a vmFleet bound to a connected base cluster. sshPublicKey
-// is injected into VM cloud-init (empty for teardown-only use).
 type fleetFactory interface {
 	New(ctx context.Context, kube *rest.Config, sshPublicKey string) (vmFleet, error)
 }
 
-// deps holds the provider's injected collaborators.
 type deps struct {
 	connector baseConnector
 	kube      kubeOps
 	fleet     fleetFactory
 }
-
-// --- production adapters ---
 
 type defaultKubeOps struct{}
 

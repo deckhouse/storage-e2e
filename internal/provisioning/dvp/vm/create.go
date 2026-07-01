@@ -23,6 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
+	"github.com/deckhouse/virtualization/api/core/v1alpha2/vdcondition"
 	"github.com/deckhouse/virtualization/api/core/v1alpha3"
 )
 
@@ -146,6 +147,27 @@ func virtualMachineRunning(machine *v1alpha2.VirtualMachine, getErr error) (bool
 	default:
 		return false, nil
 	}
+}
+
+// virtualDiskFailure reports whether the disk sits in a failure phase
+// (Failed or PVCLost) and returns the reason/message from its Ready condition,
+// if present, for logging. It intentionally does not treat this as a hard
+// error: DVCR/registry outages are often transient, so callers keep waiting.
+func virtualDiskFailure(vd *v1alpha2.VirtualDisk) (failed bool, reason, message string) {
+	if vd == nil {
+		return false, "", ""
+	}
+	switch vd.Status.Phase {
+	case v1alpha2.DiskFailed, v1alpha2.DiskLost:
+	default:
+		return false, "", ""
+	}
+	for _, c := range vd.Status.Conditions {
+		if c.Type == string(vdcondition.ReadyType) {
+			return true, c.Reason, c.Message
+		}
+	}
+	return true, "", ""
 }
 
 func resourceDeleted[T any](_ T, getErr error) (bool, error) {

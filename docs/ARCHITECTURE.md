@@ -63,6 +63,7 @@ storage-e2e/
 │   │           ├── endpoint.go   # Endpoint, auth, host/key resolution
 │   │           ├── errors.go     # transient classification
 │   │           ├── options.go    # functional options
+│   │           ├── retry.go      # NewWithRetry: retry initial dial until connect/timeout
 │   │           └── tunnel.go     # Tunnel, accept loop
 │   │
 │   ├── provisioning/             # Cluster provisioning strategies (Provider impls)
@@ -71,8 +72,9 @@ storage-e2e/
 │   │   │   └── config.go        # Commander provider configuration
 │   │   └── dvp/                 # DVP (Deckhouse Virtualization Platform) provider
 │   │       ├── provider.go      # dvpProvider: Bootstrap/Remove orchestration
-│   │       ├── connect.go       # dvpConnector: SSH tunnel + base-cluster rest.Config
-│   │       ├── deps.go          # DI seam: baseConnector/kubeOps/fleetFactory + adapters
+│   │       ├── connect.go       # dvpConnector: SSH tunnel + base-cluster rest.Config + per-VM executors (baseEndpoints/VMExecutor)
+│   │       ├── deps.go          # DI seam: baseConnector/kubeOps/fleetFactory + remoteExecutor + adapters
+│   │       ├── setupnode.go     # setup-node synthesis (newSetupNode, fixed name) + readiness gating (buildDockerReadyCommand + waitDockerReady)
 │   │       ├── bootstrap.go     # dhctl bootstrap-config rendering (param derivation + render + CIDR calc)
 │   │       ├── bootstrap.tpl    # Embedded dhctl bootstrap config template
 │   │       ├── config.go        # Config, Credentials, env parsing/validation
@@ -514,6 +516,7 @@ infrastructure/ssh/
     ├── endpoint.go     # Endpoint, auth, host/key resolution
     ├── errors.go       # transient classification
     ├── options.go      # functional options
+    ├── retry.go        # NewWithRetry: retry initial dial until connect/timeout
     └── tunnel.go       # Tunnel, accept loop
 ```
 

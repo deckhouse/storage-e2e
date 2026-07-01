@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
+	sshv2 "github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
 
@@ -97,8 +98,9 @@ func (r *recorder) log(call string) { r.calls = append(r.calls, call) }
 // --- fakes ---
 
 type fakeConnector struct {
-	rec *recorder
-	err error
+	rec       *recorder
+	err       error
+	vmExecErr error
 }
 
 func (f fakeConnector) Connect(ctx context.Context) (*rest.Config, func(), error) {
@@ -107,6 +109,21 @@ func (f fakeConnector) Connect(ctx context.Context) (*rest.Config, func(), error
 		return nil, nil, f.err
 	}
 	return &rest.Config{}, func() { f.rec.log("cleanup") }, nil
+}
+
+func (f fakeConnector) VMExecutor(ctx context.Context, vmIP string) (remoteExecutor, func(), error) {
+	f.rec.log("vmexec")
+	if f.vmExecErr != nil {
+		return nil, nil, f.vmExecErr
+	}
+	return fakeExecutor{rec: f.rec}, func() { f.rec.log("closeExec") }, nil
+}
+
+// fakeExecutor reports Docker ready on the first poll (exit code 0).
+type fakeExecutor struct{ rec *recorder }
+
+func (f fakeExecutor) Exec(ctx context.Context, cmd string) (sshv2.ExecResult, error) {
+	return sshv2.ExecResult{}, nil
 }
 
 type fakeKube struct {
@@ -186,7 +203,7 @@ func TestBootstrapHappyPath(t *testing.T) {
 		t.Fatalf("Bootstrap() error = %v", err)
 	}
 
-	want := []string{"connect", "reachable", "module", "namespace", "fleet.New", "provision", "cleanup"}
+	want := []string{"connect", "reachable", "module", "namespace", "fleet.New", "provision", "vmexec", "closeExec", "cleanup"}
 	if !slices.Equal(rec.calls, want) {
 		t.Errorf("call order = %v, want %v", rec.calls, want)
 	}

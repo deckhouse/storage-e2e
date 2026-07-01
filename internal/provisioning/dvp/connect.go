@@ -24,11 +24,15 @@ import (
 
 	"k8s.io/client-go/rest"
 
-	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
+	"github.com/deckhouse/storage-e2e/internal/config"
+	ssh "github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
 )
 
-// dvpConnector opens an SSH tunnel to the base cluster API server and builds a
-// rest.Config pointed at the tunnel. It is the production baseConnector.
+const (
+	setupNodeConnectPoll    = 10 * time.Second
+	setupNodeConnectTimeout = 5 * time.Minute
+)
+
 type dvpConnector struct {
 	dvpConf *Config
 	creds   Credentials
@@ -39,38 +43,57 @@ func newConnector(dvpConf *Config, creds Credentials, logger *slog.Logger) *dvpC
 	return &dvpConnector{dvpConf: dvpConf, creds: creds, logger: logger}
 }
 
-func (c *dvpConnector) buildSSHClient(ctx context.Context) (*ssh.Client, error) {
-	var dialer ssh.Dialer
-	if c.dvpConf.JumpHostConfigured() {
-		dialer = ssh.Route(ssh.Endpoint{
-			User:       c.dvpConf.SSHJumpUser,
-			Addr:       c.dvpConf.SSHJumpHost,
-			KeyData:    c.creds.JumpKey,
-			Passphrase: c.dvpConf.SSHJumpPassphrase,
-		}, ssh.Endpoint{
-			User:       c.dvpConf.SSHUser,
-			Addr:       c.dvpConf.SSHHost,
-			KeyData:    c.creds.SSHKey,
-			Passphrase: c.dvpConf.SSHPassphrase,
-		})
-	} else {
-		dialer = ssh.Route(ssh.Endpoint{
-			User:       c.dvpConf.SSHUser,
-			Addr:       c.dvpConf.SSHHost,
-			KeyData:    c.creds.SSHKey,
-			Passphrase: c.dvpConf.SSHPassphrase,
-		})
+func (c *dvpConnector) baseEndpoints() []ssh.Endpoint {
+	base := ssh.Endpoint{
+		User:       c.dvpConf.SSHUser,
+		Addr:       c.dvpConf.SSHHost,
+		KeyData:    c.creds.SSHKey,
+		Passphrase: c.dvpConf.SSHPassphrase,
 	}
+	if c.dvpConf.JumpHostConfigured() {
+		return []ssh.Endpoint{
+			{
+				User:       c.dvpConf.SSHJumpUser,
+				Addr:       c.dvpConf.SSHJumpHost,
+				KeyData:    c.creds.JumpKey,
+				Passphrase: c.dvpConf.SSHJumpPassphrase,
+			},
+			base,
+		}
+	}
+	return []ssh.Endpoint{base}
+}
 
-	sshClient, err := ssh.New(ctx, dialer, ssh.WithKeepalive(30*time.Second))
+func (c *dvpConnector) buildSSHClient(ctx context.Context) (*ssh.Client, error) {
+	hops := c.baseEndpoints()
+	sshClient, err := ssh.New(ctx, ssh.Route(hops[0], hops[1:]...), ssh.WithKeepalive(30*time.Second))
 	if err != nil {
 		return nil, fmt.Errorf("creating ssh client: %w", err)
 	}
 	return sshClient, nil
 }
 
-// Connect returns a rest.Config for the base cluster and a cleanup that tears
-// down the tunnel and SSH client (run in reverse order).
+func (c *dvpConnector) VMExecutor(ctx context.Context, vmIP string) (remoteExecutor, func(), error) {
+	hops := append(c.baseEndpoints(), ssh.Endpoint{
+		User:       config.VMSSHUser,
+		Addr:       vmIP,
+		KeyData:    c.creds.SSHKey,
+		Passphrase: c.dvpConf.SSHPassphrase,
+	})
+
+	client, err := ssh.NewWithRetry(ctx, ssh.Route(hops[0], hops[1:]...),
+		setupNodeConnectPoll, setupNodeConnectTimeout, ssh.WithInsecureIgnoreHostKey())
+	if err != nil {
+		return nil, nil, fmt.Errorf("connecting to VM %s: %w", vmIP, err)
+	}
+
+	return client, func() {
+		if closeErr := client.Close(); closeErr != nil {
+			c.logger.Warn("failed to close VM ssh client", "vmIP", vmIP, "err", closeErr)
+		}
+	}, nil
+}
+
 func (c *dvpConnector) Connect(ctx context.Context) (*rest.Config, func(), error) {
 	kubeconfigSource := "path"
 	if c.dvpConf.KubeConfigContent != "" {
