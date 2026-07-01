@@ -149,8 +149,6 @@ func (p *dvpProvider) Remove(ctx context.Context) error {
 	p.logger.Info("tearing down virtual machines",
 		"namespace", p.dvpConf.Namespace,
 	)
-	// Per-resource DeleteTimeout (from vm.Timeouts) governs each deletion wait,
-	// so we pass the caller context through without an umbrella timeout.
 	if err := fleet.Teardown(ctx); err != nil {
 		return fmt.Errorf("teardown virtual machines: %w", err)
 	}
