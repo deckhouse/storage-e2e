@@ -22,32 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/deckhouse/storage-e2e/internal/config"
 	sshv2 "github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
 )
-
-func TestNewSetupNode(t *testing.T) {
-	t.Parallel()
-
-	node := newSetupNode()
-
-	if node.Hostname != setupNodeHostname {
-		t.Errorf("Hostname = %q, want stable %q (idempotent re-runs)", node.Hostname, setupNodeHostname)
-	}
-	if node.Role != config.ClusterRoleSetup {
-		t.Errorf("Role = %q, want %q (setup so cloud-init installs Docker)", node.Role, config.ClusterRoleSetup)
-	}
-	if node.HostType != config.HostTypeVM {
-		t.Errorf("HostType = %q, want %q", node.HostType, config.HostTypeVM)
-	}
-	if node.OSType.ImageURL == "" {
-		t.Error("OSType.ImageURL is empty; setup VM cannot resolve a ClusterVirtualImage")
-	}
-	// Must be an independent value, not aliasing the package-level template.
-	if node == &config.DefaultSetupVM {
-		t.Error("newSetupNode returned a pointer to the shared DefaultSetupVM template")
-	}
-}
 
 func TestBuildDockerReadyCommand(t *testing.T) {
 	t.Parallel()

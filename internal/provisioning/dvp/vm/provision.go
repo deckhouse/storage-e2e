@@ -31,9 +31,6 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/config"
 )
 
-// maxConcurrentOps caps how many resource operations (image/disk/VM create or
-// delete waits) run concurrently within a single provisioning phase, so large
-// clusters do not open an unbounded number of API calls / tunnel streams at once.
 const maxConcurrentOps = 8
 
 type Config struct {
@@ -268,12 +265,17 @@ func (p *Provisioner) waitRunningAndCollectIPs(ctx context.Context, planned []pl
 			waitCtx, cancel := context.WithTimeout(gctx, p.cfg.Timeouts.VMRunningTimeout)
 			defer cancel()
 
-			var ip string
+			diskName := systemDiskName(pl.node.Hostname)
+			var (
+				ip              string
+				lastDiskFailure string
+			)
 			err := waitForCondition(waitCtx, p.cfg.Timeouts.PollInterval,
 				func(ctx context.Context) (*v1alpha2.VirtualMachine, error) {
 					return p.client.GetVirtualMachine(ctx, p.cfg.Namespace, pl.node.Hostname)
 				},
 				func(machine *v1alpha2.VirtualMachine, getErr error) (bool, error) {
+					p.warnOnDiskFailure(waitCtx, diskName, pl.node.Hostname, &lastDiskFailure)
 					done, condErr := virtualMachineRunning(machine, getErr)
 					if done {
 						ip = machine.Status.IPAddress
@@ -292,9 +294,25 @@ func (p *Provisioner) waitRunningAndCollectIPs(ctx context.Context, planned []pl
 	return g.Wait()
 }
 
-// uniqueImages maps each distinct CVI name to its source image URL. Because
-// cviNameFromImageURL appends a hash of the full URL, the name is unique per
-// URL, so distinct images can no longer collide onto the same map key.
+func (p *Provisioner) warnOnDiskFailure(ctx context.Context, diskName, vmName string, lastLogged *string) {
+	vd, err := p.client.GetVirtualDisk(ctx, p.cfg.Namespace, diskName)
+	if err != nil {
+		return
+	}
+	failed, reason, message := virtualDiskFailure(vd)
+	if !failed {
+		*lastLogged = ""
+		return
+	}
+	phase := string(vd.Status.Phase)
+	if *lastLogged == phase {
+		return
+	}
+	*lastLogged = phase
+	p.log.Warn("backing VirtualDisk is in a failure phase; still waiting for VM (disk may recover)",
+		"vm", vmName, "vd", diskName, "phase", phase, "reason", reason, "message", message)
+}
+
 func uniqueImages(planned []plannedVM) map[string]string {
 	images := make(map[string]string, len(planned))
 	for _, pl := range planned {
