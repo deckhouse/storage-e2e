@@ -30,10 +30,8 @@ import (
 //go:embed bootstrap.tpl
 var bootstrapTemplate string
 
-// bootstrapTmpl is parsed once at package load; reused on every render.
 var bootstrapTmpl = template.Must(template.New("bootstrap-config").Parse(bootstrapTemplate))
 
-// bootstrapParams are the inputs to the dhctl bootstrap config template.
 type bootstrapParams struct {
 	PodSubnetCIDR        string
 	ServiceSubnetCIDR    string
@@ -46,7 +44,6 @@ type bootstrapParams struct {
 	DevBranch            string
 }
 
-// renderBootstrapConfig renders the embedded bootstrap template with p.
 func renderBootstrapConfig(p bootstrapParams) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := bootstrapTmpl.Execute(&buf, p); err != nil {
@@ -55,15 +52,11 @@ func renderBootstrapConfig(p bootstrapParams) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// buildBootstrapParams derives template inputs from a cluster definition whose
-// VM nodes already have IPAddress filled. registryDockerCfg is supplied by the
-// caller (from dvp.Config), not read from any global.
 func buildBootstrapParams(def *config.ClusterDefinition, registryDockerCfg string) (bootstrapParams, error) {
 	if def == nil {
 		return bootstrapParams{}, fmt.Errorf("cluster definition is nil")
 	}
 
-	// Validate required DKP fields here rather than assuming def.Validate() ran.
 	required := []struct {
 		value string
 		msg   string
@@ -129,7 +122,6 @@ func buildBootstrapParams(def *config.ClusterDefinition, registryDockerCfg strin
 	}, nil
 }
 
-// calculateNetworkCIDR returns the smallest /24../16 network containing all IPs.
 func calculateNetworkCIDR(vmIPs []string) (string, error) {
 	if len(vmIPs) == 0 {
 		return "", fmt.Errorf("vmIPs cannot be empty")

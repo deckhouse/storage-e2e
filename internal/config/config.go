@@ -23,7 +23,7 @@ import "time"
 // DefaultSetupVM is the default VM configuration of the node that is used for bootstrap of test cluster.
 // This VM is always created separately and should be deleted after cluster bootstrap.
 var DefaultSetupVM = ClusterNode{
-	Hostname:     "bootstrap-node-",
+	Hostname:     "bootstrap-node",
 	HostType:     HostTypeVM,
 	Role:         ClusterRoleSetup,
 	OSType:       OSTypeMap["Ubuntu 22.04 6.2.0-39-generic"],

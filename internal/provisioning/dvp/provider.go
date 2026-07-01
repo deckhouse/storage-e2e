@@ -123,6 +123,11 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		return err
 	}
 
+	if clusterDef.Setup == nil {
+		clusterDef.Setup = new(config.DefaultSetupVM)
+		p.logger.Info("add setup node", "hostname", clusterDef.Setup.Hostname)
+	}
+
 	p.logger.Info("provisioning virtual machines",
 		"namespace", p.dvpConf.Namespace,
 	)
@@ -130,6 +135,24 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 		return fmt.Errorf("provision virtual machines: %w", err)
 	}
 	p.logger.Info("virtual machines provisioned", "namespace", p.dvpConf.Namespace)
+
+	setupIP := clusterDef.Setup.IPAddress
+
+	p.logger.Info("waiting for setup node SSH to become ready",
+		"ip", setupIP, "timeout", setupNodeConnectTimeout)
+	exec, closeExec, err := p.deps.connector.VMExecutor(ctx, setupIP)
+	if err != nil {
+		return fmt.Errorf("setup node ssh not ready: %w", err)
+	}
+	defer closeExec()
+	p.logger.Info("setup node SSH is ready", "ip", setupIP)
+
+	p.logger.Info("waiting for setup node Docker to become ready",
+		"ip", setupIP, "timeout", dockerReadyTimeout)
+	if err := waitDockerReady(ctx, exec, dockerReadyPoll, dockerReadyTimeout); err != nil {
+		return fmt.Errorf("setup node docker not ready: %w", err)
+	}
+	p.logger.Info("setup node Docker is ready", "ip", setupIP)
 
 	return nil
 }

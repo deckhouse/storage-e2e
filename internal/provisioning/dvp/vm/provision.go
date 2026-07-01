@@ -190,7 +190,7 @@ func (p *Provisioner) provisionClusterVirtualImages(ctx context.Context, planned
 			if err := createIfAbsentClusterVirtualImage(gctx, p.client, cvi); err != nil {
 				return err
 			}
-			p.log.Info("ensured ClusterVirtualImage, waiting for Ready", "name", name)
+			p.log.Info("provisioned ClusterVirtualImage, waiting for Ready", "name", name)
 
 			waitCtx, cancel := context.WithTimeout(gctx, p.cfg.Timeouts.ClusterVirtualImageReadyTimeout)
 			defer cancel()
@@ -256,7 +256,7 @@ func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
 	if createErr := createIfAbsentVirtualMachine(ctx, p.client, machine); createErr != nil {
 		return createErr
 	}
-	p.log.Info("ensured VirtualDisk and VirtualMachine", "vm", pl.node.Hostname)
+	p.log.Info("provisioned VirtualDisk and VirtualMachine", "vm", pl.node.Hostname)
 	return nil
 }
 
