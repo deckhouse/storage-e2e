@@ -68,11 +68,6 @@ These mirror the rules in `.cursor/rules/` — apply them whether or not you use
    between layers, new cluster mode, new env var, changed core types), update the affected
    sections of [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Only touch affected sections.
 
-5. **Work log.** After any change to `*.go`, `*.yml`, `*.yaml`, `*.tpl`, or `*.sh`, append a
-   one-line entry to [docs/WORKLOG.md](docs/WORKLOG.md) under today's `## YYYY-MM-DD`
-   heading: `- **Type** description` (Type ∈ Add/Remove/Rename/Refactor/Bugfix/Update/Move).
-   Append only; never edit previous days' entries.
-
 6. **`/todo` command.** When a message starts with `/todo`, manage items in
    [docs/TODO.md](docs/TODO.md) (Add / Remove / Check|List / Done), then record a WORKLOG entry.
 
