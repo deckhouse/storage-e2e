@@ -958,7 +958,13 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 // job removes the cluster itself.
 func ConnectToCommanderCluster(ctx context.Context) (*TestClusterResources, error) {
 	logger.Step(1, "Connecting to Commander cluster (SSH tunnel + kubeconfig)")
-	restConfig, cleanup, err := commanderprov.Connect(ctx, envMap(), logger.GetLogger())
+	// The connector ties the SSH client + tunnel serve loop to the context it is
+	// given, so it must NOT be the caller's short-lived (ClusterCreationTimeout)
+	// context — that would tear the tunnel down the moment connect returns and
+	// break every later API call in the suite. Detach cancellation so the tunnel
+	// lives until CleanupTestCluster calls cleanup() (via TunnelInfo.StopFunc);
+	// connect setup is still bounded by the connector's own NewWithRetry timeout.
+	restConfig, cleanup, err := commanderprov.Connect(context.WithoutCancel(ctx), envMap(), logger.GetLogger())
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to Commander cluster: %w", err)
 	}
