@@ -146,15 +146,12 @@ func waitClusterHealthy(ctx context.Context, kube *rest.Config, timeout time.Dur
 func waitClusterHealthyClient(ctx context.Context, cs k8s.Interface, timeout time.Duration) error {
 	var lastErr error
 	check := func() (bool, error) {
-		if err := checkHealthClient(ctx, cs); err != nil {
-			lastErr = err
-			return false, nil
-		}
-		return true, nil
+		lastErr = checkHealthClient(ctx, cs)
+		return lastErr == nil, nil
 	}
 	if err := pollUntil(ctx, timeout, "cluster to become healthy", check); err != nil {
 		if lastErr != nil {
-			return fmt.Errorf("%w (last check: %v)", err, lastErr)
+			return fmt.Errorf("%w (last check: %w)", err, lastErr)
 		}
 		return err
 	}
