@@ -21,8 +21,8 @@ limitations under the License.
 // processes (cmd/bootstrap-cluster, cmd/remove-cluster), so the cluster name is
 // taken verbatim from the config rather than randomized. Connecting to the
 // created cluster (fetching its kubeconfig, opening the API tunnel) is handled
-// by the connector (connect.go), shared by the CI run-tests / enable-modules
-// steps and the test suite.
+// by the connector (connect.go), used by Bootstrap's module enablement
+// (modules.go) and by the test suite.
 package commander
 
 import (
@@ -120,16 +120,19 @@ func (p *commanderProvider) Bootstrap(ctx context.Context) error {
 
 	if cluster.Status.Phase == commanderapi.ClusterPhaseReady {
 		p.logger.Info("cluster is already Ready", "cluster", name)
-		return nil
+	} else {
+		p.logger.Info("waiting for cluster to become Ready",
+			"cluster", name, "timeout", p.conf.WaitTimeout)
+		if _, err := p.client.WaitForClusterReady(ctx, name, p.conf.WaitTimeout); err != nil {
+			return fmt.Errorf("wait for cluster %q to become Ready: %w", name, err)
+		}
+		p.logger.Info("cluster is Ready", "cluster", name)
 	}
 
-	p.logger.Info("waiting for cluster to become Ready",
-		"cluster", name, "timeout", p.conf.WaitTimeout)
-	if _, err := p.client.WaitForClusterReady(ctx, name, p.conf.WaitTimeout); err != nil {
-		return fmt.Errorf("wait for cluster %q to become Ready: %w", name, err)
-	}
-	p.logger.Info("cluster is Ready", "cluster", name)
-	return nil
+	// Enable and configure the modules-under-test from cluster_config as part of
+	// bootstrap, so the cluster comes up fully provisioned (no separate
+	// enable-modules step). Idempotent: safe to re-run against a Ready cluster.
+	return p.enableModules(ctx)
 }
 
 // Remove deletes the cluster from Commander. A cluster that is already gone is

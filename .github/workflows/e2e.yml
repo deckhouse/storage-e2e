@@ -169,9 +169,17 @@ jobs:
           E2E_COMMANDER_API_PREFIX: ${{ vars.E2E_COMMANDER_API_PREFIX || '/api/v1' }}
           E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY: ${{ vars.E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY || 'false' }}
           E2E_COMMANDER_WAIT_TIMEOUT: ${{ vars.E2E_COMMANDER_WAIT_TIMEOUT || '60m' }}
-          # Bootstrap only talks to the Commander API (create + wait Ready); no SSH
-          # is needed here. Connecting to the created cluster (SSH to the master,
-          # kubeconfig fetch, API tunnel) happens in-process at run-tests time.
+          # After the cluster is Ready, Bootstrap connects to the master (SSH via the
+          # bastion, kubeconfig fetch, in-process API tunnel) and enables the
+          # modules-under-test from cluster_config (ModuleConfig + ModulePullOverride) —
+          # so no separate enable-modules step is needed. Hence the SSH creds + the
+          # module image tag (for modulePullOverride: "${E2E_MODULE_IMAGE_TAG}") here.
+          E2E_COMMANDER_SSH_PRIVATE_KEY: ${{ secrets.E2E_COMMANDER_SSH_PRIVATE_KEY }}
+          E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY: ${{ secrets.E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY }}
+          E2E_COMMANDER_SSH_USER: ${{ vars.E2E_COMMANDER_SSH_USER }}
+          E2E_COMMANDER_SSH_JUMP_HOST: ${{ vars.E2E_COMMANDER_SSH_JUMP_HOST }}
+          E2E_COMMANDER_SSH_JUMP_USER: ${{ vars.E2E_COMMANDER_SSH_JUMP_USER }}
+          E2E_MODULE_IMAGE_TAG: ${{ inputs.module_image_tag }}
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
@@ -207,12 +215,12 @@ jobs:
           go-version-file: ${{ inputs.module_path }}/go.mod
           cache: false
 
-      # Commander: inject the connection env for enable-modules + the suite. The
-      # commander connector runs IN-PROCESS — it SSHes to the master via the
-      # bastion, fetches the kubeconfig off the master and opens an API tunnel —
-      # so there is no kubeconfig artifact and no external SSH tunnel. ALL commander
-      # wiring lives in this gated step (writing to $GITHUB_ENV), so for other
-      # providers (dvp, …) the "Run E2E tests" step keeps its exact environment.
+      # Commander: inject the suite's connection env. The commander connector runs
+      # IN-PROCESS — it SSHes to the master via the bastion, fetches the kubeconfig
+      # off the master and opens an API tunnel — so there is no kubeconfig artifact
+      # and no external SSH tunnel. (Module enablement already happened in Bootstrap.)
+      # ALL commander wiring lives in this gated step (writing to $GITHUB_ENV), so for
+      # other providers (dvp, …) the "Run E2E tests" step keeps its exact environment.
       - name: Configure commander connection
         if: ${{ inputs.cluster_provider == 'commander' }}
         env:
@@ -250,25 +258,10 @@ jobs:
           [ -n "${E2E_COMMANDER_CA_CERT:-}" ] && emit_multiline E2E_COMMANDER_CA_CERT "${E2E_COMMANDER_CA_CERT}" || true
           [ -n "${E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY:-}" ] && emit_multiline E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY "${E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY}" || true
 
-      # Enable the module-under-test on the freshly created cluster (ModuleConfig +
-      # ModulePullOverride from cluster_config, via the same EnableAndConfigureModules
-      # used by the other flows). It connects in-process through the commander
-      # connector (env from the step above). Skipped for other providers.
-      - name: Enable and configure modules
-        if: ${{ inputs.cluster_provider == 'commander' }}
-        working-directory: _storage-e2e
-        env:
-          GOMODCACHE: ${{ runner.temp }}/e2e-gomodcache
-          GOCACHE: ${{ runner.temp }}/e2e-gocache
-          GOPROXY: ${{ secrets.GOPROXY }}
-          E2E_CLUSTER_CONFIG_YAML_PATH: ${{ github.workspace }}/${{ inputs.cluster_config }}
-          # Exposed for cluster_config modulePullOverride: "${E2E_MODULE_IMAGE_TAG}".
-          E2E_MODULE_IMAGE_TAG: ${{ inputs.module_image_tag }}
-          LOG_LEVEL: ${{ vars.E2E_LOG_LEVEL || 'info' }}
-        run: |
-          set -euo pipefail
-          mkdir -p "${GOMODCACHE}" "${GOCACHE}"
-          go run ./cmd/enable-modules
+      # NOTE: module enablement is no longer a separate step — the commander
+      # provider's Bootstrap enables the modules-under-test from cluster_config as
+      # part of bringing the cluster up (see cmd/bootstrap-cluster / the bootstrap
+      # job above). The step above only injects the suite's connection env.
 
       - name: Run E2E tests
         id: run_tests

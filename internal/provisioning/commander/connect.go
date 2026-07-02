@@ -171,11 +171,11 @@ func (c *connector) fetchKubeconfig(ctx context.Context, sshClient *ssh.Client) 
 	return res.Stdout, nil
 }
 
-// Connect is the package-level entry point used by the CI run-tests /
-// enable-modules steps and the test suite: it loads the Commander config from
-// the environment, resolves credentials, builds the API client, and connects to
-// the cluster's API server through an in-process SSH tunnel. The returned
-// cleanup MUST be called to release the tunnel and SSH client.
+// Connect is the package-level entry point used by the test suite (the run-tests
+// step): it loads the Commander config from the environment, resolves
+// credentials, builds the API client, and connects to the cluster's API server
+// through an in-process SSH tunnel. The returned cleanup MUST be called to
+// release the tunnel and SSH client. (Bootstrap uses the connector directly.)
 func Connect(ctx context.Context, environ map[string]string, logger *slog.Logger) (*rest.Config, func(), error) {
 	conf, err := LoadConfig(environ)
 	if err != nil {
