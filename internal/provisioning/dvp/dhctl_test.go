@@ -91,7 +91,8 @@ func TestBuildDhctlBootstrapCommandKeyFile(t *testing.T) {
 		UsePassphrase: false,
 	})
 	const want = `sudo -u cloud bash -c 'sudo docker run --network=host --pull=always ` +
-		`-v "/home/cloud/config.yml:/config.yml" -v "/home/cloud/.ssh/id_rsa:/root/.ssh/id_rsa:ro" ` +
+		`--mount "type=bind,src=/home/cloud/config.yml,dst=/config.yml" ` +
+		`--mount "type=bind,src=/home/cloud/.ssh/id_rsa,dst=/root/.ssh/id_rsa,readonly" ` +
 		`dev-registry.deckhouse.io/sys/deckhouse-oss/install:main dhctl bootstrap ` +
 		`--ssh-host=10.10.1.5 --ssh-user=cloud --ssh-agent-private-keys=/root/.ssh/id_rsa --config=/config.yml ` +
 		`> /tmp/dhctl-bootstrap-1.log 2>&1'`
@@ -110,7 +111,8 @@ func TestBuildDhctlBootstrapCommandPassphrase(t *testing.T) {
 		UsePassphrase: true,
 	})
 	const want = `sudo -u cloud bash -c 'sudo docker run --network=host --pull=always ` +
-		`-v "/home/cloud/config.yml:/config.yml" -v "/home/cloud/.config/storage-e2e/dhctl-connection.yaml:/dhctl-connection.yaml:ro" ` +
+		`--mount "type=bind,src=/home/cloud/config.yml,dst=/config.yml" ` +
+		`--mount "type=bind,src=/home/cloud/.config/storage-e2e/dhctl-connection.yaml,dst=/dhctl-connection.yaml,readonly" ` +
 		`dev-registry.deckhouse.io/sys/deckhouse-oss/install:main dhctl bootstrap ` +
 		`--connection-config=/dhctl-connection.yaml --config=/config.yml ` +
 		`> /tmp/dhctl-bootstrap-1.log 2>&1'`
@@ -170,6 +172,7 @@ func TestBuildWriteFileCommand(t *testing.T) {
 	got := buildWriteFileCommand("/home/cloud/config.yml", []byte("hello"), "0644")
 	for _, want := range []string{
 		`mkdir -p "/home/cloud"`,
+		`sudo rm -rf -- "/home/cloud/config.yml"`,
 		`base64 -d > "/home/cloud/config.yml" <<'STORAGE_E2E_B64_EOF'`,
 		"aGVsbG8=", // base64("hello")
 		`chmod 0644 "/home/cloud/config.yml"`,
@@ -259,7 +262,11 @@ func TestRunDhctlBootstrapPassphraseCleanupOrder(t *testing.T) {
 	cmds := exec.recorded()
 	iConnWrite := indexMatching(cmds, contains("dhctl-connection.yaml", "base64 -d"))
 	iRun := indexMatching(cmds, contains("dhctl bootstrap"))
-	iConnRm := indexMatching(cmds, contains("rm -f", "dhctl-connection.yaml"))
+	// The write script also contains an `rm -rf` of the same path, so the
+	// standalone cleanup command is identified by its "sudo rm -rf" prefix.
+	iConnRm := indexMatching(cmds, func(c string) bool {
+		return strings.HasPrefix(c, "sudo rm -rf") && strings.Contains(c, "dhctl-connection.yaml")
+	})
 	iLogRm := indexMatching(cmds, contains("rm -f", "dhctl-bootstrap-"))
 
 	if iConnWrite < 0 || iRun < 0 || iConnRm < 0 || iLogRm < 0 {

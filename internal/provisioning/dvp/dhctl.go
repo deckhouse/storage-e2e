@@ -59,22 +59,30 @@ func buildDockerLoginCommand(registryHost, licenseKey string) string {
 func buildWriteFileCommand(remotePath string, content []byte, mode string) string {
 	b64 := base64.StdEncoding.EncodeToString(content)
 	return fmt.Sprintf(
-		"set -eu\numask 077\nmkdir -p %q\nbase64 -d > %q <<'%s'\n%s\n%s\nchmod %s %q",
-		path.Dir(remotePath), remotePath, writeFileHeredocMarker, b64, writeFileHeredocMarker, mode, remotePath,
+		"set -eu\numask 077\nmkdir -p %q\nsudo rm -rf -- %q\nbase64 -d > %q <<'%s'\n%s\n%s\nchmod %s %q",
+		path.Dir(remotePath), remotePath, remotePath, writeFileHeredocMarker, b64, writeFileHeredocMarker, mode, remotePath,
 	)
 }
 
+func buildBindMount(src, dst string, readonly bool) string {
+	m := fmt.Sprintf("type=bind,src=%s,dst=%s", src, dst)
+	if readonly {
+		m += ",readonly"
+	}
+	return fmt.Sprintf("--mount %q", m)
+}
+
 func buildDhctlBootstrapCommand(p dhctlBootstrapParams) string {
-	configMount := remoteConfigPath(p.VMSSHUser) + ":/config.yml"
+	configMount := buildBindMount(remoteConfigPath(p.VMSSHUser), "/config.yml", false)
 
 	var volFlags, sshArgs string
 	if p.UsePassphrase {
-		connMount := remoteConnConfigPath(p.VMSSHUser) + ":/dhctl-connection.yaml:ro"
-		volFlags = fmt.Sprintf("-v %q -v %q", configMount, connMount)
+		connMount := buildBindMount(remoteConnConfigPath(p.VMSSHUser), "/dhctl-connection.yaml", true)
+		volFlags = configMount + " " + connMount
 		sshArgs = "--connection-config=/dhctl-connection.yaml --config=/config.yml"
 	} else {
-		keyMount := remoteKeyPath(p.VMSSHUser) + ":" + dhctlContainerSSHKeyPath + ":ro"
-		volFlags = fmt.Sprintf("-v %q -v %q", configMount, keyMount)
+		keyMount := buildBindMount(remoteKeyPath(p.VMSSHUser), dhctlContainerSSHKeyPath, true)
+		volFlags = configMount + " " + keyMount
 		sshArgs = fmt.Sprintf("--ssh-host=%s --ssh-user=%s --ssh-agent-private-keys=%s --config=/config.yml",
 			p.MasterIP, p.VMSSHUser, dhctlContainerSSHKeyPath)
 	}
@@ -190,11 +198,11 @@ func (p *dvpProvider) runDhctlBootstrap(ctx context.Context, exec remoteExecutor
 	user := p.dvpConf.VMSSHUser
 	usePassphrase := p.dvpConf.SSHPassphrase != ""
 
-	if _, err := exec.Exec(ctx, buildWriteFileCommand(remoteConfigPath(user), configYML, "0644")); err != nil {
-		return fmt.Errorf("dhctl bootstrap: write config.yml to setup node: %w", err)
+	if res, err := exec.Exec(ctx, buildWriteFileCommand(remoteConfigPath(user), configYML, "0644")); err != nil {
+		return fmt.Errorf("dhctl bootstrap: write config.yml to setup node: %w (stderr: %s)", err, string(res.Stderr))
 	}
-	if _, err := exec.Exec(ctx, buildWriteFileCommand(remoteKeyPath(user), p.creds.SSHKey, "0600")); err != nil {
-		return fmt.Errorf("dhctl bootstrap: write private key to setup node: %w", err)
+	if res, err := exec.Exec(ctx, buildWriteFileCommand(remoteKeyPath(user), p.creds.SSHKey, "0600")); err != nil {
+		return fmt.Errorf("dhctl bootstrap: write private key to setup node: %w (stderr: %s)", err, string(res.Stderr))
 	}
 
 	if res, err := exec.Exec(ctx, buildDockerLoginCommand(registryHost, p.dvpConf.DKPLicenseKey)); err != nil {
@@ -206,8 +214,8 @@ func (p *dvpProvider) runDhctlBootstrap(ctx context.Context, exec remoteExecutor
 		if err != nil {
 			return fmt.Errorf("dhctl bootstrap: build connection-config: %w", err)
 		}
-		if _, err := exec.Exec(ctx, buildWriteFileCommand(remoteConnConfigPath(user), connYAML, "0600")); err != nil {
-			return fmt.Errorf("dhctl bootstrap: write connection-config to setup node: %w", err)
+		if res, err := exec.Exec(ctx, buildWriteFileCommand(remoteConnConfigPath(user), connYAML, "0600")); err != nil {
+			return fmt.Errorf("dhctl bootstrap: write connection-config to setup node: %w (stderr: %s)", err, string(res.Stderr))
 		}
 	}
 
@@ -222,11 +230,9 @@ func (p *dvpProvider) runDhctlBootstrap(ctx context.Context, exec remoteExecutor
 
 	_, bootstrapErr := exec.Exec(ctx, bootstrapCmd)
 
-	// Cleanup runs regardless of ctx state so a cancelled bootstrap still
-	// removes the staged secret and the remote log.
 	cleanupCtx := context.WithoutCancel(ctx)
 	if usePassphrase {
-		if _, err := exec.Exec(cleanupCtx, fmt.Sprintf("rm -f %q", remoteConnConfigPath(user))); err != nil {
+		if _, err := exec.Exec(cleanupCtx, fmt.Sprintf("sudo rm -rf -- %q", remoteConnConfigPath(user))); err != nil {
 			p.logger.Warn("failed to remove dhctl connection-config from setup node", "err", err)
 		}
 	}
@@ -242,9 +248,6 @@ func (p *dvpProvider) runDhctlBootstrap(ctx context.Context, exec remoteExecutor
 	return nil
 }
 
-// collectRemoteLog reads the remote dhctl log, persists it locally (best effort)
-// and removes it from the setup node. It returns the log content for error
-// wrapping; read/remove failures are logged but never mask the bootstrap outcome.
 func (p *dvpProvider) collectRemoteLog(ctx context.Context, exec remoteExecutor, remoteLog string) []byte {
 	res, err := exec.Exec(ctx, fmt.Sprintf("sudo cat %q 2>/dev/null || true", remoteLog))
 	logContent := res.Stdout
