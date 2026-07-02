@@ -171,23 +171,18 @@ func (c *connector) fetchKubeconfig(ctx context.Context, sshClient *ssh.Client) 
 	return res.Stdout, nil
 }
 
-// Connect is the package-level entry point used by the test suite (the run-tests
-// step): it loads the Commander config from the environment, resolves
-// credentials, builds the API client, and connects to the cluster's API server
-// through an in-process SSH tunnel. The returned cleanup MUST be called to
-// release the tunnel and SSH client. (Bootstrap uses the connector directly.)
-func Connect(ctx context.Context, environ map[string]string, logger *slog.Logger) (*rest.Config, func(), error) {
-	conf, err := LoadConfig(environ)
-	if err != nil {
-		return nil, nil, fmt.Errorf("load commander config: %w", err)
-	}
-	creds, err := conf.Resolve()
+// Connect implements clusterprovider.Connector: it attaches a run to the
+// Commander-managed cluster by resolving the SSH credentials and opening the
+// connector (SSH to the master via the bastion, kubeconfig fetched off the
+// master, in-process API tunnel), returning a rest.Config pointed at the tunnel
+// plus a cleanup. The test suite connects through this instead of a legacy
+// TEST_CLUSTER_CREATE_MODE path. Cancellation is detached so the tunnel outlives
+// the caller's connect ctx (the suite keeps the connection for its whole run);
+// cleanup tears it down.
+func (p *commanderProvider) Connect(ctx context.Context) (*rest.Config, func(), error) {
+	creds, err := p.conf.Resolve()
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve commander credentials: %w", err)
 	}
-	client, err := newAPIClient(conf)
-	if err != nil {
-		return nil, nil, err
-	}
-	return newConnector(client, conf, creds, logger).Connect(ctx)
+	return newConnector(p.client, p.conf, creds, p.logger).Connect(context.WithoutCancel(ctx))
 }

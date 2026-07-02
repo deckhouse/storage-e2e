@@ -48,7 +48,8 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/commander"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/internal/logger"
-	commanderprov "github.com/deckhouse/storage-e2e/internal/provisioning/commander"
+	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
+	"github.com/deckhouse/storage-e2e/pkg/clusterprovider/registry"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 	"github.com/deckhouse/storage-e2e/pkg/testkit"
 )
@@ -948,32 +949,49 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 	return clusterResources, nil
 }
 
-// ConnectToCommanderCluster connects the suite to a Commander-bootstrapped
-// cluster through the commander provider's connector: it SSHes to the master
-// (via the bastion), fetches the kubeconfig off the master and opens an
-// in-process API tunnel, then acquires the cluster lock and verifies health.
-// The tunnel + SSH client are torn down by CleanupTestCluster via the returned
-// resources' TunnelInfo.StopFunc. Used by the CI run-tests step against a
-// cluster created out-of-band by cmd/bootstrap-cluster; the separate teardown
-// job removes the cluster itself.
-func ConnectToCommanderCluster(ctx context.Context) (*TestClusterResources, error) {
-	logger.Step(1, "Connecting to Commander cluster (SSH tunnel + kubeconfig)")
-	// The connector ties the SSH client + tunnel serve loop to the context it is
-	// given, so it must NOT be the caller's short-lived (ClusterCreationTimeout)
-	// context — that would tear the tunnel down the moment connect returns and
-	// break every later API call in the suite. Detach cancellation so the tunnel
-	// lives until CleanupTestCluster calls cleanup() (via TunnelInfo.StopFunc);
-	// connect setup is still bounded by the connector's own NewWithRetry timeout.
-	restConfig, cleanup, err := commanderprov.Connect(context.WithoutCancel(ctx), envMap(), logger.GetLogger())
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Commander cluster: %w", err)
+// providerConnected records that the suite attached to the cluster via a
+// clusterprovider Connector (e.g. commander) rather than the legacy
+// TEST_CLUSTER_CREATE_MODE path. CleanupTestCluster consults it to release the
+// lock + tear down the connection instead of running VM-based cleanup.
+var providerConnected bool
+
+// connectViaProvider attaches the suite to a provider-managed cluster when the
+// configured clusterprovider implements clusterprovider.Connector (e.g.
+// commander: the cluster was created and its modules enabled by
+// cmd/bootstrap-cluster, so here the suite only connects, acquires the lock and
+// health-checks). It returns handled=false when this is not a clusterprovider
+// run or the provider has no Connect (e.g. dvp), so the caller falls back to the
+// legacy TEST_CLUSTER_CREATE_MODE path. The tunnel/SSH client are torn down by
+// CleanupTestCluster via the returned resources' TunnelInfo.StopFunc.
+func connectViaProvider(ctx context.Context) (resources *TestClusterResources, handled bool, err error) {
+	cfg, cfgErr := clusterprovider.NewClusterConfig()
+	if cfgErr != nil {
+		return nil, false, nil // not a clusterprovider-driven run
+	}
+	ctor, getErr := registry.DefaultRegistry.Get(cfg.ClusterProvider)
+	if getErr != nil {
+		return nil, false, nil
+	}
+	provider, buildErr := ctor(logger.GetLogger(), cfg)
+	if buildErr != nil {
+		return nil, false, fmt.Errorf("build %s provider: %w", cfg.ClusterProvider, buildErr)
+	}
+	connector, ok := provider.(clusterprovider.Connector)
+	if !ok {
+		return nil, false, nil // provider uses the legacy suite path (e.g. dvp)
+	}
+
+	logger.Step(1, "Connecting to the %s cluster via the provider connector", cfg.ClusterProvider)
+	restConfig, cleanup, connErr := connector.Connect(ctx)
+	if connErr != nil {
+		return nil, true, fmt.Errorf("connect via %s provider: %w", cfg.ClusterProvider, connErr)
 	}
 	configureExtendedTimeouts(restConfig)
-	logger.StepComplete(1, "Connected to Commander cluster API through tunnel")
+	logger.StepComplete(1, "Connected to the cluster API through the provider")
 
 	// Route teardown of the tunnel + SSH client through the standard cleanup
 	// path (TunnelInfo.StopFunc), so no bespoke cleanup wiring is needed.
-	clusterResources := &TestClusterResources{
+	res := &TestClusterResources{
 		Kubeconfig: restConfig,
 		TunnelInfo: &ssh.TunnelInfo{StopFunc: func() error { cleanup(); return nil }},
 	}
@@ -983,13 +1001,28 @@ func ConnectToCommanderCluster(ctx context.Context) (*TestClusterResources, erro
 	if testName == "" {
 		testName = fmt.Sprintf("e2e-test-%d", time.Now().UnixNano())
 	}
-	if err := AcquireClusterLock(ctx, restConfig, testName); err != nil {
+	if lockErr := AcquireClusterLock(ctx, restConfig, testName); lockErr != nil {
 		cleanup()
-		return nil, fmt.Errorf("failed to acquire cluster lock: %w", err)
+		return nil, true, fmt.Errorf("failed to acquire cluster lock: %w", lockErr)
 	}
 	logger.StepComplete(2, "Cluster lock acquired")
 
 	logger.Step(3, "Verifying cluster health (with retries)")
+	if healthErr := checkClusterHealthWithRetries(ctx, restConfig); healthErr != nil {
+		_ = ReleaseClusterLock(ctx, restConfig)
+		cleanup()
+		return nil, true, healthErr
+	}
+	logger.StepComplete(3, "Cluster is healthy")
+
+	providerConnected = true
+	logger.Success("Connected to the %s cluster", cfg.ClusterProvider)
+	return res, true, nil
+}
+
+// checkClusterHealthWithRetries polls CheckClusterHealth until it passes or the
+// retry budget is exhausted.
+func checkClusterHealthWithRetries(ctx context.Context, restConfig *rest.Config) error {
 	const maxHealthRetries = 10
 	const healthRetryInterval = 30 * time.Second
 	var healthErr error
@@ -1000,38 +1033,18 @@ func ConnectToCommanderCluster(ctx context.Context) (*TestClusterResources, erro
 		})
 		cancel()
 		if healthErr == nil {
-			break
+			return nil
 		}
 		if attempt < maxHealthRetries {
 			logger.Warn("Health check attempt %d/%d failed: %v. Retrying in %v...", attempt, maxHealthRetries, healthErr, healthRetryInterval)
 			select {
 			case <-ctx.Done():
-				healthErr = fmt.Errorf("context cancelled during health check retries: %w", ctx.Err())
+				return fmt.Errorf("context cancelled during health check retries: %w", ctx.Err())
 			case <-time.After(healthRetryInterval):
 			}
 		}
 	}
-	if healthErr != nil {
-		_ = ReleaseClusterLock(ctx, restConfig)
-		cleanup()
-		return nil, fmt.Errorf("cluster health check failed after %d attempts: %w", maxHealthRetries, healthErr)
-	}
-	logger.StepComplete(3, "Cluster is healthy")
-
-	logger.Success("Connected to Commander cluster")
-	return clusterResources, nil
-}
-
-// envMap snapshots the process environment as a map for commander.Connect.
-func envMap() map[string]string {
-	environ := os.Environ()
-	m := make(map[string]string, len(environ))
-	for _, kv := range environ {
-		if i := strings.IndexByte(kv, '='); i >= 0 {
-			m[kv[:i]] = kv[i+1:]
-		}
-	}
-	return m
+	return fmt.Errorf("cluster health check failed after %d attempts: %w", maxHealthRetries, healthErr)
 }
 
 // CleanupExistingCluster releases the cluster lock and closes connections.
@@ -1645,10 +1658,12 @@ func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) er
 		return nil // Nothing to clean up
 	}
 
-	// CommanderConnect mode owns no VMs — the cluster is removed by the separate
-	// teardown step. Cleanup releases the lock and tears down the in-process SSH
-	// tunnel / client recorded in TunnelInfo.StopFunc by ConnectToCommanderCluster.
-	if config.TestClusterCreateMode == config.ClusterCreateModeCommanderConnect {
+	// Provider-connected runs own no VMs — the cluster is removed by the separate
+	// teardown step (cmd/remove-cluster). Cleanup releases the lock and tears down
+	// the in-process SSH tunnel / client recorded in TunnelInfo.StopFunc by
+	// connectViaProvider.
+	if providerConnected {
+		providerConnected = false
 		var errs []error
 		if resources.Kubeconfig != nil {
 			if err := ReleaseClusterLock(ctx, resources.Kubeconfig); err != nil {
@@ -2455,6 +2470,28 @@ func OutputEnvironmentVariables() {
 func CreateOrConnectToTestCluster() *TestClusterResources {
 	var testClusterResources *TestClusterResources
 
+	// Provider-based connect: when the run is driven by a clusterprovider that
+	// implements Connect (e.g. commander — the cluster and its modules are brought
+	// up by cmd/bootstrap-cluster), the suite attaches through it. Providers
+	// without Connect (e.g. dvp) fall through to the legacy TEST_CLUSTER_CREATE_MODE
+	// path below.
+	var providerHandled bool
+	By("Connecting to the provider-managed cluster (if supported)", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), config.ClusterCreationTimeout)
+		defer cancel()
+		res, handled, err := connectViaProvider(ctx)
+		if err != nil {
+			Expect(err).NotTo(HaveOccurred(), "connect via cluster provider")
+		}
+		if handled {
+			testClusterResources = res
+			providerHandled = true
+		}
+	})
+	if providerHandled {
+		return testClusterResources
+	}
+
 	switch config.TestClusterCreateMode {
 	case config.ClusterCreateModeAlwaysUseExisting:
 		// Use existing cluster mode
@@ -2503,24 +2540,6 @@ func CreateOrConnectToTestCluster() *TestClusterResources {
 			} else {
 				GinkgoWriter.Printf("    ✅ Connected to existing cluster '%s' via Commander successfully\n", cmdResources.ClusterName)
 			}
-		})
-
-	case config.ClusterCreateModeCommanderConnect:
-		// Connect to a Commander-bootstrapped cluster through the commander
-		// connector (in-process SSH tunnel + kubeconfig fetched off the master).
-		// Used by CI run-tests against a cluster created by cmd/bootstrap-cluster.
-		By("Connecting to Commander cluster", func() {
-			ctx, cancel := context.WithTimeout(context.Background(), config.ClusterCreationTimeout)
-			defer cancel()
-
-			GinkgoWriter.Printf("    ▶️ Connecting to Commander cluster (mode: %s)\n", config.TestClusterCreateMode)
-			var err error
-			testClusterResources, err = ConnectToCommanderCluster(ctx)
-			if err != nil {
-				GinkgoWriter.Printf("    ❌ Failed to connect to Commander cluster: %v\n", err)
-				Expect(err).NotTo(HaveOccurred(), "Should connect to Commander cluster successfully")
-			}
-			GinkgoWriter.Printf("    ✅ Connected to Commander cluster successfully (cluster lock acquired)\n")
 		})
 
 	case config.ClusterCreateModeAlwaysCreateNew:

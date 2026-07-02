@@ -22,13 +22,6 @@ const (
 	ClusterCreateModeAlwaysCreateNew = "alwaysCreateNew"
 	// ClusterCreateModeCommander indicates to create or use a cluster from Deckhouse Commander
 	ClusterCreateModeCommander = "commander"
-	// ClusterCreateModeCommanderConnect connects the test suite to a
-	// Commander-bootstrapped cluster through the commander provider's connector
-	// (SSH to the master via the bastion, kubeconfig fetched off the master, an
-	// in-process API tunnel) — no kubeconfig artifact or external SSH tunnel.
-	// Interim connect-side of the commander provider flow, pending the
-	// clusterprovider suite integration.
-	ClusterCreateModeCommanderConnect = "commanderConnect"
 
 	// ImagePullPolicyAlways indicates to always create ClusterVirtualImage and fail if it exists
 	ImagePullPolicyAlways = "Always"
@@ -316,17 +309,16 @@ func ValidateEnvironment() error {
 
 	if TestClusterCreateMode == "" {
 		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE environment variable is required but not set; "+
-			"please set it to '%s', '%s', '%s', or '%s'",
-			ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander, ClusterCreateModeCommanderConnect)
+			"please set it to '%s', '%s', or '%s'",
+			ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander)
 	}
 
 	if TestClusterCreateMode != ClusterCreateModeAlwaysUseExisting &&
 		TestClusterCreateMode != ClusterCreateModeAlwaysCreateNew &&
-		TestClusterCreateMode != ClusterCreateModeCommander &&
-		TestClusterCreateMode != ClusterCreateModeCommanderConnect {
+		TestClusterCreateMode != ClusterCreateModeCommander {
 		return fmt.Errorf("TEST_CLUSTER_CREATE_MODE has invalid value '%s'; "+
-			"must be '%s', '%s', '%s', or '%s'",
-			TestClusterCreateMode, ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander, ClusterCreateModeCommanderConnect)
+			"must be '%s', '%s', or '%s'",
+			TestClusterCreateMode, ClusterCreateModeAlwaysUseExisting, ClusterCreateModeAlwaysCreateNew, ClusterCreateModeCommander)
 	}
 
 	// Validate Commander-specific environment variables when in Commander mode
