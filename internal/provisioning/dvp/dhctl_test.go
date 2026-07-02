@@ -177,7 +177,7 @@ func TestBuildWriteFileCommand(t *testing.T) {
 		`mkdir -p "/home/cloud"`,
 		`sudo rm -rf -- "/home/cloud/config.yml"`,
 		`base64 -d > "/home/cloud/config.yml" <<'STORAGE_E2E_B64_EOF'`,
-		"aGVsbG8=", // base64("hello")
+		"aGVsbG8=", // base64-encoded form of the word hello
 		`chmod 0644 "/home/cloud/config.yml"`,
 	} {
 		if !strings.Contains(got, want) {
@@ -237,7 +237,7 @@ func TestRunDhctlBootstrapKeyFileCleanupOnFailure(t *testing.T) {
 			t.Fatalf("missing %s command in %v", name, cmds)
 		}
 	}
-	if !(iConfig < iKey && iKey < iLogin && iLogin < iRun && iRun < iCat && iCat < iRm) {
+	if iConfig >= iKey || iKey >= iLogin || iLogin >= iRun || iRun >= iCat || iCat >= iRm {
 		t.Errorf("unexpected command order: config=%d key=%d login=%d run=%d cat=%d rm=%d\n%v",
 			iConfig, iKey, iLogin, iRun, iCat, iRm, cmds)
 	}
@@ -275,7 +275,7 @@ func TestRunDhctlBootstrapPassphraseCleanupOrder(t *testing.T) {
 	if iConnWrite < 0 || iRun < 0 || iConnRm < 0 || iLogRm < 0 {
 		t.Fatalf("missing expected command; connWrite=%d run=%d connRm=%d logRm=%d\n%v", iConnWrite, iRun, iConnRm, iLogRm, cmds)
 	}
-	if !(iConnWrite < iRun && iRun < iConnRm) {
+	if iConnWrite >= iRun || iRun >= iConnRm {
 		t.Errorf("connection-config must be written before and removed after the docker run: connWrite=%d run=%d connRm=%d\n%v",
 			iConnWrite, iRun, iConnRm, cmds)
 	}

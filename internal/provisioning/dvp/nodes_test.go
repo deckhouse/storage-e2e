@@ -234,14 +234,14 @@ func TestJoinNodesZeroExtraNodesNoOp(t *testing.T) {
 	}
 }
 
-func TestJoinNodesOneFailsOthersCancelled(t *testing.T) {
+func TestJoinNodesOneFailsOthersCanceled(t *testing.T) {
 	t.Parallel()
 
-	var cancelled atomic.Int32
+	var canceled atomic.Int32
 	block := func() *funcExecutor {
 		return &funcExecutor{fn: func(ctx context.Context, cmd string) (sshv2.ExecResult, error) {
 			<-ctx.Done()
-			cancelled.Add(1)
+			canceled.Add(1)
 			return sshv2.ExecResult{}, ctx.Err()
 		}}
 	}
@@ -273,8 +273,8 @@ func TestJoinNodesOneFailsOthersCancelled(t *testing.T) {
 	if !strings.Contains(err.Error(), "w1") {
 		t.Errorf("error should name the failing node w1, got: %v", err)
 	}
-	if got := cancelled.Load(); got != 2 {
-		t.Errorf("cancelled executors = %d, want 2 (the two blocking nodes)", got)
+	if got := canceled.Load(); got != 2 {
+		t.Errorf("canceled executors = %d, want 2 (the two blocking nodes)", got)
 	}
 }
 

@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	bootstrapSecretNamespace = "d8-cloud-instance-manager"
+	bootstrapSecretNamespace = "d8-cloud-instance-manager" //nolint:gosec // G101: Kubernetes namespace name, not a credential
 	masterBootstrapSecret    = "manual-bootstrap-for-master"
 	workerBootstrapSecret    = "manual-bootstrap-for-worker"
 	bootstrapScriptKey       = "bootstrap.sh"
