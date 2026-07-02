@@ -273,5 +273,17 @@ func (p *dvpProvider) Remove(ctx context.Context) error {
 	}
 	p.logger.Info("virtual machines torn down", "namespace", p.dvpConf.Namespace)
 
+	p.logger.Info("deleting test namespace",
+		"namespace", p.dvpConf.Namespace,
+		"timeout", config.NamespaceTimeout,
+	)
+	nsCtx, cancel := context.WithTimeout(ctx, config.NamespaceTimeout)
+	nsErr := p.deps.kube.DeleteNamespace(nsCtx, kube, p.dvpConf.Namespace)
+	cancel()
+	if nsErr != nil {
+		return nsErr
+	}
+	p.logger.Info("test namespace deleted", "namespace", p.dvpConf.Namespace)
+
 	return nil
 }

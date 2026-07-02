@@ -19,12 +19,16 @@ package kubernetes
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 )
+
+const namespaceDeletePollInterval = 2 * time.Second
 
 // CreateNamespaceIfNotExists creates a namespace if it doesn't exist, or returns the existing one.
 func CreateNamespaceIfNotExists(ctx context.Context, config *rest.Config, name string) (*corev1.Namespace, error) {
@@ -51,4 +55,32 @@ func CreateNamespaceIfNotExists(ctx context.Context, config *rest.Config, name s
 
 	// Namespace exists, return it
 	return ns, nil
+}
+
+func DeleteNamespace(ctx context.Context, config *rest.Config, name string) error {
+	clientset, err := NewClientsetWithRetry(ctx, config)
+	if err != nil {
+		return fmt.Errorf("failed to create kubernetes clientset: %w", err)
+	}
+
+	err = clientset.CoreV1().Namespaces().Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete namespace %s: %w", name, err)
+	}
+
+	waitErr := wait.PollUntilContextCancel(ctx, namespaceDeletePollInterval, true, func(ctx context.Context) (bool, error) {
+		_, getErr := clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(getErr) {
+			return true, nil
+		}
+		if getErr != nil {
+			return false, fmt.Errorf("failed to get namespace %s: %w", name, getErr)
+		}
+		return false, nil
+	})
+	if waitErr != nil {
+		return fmt.Errorf("waiting for namespace %s deletion: %w", name, waitErr)
+	}
+
+	return nil
 }

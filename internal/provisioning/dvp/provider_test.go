@@ -148,6 +148,11 @@ func (f fakeKube) EnsureNamespace(ctx context.Context, kube *rest.Config, ns str
 	return f.namespaceErr
 }
 
+func (f fakeKube) DeleteNamespace(ctx context.Context, kube *rest.Config, ns string) error {
+	f.rec.log("delete-namespace")
+	return f.namespaceErr
+}
+
 type fakeFleet struct {
 	rec          *recorder
 	provisionErr error
@@ -307,7 +312,7 @@ func TestRemoveTearsDownAndCleans(t *testing.T) {
 	if err := p.Remove(context.Background()); err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}
-	want := []string{"connect", "fleet.New", "teardown", "cleanup"}
+	want := []string{"connect", "fleet.New", "teardown", "delete-namespace", "cleanup"}
 	if !slices.Equal(rec.calls, want) {
 		t.Errorf("call order = %v, want %v", rec.calls, want)
 	}
