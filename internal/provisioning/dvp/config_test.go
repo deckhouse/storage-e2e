@@ -126,6 +126,57 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateForBootstrap(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr []error
+	}{
+		{
+			name: "license and dockercfg present",
+			cfg:  Config{DKPLicenseKey: "lic", RegistryDockerCfg: "cfg"},
+		},
+		{
+			name:    "missing license",
+			cfg:     Config{RegistryDockerCfg: "cfg"},
+			wantErr: []error{ErrDKPLicenseKeyRequired},
+		},
+		{
+			name:    "missing dockercfg",
+			cfg:     Config{DKPLicenseKey: "lic"},
+			wantErr: []error{ErrRegistryDockerCfgRequired},
+		},
+		{
+			name:    "both missing are joined",
+			cfg:     Config{},
+			wantErr: []error{ErrDKPLicenseKeyRequired, ErrRegistryDockerCfgRequired},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.cfg.ValidateForBootstrap()
+			if len(tc.wantErr) == 0 {
+				if err != nil {
+					t.Fatalf("ValidateForBootstrap() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ValidateForBootstrap() = nil, want errors %v", tc.wantErr)
+			}
+			for _, want := range tc.wantErr {
+				if !errors.Is(err, want) {
+					t.Errorf("ValidateForBootstrap() = %v, want errors.Is %v", err, want)
+				}
+			}
+		})
+	}
+}
+
 func TestJumpHostConfigured(t *testing.T) {
 	t.Parallel()
 

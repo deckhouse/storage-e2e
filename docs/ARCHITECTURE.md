@@ -71,14 +71,18 @@ storage-e2e/
 │   │   │   ├── provider.go      # Commander-backed Provider (Bootstrap/Remove)
 │   │   │   └── config.go        # Commander provider configuration
 │   │   └── dvp/                 # DVP (Deckhouse Virtualization Platform) provider
-│   │       ├── provider.go      # dvpProvider: Bootstrap/Remove orchestration
-│   │       ├── connect.go       # dvpConnector: SSH tunnel + base-cluster rest.Config + per-VM executors (baseEndpoints/VMExecutor)
-│   │       ├── deps.go          # DI seam: baseConnector/kubeOps/fleetFactory + remoteExecutor + adapters
+│   │       ├── provider.go      # dvpProvider: Bootstrap (provision + installDeckhouse via cleanupStack) / Remove
+│   │       ├── connect.go       # dvpConnector: SSH tunnel + base-cluster rest.Config + per-VM executors (baseEndpoints/VMExecutor) + openTunnelToVM/connectToMaster (kubeconfig fetch)
+│   │       ├── deps.go          # DI seam: baseConnector/masterConnector/kubeOps/fleetFactory + remoteExecutor + adapters
 │   │       ├── setupnode.go     # setup-node synthesis (newSetupNode, fixed name) + readiness gating (buildDockerReadyCommand + waitDockerReady)
 │   │       ├── bootstrap.go     # dhctl bootstrap-config rendering (param derivation + render + CIDR calc)
 │   │       ├── bootstrap.tpl    # Embedded dhctl bootstrap config template
+│   │       ├── dhctl.go         # dhctl bootstrap on setup node: pure builders (login/bootstrap cmd/connection-config/write-file) + orchestration
+│   │       ├── nodes.go         # node join: buildNodeBootstrapCommand + isRetryableJoinError + joinNodes (errgroup + bounded retry)
+│   │       ├── modules.go       # module enable: pure buildModuleLevels (topo sort) + moduleApplier seam + enableModulesInLevels (client-go, no SSH)
+│   │       ├── install.go       # post-install k8s waits on rest.Config: waitBootstrapSecrets/waitNodesReady/checkHealth (client-go)
 │   │       ├── config.go        # Config, Credentials, env parsing/validation
-│   │       ├── kubeconfig.go    # rest.Config build + ssh public-key derivation
+│   │       ├── kubeconfig.go    # rest.Config build + rewriteKubeconfigServer + ssh public-key derivation
 │   │       └── vm/              # VM graph provisioning in the base cluster
 │   │           ├── client.go    # Virtualization client wrapper
 │   │           ├── build.go     # VM/disk/image resource builders
@@ -929,21 +933,24 @@ enforced by `dvp.Config.Validate`). Locally pass a path; in CI pass the Secret
 content directly. Inline content is less safe than a path (it sits in
 `/proc/<pid>/environ`) — prefer a path on `tmpfs` when possible.
 
-| Variable                                         | Default                  | Description                                   |
-|--------------------------------------------------|--------------------------|-----------------------------------------------|
-| `E2E_DVP_BASE_CLUSTER_SSH_USER`                  | (required)               | SSH user for the base cluster                 |
-| `E2E_DVP_BASE_CLUSTER_SSH_HOST`                  | (required)               | SSH host for the base cluster                 |
-| `E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE`            | -                        | Passphrase for the SSH private key            |
-| `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY_PATH`      | (one of)                 | SSH private key path (`~`/`$ENV` expanded)    |
-| `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY`           | (one of)                 | SSH private key inline content                |
-| `E2E_DVP_BASE_CLUSTER_KUBECONFIG_PATH`           | (one of)                 | Kubeconfig path (`~`/`$ENV` expanded)         |
-| `E2E_DVP_BASE_CLUSTER_KUBECONFIG`                | (one of)                 | Kubeconfig inline content                     |
-| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST`             | -                        | Jump host (all jump fields required together) |
-| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER`             | -                        | Jump host SSH user                            |
-| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_KEY_PASSPHRASE`   | -                        | Passphrase for the jump private key           |
-| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_PRIVATE_KEY_PATH` | (one of, with jump host) | Jump private key path                         |
-| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_PRIVATE_KEY`      | (one of, with jump host) | Jump private key inline content               |
-| `E2E_DVP_BASE_CLUSTER_NAMESPACE`                 | `e2e-test-cluster`       | Test namespace name                           |
+| Variable                                         | Default                  | Description                                         |
+|--------------------------------------------------|--------------------------|-----------------------------------------------------|
+| `E2E_DVP_BASE_CLUSTER_SSH_USER`                  | (required)               | SSH user for the base cluster                       |
+| `E2E_DVP_BASE_CLUSTER_SSH_HOST`                  | (required)               | SSH host for the base cluster                       |
+| `E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE`            | -                        | Passphrase for the SSH private key                  |
+| `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY_PATH`      | (one of)                 | SSH private key path (`~`/`$ENV` expanded)          |
+| `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY`           | (one of)                 | SSH private key inline content                      |
+| `E2E_DVP_BASE_CLUSTER_KUBECONFIG_PATH`           | (one of)                 | Kubeconfig path (`~`/`$ENV` expanded)               |
+| `E2E_DVP_BASE_CLUSTER_KUBECONFIG`                | (one of)                 | Kubeconfig inline content                           |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST`             | -                        | Jump host (all jump fields required together)       |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_USER`             | -                        | Jump host SSH user                                  |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_KEY_PASSPHRASE`   | -                        | Passphrase for the jump private key                 |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_PRIVATE_KEY_PATH` | (one of, with jump host) | Jump private key path                               |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_PRIVATE_KEY`      | (one of, with jump host) | Jump private key inline content                     |
+| `E2E_DVP_BASE_CLUSTER_NAMESPACE`                 | `e2e-test-cluster`       | Test namespace name                                 |
+| `E2E_DVP_VM_SSH_USER`                            | `cloud`                  | Login for provisioned VMs (setup/masters/workers)   |
+| `E2E_DVP_DKP_LICENSE_KEY`                        | (required for Bootstrap) | DKP registry license token for dhctl install image  |
+| `E2E_DVP_REGISTRY_DOCKER_CFG`                    | (required for Bootstrap) | base64 dockercfg embedded into the bootstrap config |
 
 ---
 

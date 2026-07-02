@@ -154,6 +154,8 @@ jobs:
           E2E_DVP_BASE_CLUSTER_NAMESPACE: ${{ needs.resolve.outputs.namespace }}
           E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
           E2E_DVP_BASE_CLUSTER_STORAGE_CLASS: ${{ secrets.E2E_DVP_BASE_CLUSTER_STORAGE_CLASS }}
+          E2E_DVP_DKP_LICENSE_KEY: ${{ secrets.E2E_DVP_DKP_LICENSE_KEY }}
+          E2E_DVP_REGISTRY_DOCKER_CFG: ${{ secrets.E2E_DVP_REGISTRY_DOCKER_CFG }}
           # Commander provider env (used when cluster_provider == commander).
           # Typed/defaulted fields use `|| <default>` so an unset var never
           # renders as an empty string that would override the Go-side default.

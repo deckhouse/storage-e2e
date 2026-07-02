@@ -40,6 +40,14 @@ type baseConnector interface {
 	VMExecutor(ctx context.Context, vmIP string) (remoteExecutor, func(), error)
 }
 
+// masterConnector opens an API connection to a freshly bootstrapped master
+// (SSH kubeconfig fetch + tunnel + server rewrite). It is a narrow seam kept
+// separate from baseConnector so the base cluster contract stays minimal; both
+// are satisfied by the concrete *dvpConnector.
+type masterConnector interface {
+	connectToMaster(ctx context.Context, masterIP string) (*rest.Config, func(), error)
+}
+
 type kubeOps interface {
 	CheckReachable(ctx context.Context, kube *rest.Config) error
 	WaitModuleReady(ctx context.Context, kube *rest.Config, module string, timeout time.Duration) error
@@ -56,9 +64,11 @@ type fleetFactory interface {
 }
 
 type deps struct {
-	connector baseConnector
-	kube      kubeOps
-	fleet     fleetFactory
+	connector    baseConnector
+	masterConn   masterConnector
+	kube         kubeOps
+	fleet        fleetFactory
+	installReady func(ctx context.Context, kube *rest.Config, timeout time.Duration) error
 }
 
 type defaultKubeOps struct{}

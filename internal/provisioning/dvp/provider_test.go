@@ -189,7 +189,13 @@ func newTestProvider(t *testing.T, conn fakeConnector, kube fakeKube, factory fa
 	})
 }
 
-func TestBootstrapHappyPath(t *testing.T) {
+// The tests below target provision — the fakeable provisioning half of
+// Bootstrap. The install half (dhctl → connect-to-master → join → modules)
+// requires a live cluster and is intentionally not faked (implementation focus,
+// per the design doc). cleanups.run() stands in for Bootstrap's deferred
+// cleanup so the released-resource ordering stays observable.
+
+func TestProvisionHappyPath(t *testing.T) {
 	t.Parallel()
 	rec := &recorder{}
 
@@ -199,23 +205,22 @@ func TestBootstrapHappyPath(t *testing.T) {
 
 	p := newTestProvider(t, conn, kube, factory)
 
-	if err := p.Bootstrap(context.Background()); err != nil {
-		t.Fatalf("Bootstrap() error = %v", err)
+	cleanups := cleanupStack{}
+	if _, err := p.provision(context.Background(), &cleanups); err != nil {
+		t.Fatalf("provision() error = %v", err)
 	}
+	cleanups.run()
 
 	want := []string{"connect", "reachable", "module", "namespace", "fleet.New", "provision", "vmexec", "closeExec", "cleanup"}
 	if !slices.Equal(rec.calls, want) {
 		t.Errorf("call order = %v, want %v", rec.calls, want)
-	}
-	if !slices.Contains(rec.calls, "cleanup") {
-		t.Error("cleanup did not run")
 	}
 	if len(rec.keys) != 1 || rec.keys[0] == "" {
 		t.Errorf("fleet.New got ssh key %q, want non-empty derived key", rec.keys)
 	}
 }
 
-func TestBootstrapConnectErrorShortCircuits(t *testing.T) {
+func TestProvisionConnectErrorShortCircuits(t *testing.T) {
 	t.Parallel()
 	rec := &recorder{}
 
@@ -225,18 +230,21 @@ func TestBootstrapConnectErrorShortCircuits(t *testing.T) {
 
 	p := newTestProvider(t, conn, kube, factory)
 
-	if err := p.Bootstrap(context.Background()); err == nil {
-		t.Fatal("Bootstrap() error = nil, want connect error")
+	cleanups := cleanupStack{}
+	if _, err := p.provision(context.Background(), &cleanups); err == nil {
+		t.Fatal("provision() error = nil, want connect error")
 	}
+	cleanups.run()
+
 	if !slices.Equal(rec.calls, []string{"connect"}) {
 		t.Errorf("calls after connect failure = %v, want [connect]", rec.calls)
 	}
 	if slices.Contains(rec.calls, "cleanup") {
-		t.Error("cleanup ran though connect failed (no cleanup returned)")
+		t.Error("cleanup ran though connect failed (nothing pushed)")
 	}
 }
 
-func TestBootstrapModuleErrorRunsCleanup(t *testing.T) {
+func TestProvisionModuleErrorRunsCleanup(t *testing.T) {
 	t.Parallel()
 	rec := &recorder{}
 
@@ -246,9 +254,12 @@ func TestBootstrapModuleErrorRunsCleanup(t *testing.T) {
 
 	p := newTestProvider(t, conn, kube, factory)
 
-	if err := p.Bootstrap(context.Background()); err == nil {
-		t.Fatal("Bootstrap() error = nil, want module error")
+	cleanups := cleanupStack{}
+	if _, err := p.provision(context.Background(), &cleanups); err == nil {
+		t.Fatal("provision() error = nil, want module error")
 	}
+	cleanups.run()
+
 	if !slices.Contains(rec.calls, "cleanup") {
 		t.Error("cleanup did not run after module failure")
 	}
@@ -257,7 +268,7 @@ func TestBootstrapModuleErrorRunsCleanup(t *testing.T) {
 	}
 }
 
-func TestBootstrapProvisionError(t *testing.T) {
+func TestProvisionFleetError(t *testing.T) {
 	t.Parallel()
 	rec := &recorder{}
 	provisionErr := errors.New("boom")
@@ -268,13 +279,16 @@ func TestBootstrapProvisionError(t *testing.T) {
 
 	p := newTestProvider(t, conn, kube, factory)
 
-	err := p.Bootstrap(context.Background())
+	cleanups := cleanupStack{}
+	_, err := p.provision(context.Background(), &cleanups)
 	if err == nil {
-		t.Fatal("Bootstrap() error = nil, want provision error")
+		t.Fatal("provision() error = nil, want provision error")
 	}
 	if !errors.Is(err, provisionErr) {
-		t.Errorf("Bootstrap() error = %v, want wrap of %v", err, provisionErr)
+		t.Errorf("provision() error = %v, want wrap of %v", err, provisionErr)
 	}
+	cleanups.run()
+
 	if !slices.Contains(rec.calls, "cleanup") {
 		t.Error("cleanup did not run after provision failure")
 	}

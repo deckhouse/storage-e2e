@@ -100,6 +100,75 @@ func TestConfigureTunnelTimeouts(t *testing.T) {
 	}
 }
 
+func TestRewriteKubeconfigServer(t *testing.T) {
+	t.Parallel()
+
+	const localAddr = "127.0.0.1:34567"
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{"standard node IP", "clusters:\n- cluster:\n    server: https://10.10.1.5:6443\n"},
+		{"loopback proxy port", "clusters:\n- cluster:\n    server: https://127.0.0.1:6445\n"},
+		{"quoted url", "clusters:\n- cluster:\n    server: \"https://10.0.0.1:6443\"\n"},
+		{"tab indent", "clusters:\n- cluster:\n\t\tserver: https://host:6443\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := rewriteKubeconfigServer([]byte(tt.in), localAddr)
+			if err != nil {
+				t.Fatalf("rewriteKubeconfigServer() error = %v", err)
+			}
+			s := string(out)
+			want := "server: https://" + localAddr
+			if !strings.Contains(s, want) {
+				t.Errorf("rewritten kubeconfig missing %q:\n%s", want, s)
+			}
+			if strings.Contains(s, ":6443") || strings.Contains(s, ":6445") {
+				t.Errorf("original server URL should be gone:\n%s", s)
+			}
+		})
+	}
+}
+
+func TestRewriteKubeconfigServerPreservesIndent(t *testing.T) {
+	t.Parallel()
+	in := "clusters:\n- cluster:\n    server: https://10.0.0.1:6443\n"
+	out, err := rewriteKubeconfigServer([]byte(in), "127.0.0.1:1234")
+	if err != nil {
+		t.Fatalf("rewriteKubeconfigServer() error = %v", err)
+	}
+	if !strings.Contains(string(out), "    server: https://127.0.0.1:1234") {
+		t.Errorf("indentation not preserved:\n%s", out)
+	}
+}
+
+func TestRewriteKubeconfigServerNoServer(t *testing.T) {
+	t.Parallel()
+	if _, err := rewriteKubeconfigServer([]byte("apiVersion: v1\nkind: Config\n"), "127.0.0.1:1234"); err == nil {
+		t.Fatal("rewriteKubeconfigServer() error = nil, want error when no server field present")
+	}
+}
+
+func TestBuildRestConfigFromKubeconfig(t *testing.T) {
+	t.Parallel()
+	rewritten, err := rewriteKubeconfigServer([]byte(sampleKubeconfig), "127.0.0.1:40001")
+	if err != nil {
+		t.Fatalf("rewriteKubeconfigServer() error = %v", err)
+	}
+	restConfig, err := buildRestConfigFromKubeconfig(rewritten)
+	if err != nil {
+		t.Fatalf("buildRestConfigFromKubeconfig() error = %v", err)
+	}
+	if restConfig.Host != "https://127.0.0.1:40001" {
+		t.Errorf("Host = %q, want https://127.0.0.1:40001", restConfig.Host)
+	}
+	if restConfig.WrapTransport == nil {
+		t.Error("WrapTransport = nil, want tunnel timeouts applied")
+	}
+}
+
 func TestPublicKeyFromPrivateKeyInline(t *testing.T) {
 	t.Parallel()
 

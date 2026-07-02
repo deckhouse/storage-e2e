@@ -81,14 +81,16 @@ to a registered provider:
 
 ### DVP provider (`cluster_provider: dvp`)
 
-| Secret | Required | Purpose |
-|--------|----------|---------|
-| `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY` | Yes | SSH private key **content** for the base (virtualization) cluster; passed inline (no temp file) |
-| `E2E_DVP_BASE_CLUSTER_KUBECONFIG` | Yes | **base64-encoded** kubeconfig; the workflow decodes it inline and passes the content directly |
-| `E2E_DVP_BASE_CLUSTER_SSH_USER` | Yes | SSH user |
-| `E2E_DVP_BASE_CLUSTER_SSH_HOST` | Yes | SSH host |
-| `E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE` | No | SSH key passphrase |
-| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST` / `_SSH_JUMP_USER` / `_SSH_JUMP_PRIVATE_KEY` | No | jump/bastion host — **all-or-nothing**: set all three together or none (a partial config fails validation). Currently **not wired** in the workflow; CI connects directly. |
+| Secret                                                                            | Required        | Purpose                                                                                                                                                                    |
+|-----------------------------------------------------------------------------------|-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY`                                            | Yes             | SSH private key **content** for the base (virtualization) cluster; passed inline (no temp file)                                                                            |
+| `E2E_DVP_BASE_CLUSTER_KUBECONFIG`                                                 | Yes             | **base64-encoded** kubeconfig; the workflow decodes it inline and passes the content directly                                                                              |
+| `E2E_DVP_BASE_CLUSTER_SSH_USER`                                                   | Yes             | SSH user                                                                                                                                                                   |
+| `E2E_DVP_BASE_CLUSTER_SSH_HOST`                                                   | Yes             | SSH host                                                                                                                                                                   |
+| `E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE`                                             | No              | SSH key passphrase                                                                                                                                                         |
+| `E2E_DVP_DKP_LICENSE_KEY`                                                         | Yes (bootstrap) | DKP registry license token for the dhctl install image; consumed only by bootstrap (validated up front via `ValidateForBootstrap`), not teardown                           |
+| `E2E_DVP_REGISTRY_DOCKER_CFG`                                                     | Yes (bootstrap) | **base64** dockercfg embedded into the dhctl bootstrap config; consumed only by bootstrap, not teardown                                                                    |
+| `E2E_DVP_BASE_CLUSTER_SSH_JUMP_HOST` / `_SSH_JUMP_USER` / `_SSH_JUMP_PRIVATE_KEY` | No              | jump/bastion host — **all-or-nothing**: set all three together or none (a partial config fails validation). Currently **not wired** in the workflow; CI connects directly. |
 
 ### Commander provider (`cluster_provider: commander`)
 
