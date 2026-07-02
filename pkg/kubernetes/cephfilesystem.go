@@ -39,7 +39,7 @@ var CephFilesystemGVR = schema.GroupVersionResource{
 
 // CephFilesystemConfig describes a minimal Rook CephFilesystem with one
 // metadata pool and exactly one data pool. Defaults are tuned for tiny
-// single-node test clusters and mirror CephBlockPoolConfig conventions.
+// single-node test clusters.
 type CephFilesystemConfig struct {
 	// Name of the CephFilesystem CR.
 	Name string

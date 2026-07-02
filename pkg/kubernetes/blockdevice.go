@@ -20,11 +20,24 @@ import (
 	"context"
 	"fmt"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/storage"
 	"github.com/deckhouse/storage-e2e/internal/logger"
 )
+
+// BlockDeviceGVR is the GroupVersionResource of the sds-node-configurator
+// BlockDevice CR (cluster-scoped). Used to label individual BlockDevices so a
+// selector (e.g. ElasticCluster.spec.storage.blockDeviceSelector) can adopt
+// them for OSDs.
+var BlockDeviceGVR = schema.GroupVersionResource{
+	Group:    "storage.deckhouse.io",
+	Version:  "v1alpha1",
+	Resource: "blockdevices",
+}
 
 // BlockDevice represents a block device in the cluster (re-export for public API)
 type BlockDevice = storage.BlockDeviceInfo
@@ -67,4 +80,46 @@ func GetConsumableBlockDevicesByNode(ctx context.Context, kubeconfig *rest.Confi
 
 	logger.Debug("Found %d consumable BlockDevices on node %s", len(blockDevices), nodeName)
 	return blockDevices, nil
+}
+
+// LabelBlockDevice sets a label on a single BlockDevice CR. Idempotent (skips
+// the update when the label already has the desired value) and tolerant of
+// optimistic-concurrency conflicts. Used to mark BlockDevices eligible for
+// adoption by an ElasticCluster's blockDeviceSelector.
+func LabelBlockDevice(ctx context.Context, kubeconfig *rest.Config, name, labelKey, labelValue string) error {
+	dynamicClient, err := NewDynamicClientWithRetry(ctx, kubeconfig)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	const maxRetries = 5
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		bd, err := dynamicClient.Resource(BlockDeviceGVR).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get BlockDevice %s: %w", name, err)
+		}
+		labels := bd.GetLabels()
+		if labels[labelKey] == labelValue {
+			logger.Debug("BlockDevice %s already has label %s=%s", name, labelKey, labelValue)
+			return nil
+		}
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[labelKey] = labelValue
+		bd.SetLabels(labels)
+
+		_, lastErr = dynamicClient.Resource(BlockDeviceGVR).Update(ctx, bd, metav1.UpdateOptions{})
+		if lastErr == nil {
+			logger.Info("Labeled BlockDevice %s with %s=%s", name, labelKey, labelValue)
+			return nil
+		}
+		if apierrors.IsConflict(lastErr) {
+			logger.Debug("Conflict labeling BlockDevice %s (attempt %d/%d), retrying...", name, attempt+1, maxRetries)
+			continue
+		}
+		return fmt.Errorf("failed to label BlockDevice %s: %w", name, lastErr)
+	}
+	return fmt.Errorf("failed to label BlockDevice %s after %d attempts: %w", name, maxRetries, lastErr)
 }

@@ -10,12 +10,23 @@ gates on the `e2e/run` PR label and calls it with `secrets: inherit`.
 resolve ──> bootstrap ──> run-tests ──> teardown
 ```
 
-| Job         | `needs`                       | Runs when                                                   | What it does                                                                                                             |
-|-------------|-------------------------------|-------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
-| `resolve`   | —                             | always (workflow invoked)                                   | Sparse-checks-out `.github/scripts`, runs `e2e-resolve-labels.sh` → outputs `keep_cluster`, `ginkgo_filter`, `namespace` |
-| `bootstrap` | resolve                       | always when reached                                         | `e2e-prune-workspace.sh` + `go run ./cmd/bootstrap-cluster`                                                              |
-| `run-tests` | resolve, bootstrap            | `needs.bootstrap.result == 'success'`                       | `e2e-run-tests.sh` (`go mod replace` + `go test` with Ginkgo filter); uploads log                                        |
-| `teardown`  | resolve, bootstrap, run-tests | `always() && bootstrap succeeded && keep_cluster != 'true'` | `e2e-prune-workspace.sh` + `go run ./cmd/remove-cluster`                                                                 |
+| Job | `needs` | Runs when | What it does |
+|-----|---------|-----------|--------------|
+| `resolve` | — | always (workflow invoked) | Sparse-checks-out `.github/scripts`, runs `e2e-resolve-labels.sh` → outputs `keep_cluster`, `ginkgo_filter`, `namespace` |
+| `bootstrap` | resolve | always when reached | `e2e-prune-workspace.sh` + `go run ./cmd/bootstrap-cluster`. For `commander` this creates the cluster (Commander API, wait Ready) **and** enables the modules-under-test from `cluster_config` — connecting **in-process** via the commander connector (SSH to the master through the bastion, kubeconfig fetched off the master, API tunnel). No kubeconfig artifact, no separate enable-modules step |
+| `run-tests` | resolve, bootstrap | bootstrap succeeded | `e2e-run-tests.sh` (`go mod replace` + `go test`). For `commander`, a gated step injects the suite connection env (`E2E_TEST_CLUSTER_PROVIDER=commander` + `E2E_COMMANDER_*`); the suite attaches **in-process** via the provider's `Connect` (commander connector) — no artifact, no external tunnel |
+| `teardown` | resolve, bootstrap, run-tests | `always() && bootstrap succeeded && keep_cluster != 'true'` | `e2e-prune-workspace.sh` + `go run ./cmd/remove-cluster` |
+
+> **Provider neutrality.** All commander-specific behavior lives in
+> commander-gated steps; the shared `bootstrap`/`run-tests`/`teardown` jobs are
+> unchanged for other providers. Module enablement is **not** a separate job — it
+> is a commander-only step inside `run-tests` (mirroring how the other flows
+> enable modules in-process via `EnableAndConfigureModules` + `cluster_config`),
+> so there is no cross-job dependency that could skip `run-tests` for dvp.
+>
+> **DVP note.** For `cluster_provider: dvp`, every commander step is skipped, so
+> `run-tests` runs with its default (non-commander) environment. The kubeconfig
+> hand-off + in-process module enablement above are implemented for `commander`.
 
 `run-tests` does **not** block teardown by its own result — the cluster is
 cleaned regardless of test pass/fail, unless the `e2e/keep-cluster` label is set.
@@ -44,6 +55,7 @@ same namespace → "same cluster".
 | `label_filter` | default Ginkgo filter when no `e2e/label:*` labels | `!stress-test` |
 | `cluster_config` | path (in the module repo) to the cluster YAML (`E2E_CLUSTER_CONFIG_YAML_PATH`) | (required) |
 | `cluster_provider` | provider for bootstrap/teardown: `dvp` or `commander` | `dvp` |
+| `module_image_tag` | image tag for the module under test, exposed to `enable-modules` as `E2E_MODULE_IMAGE_TAG` (reference it from `cluster_config` as `modulePullOverride: "${E2E_MODULE_IMAGE_TAG}"`) | `""` |
 | `storage_e2e_ref` | git ref of storage-e2e to checkout | `main` |
 | `runner_labels` | JSON array of runner labels | `["self-hosted","regular"]` |
 | `test_timeout` | Ginkgo suite timeout | `90m` |

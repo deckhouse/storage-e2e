@@ -405,6 +405,7 @@ config/
 ├── config.go           # Main configuration operations
 ├── env.go              # Environment variable definitions and validation
 ├── types.go            # Configuration type definitions
+├── overrides.go        # Per-module modulePullOverride env overrides
 └── images.go           # OS image URL definitions
 ```
 
@@ -910,6 +911,7 @@ logger.Error("Failed to create resource: %v", err)
 | `TEST_CLUSTER_CLEANUP` | `false` | Cleanup cluster after tests |
 | `LOG_LEVEL` | `debug` | Log level (debug/info/warn/error) |
 | `KUBE_CONFIG_PATH` | - | Explicit kubeconfig path. Used when SSH retrieval of `/etc/kubernetes/{super-admin,admin}.conf` from the master fails. If unset and SSH also fails, `GetKubeconfig` returns an error (no silent fallback to `~/.kube/config`). |
+| `<MODULE>_MODULE_PULL_OVERRIDE` | - | Per-module override of a module's `modulePullOverride` at config load (module name upper-cased, non-`[A-Z0-9]` → `_`; e.g. `SDS_ELASTIC_MODULE_PULL_OVERRIDE`, `CSI_CEPH_MODULE_PULL_OVERRIDE`). Replaces the static `cluster_config.yml` tag for CI image builds (`pr<N>`/`mr<N>`); each applied override is logged at INFO. The static YAML stays literal — `${VAR}` inside `modulePullOverride` is still rejected. See `internal/config/overrides.go`. |
 ### Commander Variables (only when `TEST_CLUSTER_CREATE_MODE=commander`)
 
 | Variable | Default | Description |

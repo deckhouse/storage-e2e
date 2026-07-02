@@ -45,6 +45,11 @@ on:
         type: string
         required: false
         default: "dvp"
+      module_image_tag:
+        description: "Image tag for the module under test, exposed to enable-modules as E2E_MODULE_IMAGE_TAG so cluster_config modulePullOverride can reference ${E2E_MODULE_IMAGE_TAG} (e.g. pr<N>)"
+        type: string
+        required: false
+        default: ""
       storage_e2e_ref:
         description: "Git ref of storage-e2e to checkout"
         type: string
@@ -104,7 +109,8 @@ jobs:
     name: bootstrap
     needs: resolve
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
-    timeout-minutes: 60
+    # Commander cluster-create + Ready wait can take up to ~60m; keep headroom.
+    timeout-minutes: 90
     steps:
       - name: Checkout module repo
         uses: actions/checkout@v7
@@ -164,7 +170,18 @@ jobs:
           E2E_COMMANDER_AUTH_METHOD: ${{ vars.E2E_COMMANDER_AUTH_METHOD || 'x-auth-token' }}
           E2E_COMMANDER_API_PREFIX: ${{ vars.E2E_COMMANDER_API_PREFIX || '/api/v1' }}
           E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY: ${{ vars.E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY || 'false' }}
-          E2E_COMMANDER_WAIT_TIMEOUT: ${{ vars.E2E_COMMANDER_WAIT_TIMEOUT || '30m' }}
+          E2E_COMMANDER_WAIT_TIMEOUT: ${{ vars.E2E_COMMANDER_WAIT_TIMEOUT || '60m' }}
+          # After the cluster is Ready, Bootstrap connects to the master (SSH via the
+          # bastion, kubeconfig fetch, in-process API tunnel) and enables the
+          # modules-under-test from cluster_config (ModuleConfig + ModulePullOverride) —
+          # so no separate enable-modules step is needed. Hence the SSH creds + the
+          # module image tag (for modulePullOverride: "${E2E_MODULE_IMAGE_TAG}") here.
+          E2E_COMMANDER_SSH_PRIVATE_KEY: ${{ secrets.E2E_COMMANDER_SSH_PRIVATE_KEY }}
+          E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY: ${{ secrets.E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY }}
+          E2E_COMMANDER_SSH_USER: ${{ vars.E2E_COMMANDER_SSH_USER }}
+          E2E_COMMANDER_SSH_JUMP_HOST: ${{ vars.E2E_COMMANDER_SSH_JUMP_HOST }}
+          E2E_COMMANDER_SSH_JUMP_USER: ${{ vars.E2E_COMMANDER_SSH_JUMP_USER }}
+          E2E_MODULE_IMAGE_TAG: ${{ inputs.module_image_tag }}
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
@@ -199,6 +216,61 @@ jobs:
         with:
           go-version-file: ${{ inputs.module_path }}/go.mod
           cache: false
+
+      # Commander: inject the suite's connection env. The commander connector runs
+      # IN-PROCESS — it SSHes to the master via the bastion, fetches the kubeconfig
+      # off the master and opens an API tunnel — so there is no kubeconfig artifact
+      # and no external SSH tunnel. (Module enablement already happened in Bootstrap.)
+      # ALL commander wiring lives in this gated step (writing to $GITHUB_ENV), so for
+      # other providers (dvp, …) the "Run E2E tests" step keeps its exact environment.
+      - name: Configure commander connection
+        if: ${{ inputs.cluster_provider == 'commander' }}
+        env:
+          E2E_COMMANDER_URL: ${{ secrets.E2E_COMMANDER_URL }}
+          E2E_COMMANDER_TOKEN: ${{ secrets.E2E_COMMANDER_TOKEN }}
+          E2E_COMMANDER_CA_CERT: ${{ secrets.E2E_COMMANDER_CA_CERT }}
+          E2E_COMMANDER_SSH_PRIVATE_KEY: ${{ secrets.E2E_COMMANDER_SSH_PRIVATE_KEY }}
+          E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY: ${{ secrets.E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY }}
+          E2E_COMMANDER_SSH_USER: ${{ vars.E2E_COMMANDER_SSH_USER }}
+          E2E_COMMANDER_SSH_JUMP_HOST: ${{ vars.E2E_COMMANDER_SSH_JUMP_HOST }}
+          E2E_COMMANDER_SSH_JUMP_USER: ${{ vars.E2E_COMMANDER_SSH_JUMP_USER }}
+          E2E_COMMANDER_AUTH_METHOD: ${{ vars.E2E_COMMANDER_AUTH_METHOD || 'x-auth-token' }}
+          E2E_COMMANDER_API_PREFIX: ${{ vars.E2E_COMMANDER_API_PREFIX || '/api/v1' }}
+          E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY: ${{ vars.E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY || 'false' }}
+          NAMESPACE: ${{ needs.resolve.outputs.namespace }}
+          CLUSTER_CONFIG: ${{ github.workspace }}/${{ inputs.cluster_config }}
+        run: |
+          set -euo pipefail
+          emit() { printf '%s=%s\n' "$1" "$2" >>"$GITHUB_ENV"; }
+          emit_multiline() {
+            local d="__E2E_EOF_${RANDOM}${RANDOM}__"
+            { printf '%s<<%s\n' "$1" "$d"; printf '%s\n' "$2"; printf '%s\n' "$d"; } >>"$GITHUB_ENV"
+          }
+          # Drive the suite's connect through the clusterprovider (commander
+          # implements Connect); the suite intercepts before the legacy
+          # TEST_CLUSTER_CREATE_MODE switch. The mode is still set to a valid value
+          # because the consumer suite + ValidateEnvironment require a non-empty one.
+          emit E2E_TEST_CLUSTER_PROVIDER commander
+          emit E2E_CLUSTER_CONFIG_YAML_PATH "${CLUSTER_CONFIG}"
+          emit TEST_CLUSTER_CREATE_MODE commander
+          emit TEST_CLUSTER_NAMESPACE "${NAMESPACE}"
+          emit E2E_COMMANDER_CLUSTER_NAME "${NAMESPACE}"
+          emit E2E_COMMANDER_URL "${E2E_COMMANDER_URL}"
+          emit E2E_COMMANDER_TOKEN "${E2E_COMMANDER_TOKEN}"
+          emit E2E_COMMANDER_AUTH_METHOD "${E2E_COMMANDER_AUTH_METHOD}"
+          emit E2E_COMMANDER_API_PREFIX "${E2E_COMMANDER_API_PREFIX}"
+          emit E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY "${E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY}"
+          emit E2E_COMMANDER_SSH_USER "${E2E_COMMANDER_SSH_USER}"
+          emit E2E_COMMANDER_SSH_JUMP_HOST "${E2E_COMMANDER_SSH_JUMP_HOST}"
+          emit E2E_COMMANDER_SSH_JUMP_USER "${E2E_COMMANDER_SSH_JUMP_USER}"
+          emit_multiline E2E_COMMANDER_SSH_PRIVATE_KEY "${E2E_COMMANDER_SSH_PRIVATE_KEY}"
+          [ -n "${E2E_COMMANDER_CA_CERT:-}" ] && emit_multiline E2E_COMMANDER_CA_CERT "${E2E_COMMANDER_CA_CERT}" || true
+          [ -n "${E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY:-}" ] && emit_multiline E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY "${E2E_COMMANDER_SSH_JUMP_PRIVATE_KEY}" || true
+
+      # NOTE: module enablement is no longer a separate step — the commander
+      # provider's Bootstrap enables the modules-under-test from cluster_config as
+      # part of bringing the cluster up (see cmd/bootstrap-cluster / the bootstrap
+      # job above). The step above only injects the suite's connection env.
 
       - name: Run E2E tests
         id: run_tests
@@ -282,7 +354,7 @@ jobs:
           E2E_COMMANDER_AUTH_METHOD: ${{ vars.E2E_COMMANDER_AUTH_METHOD || 'x-auth-token' }}
           E2E_COMMANDER_API_PREFIX: ${{ vars.E2E_COMMANDER_API_PREFIX || '/api/v1' }}
           E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY: ${{ vars.E2E_COMMANDER_INSECURE_SKIP_TLS_VERIFY || 'false' }}
-          E2E_COMMANDER_WAIT_TIMEOUT: ${{ vars.E2E_COMMANDER_WAIT_TIMEOUT || '30m' }}
+          E2E_COMMANDER_WAIT_TIMEOUT: ${{ vars.E2E_COMMANDER_WAIT_TIMEOUT || '60m' }}
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
