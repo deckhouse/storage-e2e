@@ -18,6 +18,7 @@ package dvp
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +75,25 @@ func TestWaitBootstrapSecretsMissingTimesOut(t *testing.T) {
 	err := waitBootstrapSecretsClient(context.Background(), cs, 30*time.Millisecond)
 	if err == nil {
 		t.Fatal("waitBootstrapSecretsClient() error = nil, want timeout")
+	}
+}
+
+func TestWaitClusterHealthy(t *testing.T) {
+	t.Parallel()
+	cpLabel := map[string]string{controlPlaneNodeLabels[0]: ""}
+
+	healthy := fake.NewClientset(nodeObj("m1", true, cpLabel), deckhouseDeployment(true))
+	if err := waitClusterHealthyClient(context.Background(), healthy, time.Second); err != nil {
+		t.Fatalf("waitClusterHealthyClient() error = %v, want nil", err)
+	}
+
+	unhealthy := fake.NewClientset(nodeObj("m1", true, cpLabel), deckhouseDeployment(false))
+	err := waitClusterHealthyClient(context.Background(), unhealthy, 30*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitClusterHealthyClient() error = nil, want timeout")
+	}
+	if !strings.Contains(err.Error(), "deckhouse deployment is not Available") {
+		t.Errorf("timeout error should carry the last failed check, got: %v", err)
 	}
 }
 

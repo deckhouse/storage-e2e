@@ -132,12 +132,11 @@ func TestBuildModuleLevels(t *testing.T) {
 // recordingApplier records apply/waitReady calls in order and can be configured
 // to fail readiness for specific modules (to exercise timeouts).
 type recordingApplier struct {
-	mu            sync.Mutex
-	applied       []string
-	waited        []string
-	neverReady    map[string]bool
-	applyErr      map[string]error
-	waitCallDelay time.Duration
+	mu         sync.Mutex
+	applied    []string
+	waited     []string
+	neverReady map[string]bool
+	applyErr   map[string]error
 }
 
 func (a *recordingApplier) apply(ctx context.Context, m *config.ModuleConfig, registryRepo string) error {

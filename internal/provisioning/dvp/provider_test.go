@@ -206,7 +206,7 @@ func TestProvisionHappyPath(t *testing.T) {
 	p := newTestProvider(t, conn, kube, factory)
 
 	cleanups := cleanupStack{}
-	if _, _, err := p.provision(context.Background(), &cleanups); err != nil {
+	if _, err := p.provision(context.Background(), &cleanups); err != nil {
 		t.Fatalf("provision() error = %v", err)
 	}
 	cleanups.run()
@@ -231,7 +231,7 @@ func TestProvisionConnectErrorShortCircuits(t *testing.T) {
 	p := newTestProvider(t, conn, kube, factory)
 
 	cleanups := cleanupStack{}
-	if _, _, err := p.provision(context.Background(), &cleanups); err == nil {
+	if _, err := p.provision(context.Background(), &cleanups); err == nil {
 		t.Fatal("provision() error = nil, want connect error")
 	}
 	cleanups.run()
@@ -255,7 +255,7 @@ func TestProvisionModuleErrorRunsCleanup(t *testing.T) {
 	p := newTestProvider(t, conn, kube, factory)
 
 	cleanups := cleanupStack{}
-	if _, _, err := p.provision(context.Background(), &cleanups); err == nil {
+	if _, err := p.provision(context.Background(), &cleanups); err == nil {
 		t.Fatal("provision() error = nil, want module error")
 	}
 	cleanups.run()
@@ -280,7 +280,7 @@ func TestProvisionFleetError(t *testing.T) {
 	p := newTestProvider(t, conn, kube, factory)
 
 	cleanups := cleanupStack{}
-	_, _, err := p.provision(context.Background(), &cleanups)
+	_, err := p.provision(context.Background(), &cleanups)
 	if err == nil {
 		t.Fatal("provision() error = nil, want provision error")
 	}

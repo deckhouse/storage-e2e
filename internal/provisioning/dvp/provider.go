@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
-	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
@@ -99,7 +98,7 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	cleanups := cleanupStack{}
 	defer cleanups.run()
 
-	_, clusterDef, err := p.provision(ctx, &cleanups)
+	clusterDef, err := p.provision(ctx, &cleanups)
 	if err != nil {
 		return err
 	}
@@ -107,10 +106,10 @@ func (p *dvpProvider) Bootstrap(ctx context.Context) error {
 	return p.installDeckhouse(ctx, clusterDef, &cleanups)
 }
 
-func (p *dvpProvider) provision(ctx context.Context, cleanups *cleanupStack) (*rest.Config, *config.ClusterDefinition, error) {
+func (p *dvpProvider) provision(ctx context.Context, cleanups *cleanupStack) (*config.ClusterDefinition, error) {
 	clusterDef, err := config.LoadClusterDefinition(p.cfg.ClusterBootstrapConfigPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load cluster bootstrap config: %w", err)
+		return nil, fmt.Errorf("load cluster bootstrap config: %w", err)
 	}
 
 	p.logger.Info("loaded cluster bootstrap config",
@@ -121,18 +120,18 @@ func (p *dvpProvider) provision(ctx context.Context, cleanups *cleanupStack) (*r
 
 	sshPublicKey, err := publicKeyFromPrivateKey(p.creds.SSHKey, p.dvpConf.SSHPassphrase)
 	if err != nil {
-		return nil, nil, fmt.Errorf("derive ssh public key: %w", err)
+		return nil, fmt.Errorf("derive ssh public key: %w", err)
 	}
 
 	kube, baseCleanup, err := p.deps.connector.Connect(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	cleanups.push(baseCleanup)
 
 	p.logger.Info("verifying connectivity to DVP base cluster API server")
 	if reachErr := p.deps.kube.CheckReachable(ctx, kube); reachErr != nil {
-		return nil, nil, reachErr
+		return nil, reachErr
 	}
 	p.logger.Info("DVP base cluster API server is reachable")
 
@@ -140,7 +139,7 @@ func (p *dvpProvider) provision(ctx context.Context, cleanups *cleanupStack) (*r
 		"timeout", config.ModuleCheckTimeout,
 	)
 	if moduleErr := p.deps.kube.WaitModuleReady(ctx, kube, "virtualization", config.ModuleCheckTimeout); moduleErr != nil {
-		return nil, nil, moduleErr
+		return nil, moduleErr
 	}
 	p.logger.Info("virtualization module is ready")
 
@@ -152,13 +151,13 @@ func (p *dvpProvider) provision(ctx context.Context, cleanups *cleanupStack) (*r
 	nsErr := p.deps.kube.EnsureNamespace(nsCtx, kube, p.dvpConf.Namespace)
 	cancel()
 	if nsErr != nil {
-		return nil, nil, nsErr
+		return nil, nsErr
 	}
 	p.logger.Info("test namespace is ready", "namespace", p.dvpConf.Namespace)
 
 	fleet, err := p.deps.fleet.New(ctx, kube, sshPublicKey)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if clusterDef.Setup == nil {
@@ -170,7 +169,7 @@ func (p *dvpProvider) provision(ctx context.Context, cleanups *cleanupStack) (*r
 		"namespace", p.dvpConf.Namespace,
 	)
 	if err := fleet.Provision(ctx, clusterDef); err != nil {
-		return nil, nil, fmt.Errorf("provision virtual machines: %w", err)
+		return nil, fmt.Errorf("provision virtual machines: %w", err)
 	}
 	p.logger.Info("virtual machines provisioned", "namespace", p.dvpConf.Namespace)
 
@@ -180,7 +179,7 @@ func (p *dvpProvider) provision(ctx context.Context, cleanups *cleanupStack) (*r
 		"ip", setupIP, "timeout", setupNodeConnectTimeout)
 	exec, closeExec, err := p.deps.connector.VMExecutor(ctx, setupIP)
 	if err != nil {
-		return nil, nil, fmt.Errorf("setup node ssh not ready: %w", err)
+		return nil, fmt.Errorf("setup node ssh not ready: %w", err)
 	}
 	p.logger.Info("setup node SSH is ready", "ip", setupIP)
 
@@ -189,11 +188,11 @@ func (p *dvpProvider) provision(ctx context.Context, cleanups *cleanupStack) (*r
 	dockerErr := waitDockerReady(ctx, exec, dockerReadyPoll, dockerReadyTimeout)
 	closeExec()
 	if dockerErr != nil {
-		return nil, nil, fmt.Errorf("setup node docker not ready: %w", dockerErr)
+		return nil, fmt.Errorf("setup node docker not ready: %w", dockerErr)
 	}
 	p.logger.Info("setup node Docker is ready", "ip", setupIP)
 
-	return kube, clusterDef, nil
+	return clusterDef, nil
 }
 
 func (p *dvpProvider) installDeckhouse(ctx context.Context, def *config.ClusterDefinition, cleanups *cleanupStack) error {
@@ -203,8 +202,8 @@ func (p *dvpProvider) installDeckhouse(ctx context.Context, def *config.ClusterD
 	}
 
 	p.logger.Info("ensuring first master is bootstrapped with dhctl", "masterIP", firstMasterIP)
-	if err := p.dhctlBootstrap(ctx, def); err != nil {
-		return fmt.Errorf("dhctl bootstrap: %w", err)
+	if bootstrapErr := p.dhctlBootstrap(ctx, def); bootstrapErr != nil {
+		return fmt.Errorf("dhctl bootstrap: %w", bootstrapErr)
 	}
 	p.logger.Info("first master is bootstrapped", "masterIP", firstMasterIP)
 
@@ -228,11 +227,9 @@ func (p *dvpProvider) installDeckhouse(ctx context.Context, def *config.ClusterD
 		return fmt.Errorf("wait bootstrap secrets: %w", err)
 	}
 
-	healthCtx, cancel := context.WithTimeout(ctx, config.ClusterHealthTimeout)
-	healthErr := checkHealth(healthCtx, target)
-	cancel()
-	if healthErr != nil {
-		return fmt.Errorf("cluster health check: %w", healthErr)
+	p.logger.Info("waiting for cluster to become healthy", "timeout", config.ClusterHealthTimeout)
+	if err := waitClusterHealthy(ctx, target, config.ClusterHealthTimeout); err != nil {
+		return fmt.Errorf("cluster health check: %w", err)
 	}
 	p.logger.Info("first master is healthy")
 

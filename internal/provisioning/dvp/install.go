@@ -86,12 +86,13 @@ func waitExistingInstallReady(ctx context.Context, kube *rest.Config, timeout ti
 
 func waitExistingInstallReadyClient(ctx context.Context, cs k8s.Interface, timeout time.Duration) error {
 	check := func() (bool, error) {
+		// Transient errors mean "not ready yet" — keep polling instead of failing.
 		if err := checkHealthClient(ctx, cs); err != nil {
-			return false, nil
+			return false, nil //nolint:nilerr // retry on transient errors during polling
 		}
 		for _, name := range []string{masterBootstrapSecret, workerBootstrapSecret} {
 			if _, err := cs.CoreV1().Secrets(bootstrapSecretNamespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
-				return false, nil
+				return false, nil //nolint:nilerr // retry on transient errors during polling
 			}
 		}
 		return true, nil
@@ -129,12 +130,35 @@ func waitNodesReadyClient(ctx context.Context, cs k8s.Interface, def *config.Clu
 	return pollUntil(ctx, timeout, fmt.Sprintf("%d nodes ready", want), ready)
 }
 
-func checkHealth(ctx context.Context, kube *rest.Config) error {
+// waitClusterHealthy polls checkHealthClient until the cluster is healthy or
+// the timeout expires. A one-shot check is not enough right after bootstrap:
+// dhctl returns as soon as Deckhouse first becomes Ready, but Deckhouse then
+// converges modules and rolls itself over, leaving short windows where the
+// deployment is not Available.
+func waitClusterHealthy(ctx context.Context, kube *rest.Config, timeout time.Duration) error {
 	cs, err := kubernetes.NewClientsetWithRetry(ctx, kube)
 	if err != nil {
 		return fmt.Errorf("create clientset: %w", err)
 	}
-	return checkHealthClient(ctx, cs)
+	return waitClusterHealthyClient(ctx, cs, timeout)
+}
+
+func waitClusterHealthyClient(ctx context.Context, cs k8s.Interface, timeout time.Duration) error {
+	var lastErr error
+	check := func() (bool, error) {
+		if err := checkHealthClient(ctx, cs); err != nil {
+			lastErr = err
+			return false, nil
+		}
+		return true, nil
+	}
+	if err := pollUntil(ctx, timeout, "cluster to become healthy", check); err != nil {
+		if lastErr != nil {
+			return fmt.Errorf("%w (last check: %v)", err, lastErr)
+		}
+		return err
+	}
+	return nil
 }
 
 func checkHealthClient(ctx context.Context, cs k8s.Interface) error {
