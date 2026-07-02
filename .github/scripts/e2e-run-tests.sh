@@ -5,7 +5,8 @@
 #
 # For consumer modules the original go.mod (and go.sum, if present) are backed
 # up before editing and restored via a trap on EXIT, so the working tree is not
-# left mutated on self-hosted runners (which check out with clean: false). After
+# left mutated on self-hosted runners (defensive even though checkout uses
+# clean: true; a caller may still override it to clean: false). After
 # applying the replace we run `go mod download` (not `go mod tidy`): download is
 # deterministic and fast, whereas tidy re-resolves the whole graph and can stall
 # fetching modules on the runner. The consumer is responsible for keeping its
@@ -37,9 +38,9 @@ if [ "$module_name" != "github.com/deckhouse/storage-e2e" ]; then
     echo "::error::E2E_STORAGE_E2E_DIR is required to replace storage-e2e for module ${module_name}"
     exit 1
   fi
-  # Back up go.mod/go.sum and restore them on exit so the persistent (clean:
-  # false) working tree is not left with a stale absolute-path replace. Restore
-  # inside the trap without clobbering the script's exit code ($?).
+  # Back up go.mod/go.sum and restore them on exit so a reused working tree is
+  # not left with a stale absolute-path replace. Restore inside the trap without
+  # clobbering the script's exit code ($?).
   gomod_backup="$(mktemp)"
   cp go.mod "$gomod_backup"
   gosum_backup=""

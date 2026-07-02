@@ -115,7 +115,7 @@ jobs:
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
-          clean: false
+          clean: true
 
       - name: Checkout storage-e2e
         uses: actions/checkout@v7
@@ -123,7 +123,7 @@ jobs:
           repository: deckhouse/storage-e2e
           ref: ${{ inputs.storage_e2e_ref }}
           path: _storage-e2e
-          clean: false
+          clean: true
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -131,9 +131,6 @@ jobs:
           go-version-file: _storage-e2e/go.mod
           cache: false
 
-      # Prune stale Go-cache trees on the self-hosted runner (provider-agnostic).
-      # Credentials are no longer materialized to disk: the DVP provider consumes
-      # the SSH key + kubeconfig as inline content (see env below).
       - name: Prune stale workspace caches
         run: bash _storage-e2e/.github/scripts/e2e-prune-workspace.sh
 
@@ -201,7 +198,7 @@ jobs:
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
-          clean: false
+          clean: true
 
       - name: Checkout storage-e2e
         uses: actions/checkout@v7
@@ -209,7 +206,7 @@ jobs:
           repository: deckhouse/storage-e2e
           ref: ${{ inputs.storage_e2e_ref }}
           path: _storage-e2e
-          clean: false
+          clean: true
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -307,7 +304,7 @@ jobs:
       - name: Checkout module repo
         uses: actions/checkout@v7
         with:
-          clean: false
+          clean: true
 
       - name: Checkout storage-e2e
         uses: actions/checkout@v7
@@ -315,7 +312,7 @@ jobs:
           repository: deckhouse/storage-e2e
           ref: ${{ inputs.storage_e2e_ref }}
           path: _storage-e2e
-          clean: false
+          clean: true
 
       - name: Setup Go
         uses: actions/setup-go@v6
