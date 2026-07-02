@@ -18,6 +18,7 @@ package dvp
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +75,53 @@ func TestWaitBootstrapSecretsMissingTimesOut(t *testing.T) {
 	err := waitBootstrapSecretsClient(context.Background(), cs, 30*time.Millisecond)
 	if err == nil {
 		t.Fatal("waitBootstrapSecretsClient() error = nil, want timeout")
+	}
+}
+
+func TestWaitClusterHealthy(t *testing.T) {
+	t.Parallel()
+	cpLabel := map[string]string{controlPlaneNodeLabels[0]: ""}
+
+	healthy := fake.NewClientset(nodeObj("m1", true, cpLabel), deckhouseDeployment(true))
+	if err := waitClusterHealthyClient(context.Background(), healthy, time.Second); err != nil {
+		t.Fatalf("waitClusterHealthyClient() error = %v, want nil", err)
+	}
+
+	unhealthy := fake.NewClientset(nodeObj("m1", true, cpLabel), deckhouseDeployment(false))
+	err := waitClusterHealthyClient(context.Background(), unhealthy, 30*time.Millisecond)
+	if err == nil {
+		t.Fatal("waitClusterHealthyClient() error = nil, want timeout")
+	}
+	if !strings.Contains(err.Error(), "deckhouse deployment is not Available") {
+		t.Errorf("timeout error should carry the last failed check, got: %v", err)
+	}
+}
+
+func TestWaitExistingInstallReady(t *testing.T) {
+	t.Parallel()
+	cpLabel := map[string]string{controlPlaneNodeLabels[0]: ""}
+
+	ready := fake.NewClientset(
+		nodeObj("m1", true, cpLabel), deckhouseDeployment(true),
+		secretObj(masterBootstrapSecret), secretObj(workerBootstrapSecret),
+	)
+	if err := waitExistingInstallReadyClient(context.Background(), ready, time.Second); err != nil {
+		t.Fatalf("waitExistingInstallReadyClient() error = %v, want nil", err)
+	}
+
+	// Deckhouse deployment not Available → keeps polling until timeout.
+	notReady := fake.NewClientset(
+		nodeObj("m1", true, cpLabel), deckhouseDeployment(false),
+		secretObj(masterBootstrapSecret), secretObj(workerBootstrapSecret),
+	)
+	if err := waitExistingInstallReadyClient(context.Background(), notReady, 30*time.Millisecond); err == nil {
+		t.Fatal("waitExistingInstallReadyClient() error = nil, want timeout (deckhouse not Available)")
+	}
+
+	// Bootstrap secrets missing → not ready even with a healthy deployment.
+	noSecrets := fake.NewClientset(nodeObj("m1", true, cpLabel), deckhouseDeployment(true))
+	if err := waitExistingInstallReadyClient(context.Background(), noSecrets, 30*time.Millisecond); err == nil {
+		t.Fatal("waitExistingInstallReadyClient() error = nil, want timeout (secrets absent)")
 	}
 }
 

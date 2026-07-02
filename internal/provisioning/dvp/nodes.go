@@ -92,24 +92,49 @@ func (p *dvpProvider) joinNodesWithClient(ctx context.Context, cs k8s.Interface,
 		return nil
 	}
 
+	// Nodes already registered in the cluster (e.g. joined by an interrupted
+	// previous run) are skipped: re-running the bashible bootstrap script on a
+	// joined node is not guaranteed to be safe. Not-Ready registered nodes are
+	// caught later by waitNodesReady.
+	registered, err := registeredNodeNames(ctx, cs)
+	if err != nil {
+		return err
+	}
+	pending := func(nodes []config.ClusterNode) []config.ClusterNode {
+		var out []config.ClusterNode
+		for _, n := range nodes {
+			if registered[n.Hostname] {
+				p.logger.Info("node is already registered in the cluster, skipping join", "node", n.Hostname)
+				continue
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+	pendingWorkers := pending(def.Workers)
+	pendingMasters := pending(extraMasters)
+
 	var joins []nodeJoin
-	if len(def.Workers) > 0 {
+	if len(pendingWorkers) > 0 {
 		workerScript, err := getBootstrapScript(ctx, cs, workerBootstrapSecret)
 		if err != nil {
 			return err
 		}
-		for _, w := range def.Workers {
+		for _, w := range pendingWorkers {
 			joins = append(joins, nodeJoin{node: w, script: workerScript})
 		}
 	}
-	if len(extraMasters) > 0 {
+	if len(pendingMasters) > 0 {
 		masterScript, err := getBootstrapScript(ctx, cs, masterBootstrapSecret)
 		if err != nil {
 			return err
 		}
-		for _, m := range extraMasters {
+		for _, m := range pendingMasters {
 			joins = append(joins, nodeJoin{node: m, script: masterScript})
 		}
+	}
+	if len(joins) == 0 {
+		return nil
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -169,6 +194,20 @@ func (p *dvpProvider) joinNode(ctx context.Context, node config.ClusterNode, scr
 		}
 	}
 	return fmt.Errorf("join node %s after %d attempt(s): %w", node.Hostname, joinRetryCount, lastErr)
+}
+
+// registeredNodeNames returns the names of Node objects currently registered
+// in the cluster.
+func registeredNodeNames(ctx context.Context, cs k8s.Interface) (map[string]bool, error) {
+	nodes, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list cluster nodes: %w", err)
+	}
+	names := make(map[string]bool, len(nodes.Items))
+	for i := range nodes.Items {
+		names[nodes.Items[i].Name] = true
+	}
+	return names, nil
 }
 
 // getBootstrapScript reads the decoded bootstrap.sh out of a bootstrap secret.

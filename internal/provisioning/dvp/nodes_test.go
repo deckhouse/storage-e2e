@@ -27,6 +27,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
@@ -100,14 +101,19 @@ func (c *joinConnector) connectedIPs() []string {
 	return append([]string(nil), c.ips...)
 }
 
-func bootstrapSecretsClientset() k8s.Interface {
+func bootstrapSecretsClientset(extra ...runtime.Object) k8s.Interface {
 	newSecret := func(name string) *corev1.Secret {
 		return &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Namespace: bootstrapSecretNamespace, Name: name},
 			Data:       map[string][]byte{bootstrapScriptKey: []byte("#!/bin/bash\ntrue")},
 		}
 	}
-	return fake.NewClientset(newSecret(masterBootstrapSecret), newSecret(workerBootstrapSecret))
+	objs := append([]runtime.Object{newSecret(masterBootstrapSecret), newSecret(workerBootstrapSecret)}, extra...)
+	return fake.NewClientset(objs...)
+}
+
+func registeredNode(name string) *corev1.Node {
+	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}}
 }
 
 func joinTestProvider(t *testing.T, conn baseConnector) *dvpProvider {
@@ -155,6 +161,58 @@ func TestJoinNodesAllSucceed(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(got, ","), "10.10.1.1") {
 		t.Error("first master 10.10.1.1 should not be joined")
+	}
+}
+
+func TestJoinNodesSkipsAlreadyRegisteredNodes(t *testing.T) {
+	t.Parallel()
+
+	def := &config.ClusterDefinition{
+		Masters: []config.ClusterNode{
+			{Hostname: "m1", HostType: config.HostTypeVM, IPAddress: "10.10.1.1"},
+			{Hostname: "m2", HostType: config.HostTypeVM, IPAddress: "10.10.1.2"},
+		},
+		Workers: []config.ClusterNode{
+			{Hostname: "w1", HostType: config.HostTypeVM, IPAddress: "10.10.1.3"},
+			{Hostname: "w2", HostType: config.HostTypeVM, IPAddress: "10.10.1.4"},
+		},
+	}
+	// m2 and w1 already joined by a previous (interrupted) run.
+	cs := bootstrapSecretsClientset(registeredNode("m2"), registeredNode("w1"))
+	conn := &joinConnector{execFor: map[string]*funcExecutor{"10.10.1.4": okExecutor()}}
+	p := joinTestProvider(t, conn)
+
+	if err := p.joinNodesWithClient(context.Background(), cs, def); err != nil {
+		t.Fatalf("joinNodesWithClient() error = %v", err)
+	}
+	if got := conn.connectedIPs(); len(got) != 1 || got[0] != "10.10.1.4" {
+		t.Errorf("connected IPs = %v, want only 10.10.1.4 (w2)", got)
+	}
+}
+
+func TestJoinNodesAllRegisteredSkipsScriptFetch(t *testing.T) {
+	t.Parallel()
+
+	def := &config.ClusterDefinition{
+		Masters: []config.ClusterNode{
+			{Hostname: "m1", HostType: config.HostTypeVM, IPAddress: "10.10.1.1"},
+			{Hostname: "m2", HostType: config.HostTypeVM, IPAddress: "10.10.1.2"},
+		},
+		Workers: []config.ClusterNode{
+			{Hostname: "w1", HostType: config.HostTypeVM, IPAddress: "10.10.1.3"},
+		},
+	}
+	// All extra nodes registered; no bootstrap secrets in the clientset — the
+	// join must succeed without ever fetching a script.
+	cs := fake.NewClientset(registeredNode("m2"), registeredNode("w1"))
+	conn := &joinConnector{execFor: map[string]*funcExecutor{}}
+	p := joinTestProvider(t, conn)
+
+	if err := p.joinNodesWithClient(context.Background(), cs, def); err != nil {
+		t.Fatalf("joinNodesWithClient() error = %v, want nil (all nodes already joined)", err)
+	}
+	if ips := conn.connectedIPs(); len(ips) != 0 {
+		t.Errorf("no nodes should be joined, connected: %v", ips)
 	}
 }
 

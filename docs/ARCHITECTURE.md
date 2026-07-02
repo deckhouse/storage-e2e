@@ -71,14 +71,15 @@ storage-e2e/
 │   │   │   ├── provider.go      # Commander-backed Provider (Bootstrap/Remove)
 │   │   │   └── config.go        # Commander provider configuration
 │   │   └── dvp/                 # DVP (Deckhouse Virtualization Platform) provider
-│   │       ├── provider.go      # dvpProvider: Bootstrap/Remove orchestration
+│   │       ├── provider.go      # dvpProvider: Bootstrap (provision + installDeckhouse via cleanupStack) / Remove
 │   │       ├── connect.go       # dvpConnector: SSH tunnel + base-cluster rest.Config + per-VM executors (baseEndpoints/VMExecutor) + openTunnelToVM/connectToMaster (kubeconfig fetch)
-│   │       ├── deps.go          # DI seam: baseConnector/kubeOps/fleetFactory + remoteExecutor + adapters
+│   │       ├── deps.go          # DI seam: baseConnector/masterConnector/kubeOps/fleetFactory + remoteExecutor + adapters
 │   │       ├── setupnode.go     # setup-node synthesis (newSetupNode, fixed name) + readiness gating (buildDockerReadyCommand + waitDockerReady)
 │   │       ├── bootstrap.go     # dhctl bootstrap-config rendering (param derivation + render + CIDR calc)
 │   │       ├── bootstrap.tpl    # Embedded dhctl bootstrap config template
 │   │       ├── dhctl.go         # dhctl bootstrap on setup node: pure builders (login/bootstrap cmd/connection-config/write-file) + orchestration
 │   │       ├── nodes.go         # node join: buildNodeBootstrapCommand + isRetryableJoinError + joinNodes (errgroup + bounded retry)
+│   │       ├── modules.go       # module enable: pure buildModuleLevels (topo sort) + moduleApplier seam + enableModulesInLevels (client-go, no SSH)
 │   │       ├── install.go       # post-install k8s waits on rest.Config: waitBootstrapSecrets/waitNodesReady/checkHealth (client-go)
 │   │       ├── config.go        # Config, Credentials, env parsing/validation
 │   │       ├── kubeconfig.go    # rest.Config build + rewriteKubeconfigServer + ssh public-key derivation
