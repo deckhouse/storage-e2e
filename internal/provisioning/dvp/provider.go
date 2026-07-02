@@ -202,11 +202,11 @@ func (p *dvpProvider) installDeckhouse(ctx context.Context, def *config.ClusterD
 		return fmt.Errorf("install: %w", err)
 	}
 
-	p.logger.Info("bootstrapping first master with dhctl", "masterIP", firstMasterIP)
+	p.logger.Info("ensuring first master is bootstrapped with dhctl", "masterIP", firstMasterIP)
 	if err := p.dhctlBootstrap(ctx, def); err != nil {
 		return fmt.Errorf("dhctl bootstrap: %w", err)
 	}
-	p.logger.Info("dhctl bootstrap complete", "masterIP", firstMasterIP)
+	p.logger.Info("first master is bootstrapped", "masterIP", firstMasterIP)
 
 	p.logger.Info("connecting to first master", "masterIP", firstMasterIP)
 	target, masterCleanup, err := p.deps.masterConn.connectToMaster(ctx, firstMasterIP)

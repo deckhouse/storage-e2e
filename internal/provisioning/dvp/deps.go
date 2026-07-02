@@ -64,10 +64,11 @@ type fleetFactory interface {
 }
 
 type deps struct {
-	connector  baseConnector
-	masterConn masterConnector
-	kube       kubeOps
-	fleet      fleetFactory
+	connector    baseConnector
+	masterConn   masterConnector
+	kube         kubeOps
+	fleet        fleetFactory
+	installReady func(ctx context.Context, kube *rest.Config, timeout time.Duration) error
 }
 
 type defaultKubeOps struct{}

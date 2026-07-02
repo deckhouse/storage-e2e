@@ -22,6 +22,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	sshv2 "github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
@@ -90,7 +93,7 @@ func TestBuildDhctlBootstrapCommandKeyFile(t *testing.T) {
 		RemoteLogPath: "/tmp/dhctl-bootstrap-1.log",
 		UsePassphrase: false,
 	})
-	const want = `sudo -u cloud bash -c 'sudo docker run --network=host --pull=always ` +
+	const want = `sudo -u cloud bash -c 'sudo docker run --name storage-e2e-dhctl-bootstrap --network=host --pull=always ` +
 		`--mount "type=bind,src=/home/cloud/config.yml,dst=/config.yml" ` +
 		`--mount "type=bind,src=/home/cloud/.ssh/id_rsa,dst=/root/.ssh/id_rsa,readonly" ` +
 		`dev-registry.deckhouse.io/sys/deckhouse-oss/install:main dhctl bootstrap ` +
@@ -110,7 +113,7 @@ func TestBuildDhctlBootstrapCommandPassphrase(t *testing.T) {
 		RemoteLogPath: "/tmp/dhctl-bootstrap-1.log",
 		UsePassphrase: true,
 	})
-	const want = `sudo -u cloud bash -c 'sudo docker run --network=host --pull=always ` +
+	const want = `sudo -u cloud bash -c 'sudo docker run --name storage-e2e-dhctl-bootstrap --network=host --pull=always ` +
 		`--mount "type=bind,src=/home/cloud/config.yml,dst=/config.yml" ` +
 		`--mount "type=bind,src=/home/cloud/.config/storage-e2e/dhctl-connection.yaml,dst=/dhctl-connection.yaml,readonly" ` +
 		`dev-registry.deckhouse.io/sys/deckhouse-oss/install:main dhctl bootstrap ` +
@@ -275,5 +278,152 @@ func TestRunDhctlBootstrapPassphraseCleanupOrder(t *testing.T) {
 	if !(iConnWrite < iRun && iRun < iConnRm) {
 		t.Errorf("connection-config must be written before and removed after the docker run: connWrite=%d run=%d connRm=%d\n%v",
 			iConnWrite, iRun, iConnRm, cmds)
+	}
+}
+
+// --- ensureDhctlBootstrapped flow ---
+
+// routeConnector hands out a per-IP funcExecutor (master probe path).
+type routeConnector struct {
+	execs map[string]*funcExecutor
+}
+
+func (c routeConnector) Connect(context.Context) (*rest.Config, func(), error) {
+	return nil, nil, errors.New("Connect is not used in this test")
+}
+
+func (c routeConnector) VMExecutor(_ context.Context, ip string) (remoteExecutor, func(), error) {
+	e, ok := c.execs[ip]
+	if !ok {
+		return nil, nil, errors.New("unexpected VMExecutor for " + ip)
+	}
+	return e, func() {}, nil
+}
+
+type fakeMasterConn struct{ err error }
+
+func (f fakeMasterConn) connectToMaster(context.Context, string) (*rest.Config, func(), error) {
+	if f.err != nil {
+		return nil, nil, f.err
+	}
+	return &rest.Config{}, func() {}, nil
+}
+
+func ensureTestProvider(t *testing.T, d deps) *dvpProvider {
+	t.Helper()
+	dvpConf := &Config{VMSSHUser: "cloud", DKPLicenseKey: "LIC", RegistryDockerCfg: "CFG"}
+	creds := Credentials{SSHKey: testPrivateKeyPEM(t)}
+	return newProvider(quietLogger(), &clusterprovider.ClusterConfig{}, dvpConf, creds, d)
+}
+
+const testMasterIP = "10.10.1.5" // matches dhctlTestDef
+
+func TestEnsureDhctlBootstrappedSkipsWhenInstalled(t *testing.T) {
+	t.Parallel()
+
+	setupExec := &funcExecutor{}
+	masterExec := &funcExecutor{} // kubeconfig probe succeeds
+	p := ensureTestProvider(t, deps{
+		connector:    routeConnector{execs: map[string]*funcExecutor{testMasterIP: masterExec}},
+		masterConn:   fakeMasterConn{},
+		installReady: func(context.Context, *rest.Config, time.Duration) error { return nil },
+	})
+
+	if err := p.ensureDhctlBootstrapped(context.Background(), setupExec, dhctlTestDef()); err != nil {
+		t.Fatalf("ensureDhctlBootstrapped() error = %v, want nil (skip path)", err)
+	}
+	if indexMatching(masterExec.recorded(), contains("test -f /etc/kubernetes")) == -1 {
+		t.Errorf("master kubeconfig probe was not executed: %v", masterExec.recorded())
+	}
+	if indexMatching(setupExec.recorded(), contains("docker run")) != -1 {
+		t.Errorf("dhctl must not run when Deckhouse is already installed: %v", setupExec.recorded())
+	}
+}
+
+func TestEnsureDhctlBootstrappedRunsWhenMasterClean(t *testing.T) {
+	t.Parallel()
+
+	setupExec := &funcExecutor{fn: func(_ context.Context, cmd string) (sshv2.ExecResult, error) {
+		if strings.Contains(cmd, "cat") && strings.Contains(cmd, "dhctl-bootstrap-") {
+			return sshv2.ExecResult{Stdout: []byte("ok")}, nil
+		}
+		return sshv2.ExecResult{}, nil
+	}}
+	masterExec := &funcExecutor{fn: func(context.Context, string) (sshv2.ExecResult, error) {
+		return sshv2.ExecResult{ExitCode: 1}, errors.New("Process exited with status 1") // no kubeconfig
+	}}
+	p := ensureTestProvider(t, deps{
+		connector:  routeConnector{execs: map[string]*funcExecutor{testMasterIP: masterExec}},
+		masterConn: fakeMasterConn{err: errors.New("must not be called for a clean master")},
+	})
+
+	if err := p.ensureDhctlBootstrapped(context.Background(), setupExec, dhctlTestDef()); err != nil {
+		t.Fatalf("ensureDhctlBootstrapped() error = %v, want fresh bootstrap to succeed", err)
+	}
+
+	cmds := setupExec.recorded()
+	iRmContainer := indexMatching(cmds, contains("docker rm -f", dhctlContainerName))
+	iRun := indexMatching(cmds, contains("docker run", "--name "+dhctlContainerName))
+	if iRmContainer == -1 || iRun == -1 {
+		t.Fatalf("expected container rm and named docker run, got rm=%d run=%d\n%v", iRmContainer, iRun, cmds)
+	}
+	if iRmContainer > iRun {
+		t.Errorf("leftover container must be removed before docker run: rm=%d run=%d\n%v", iRmContainer, iRun, cmds)
+	}
+}
+
+func TestEnsureDhctlBootstrappedWaitsForInFlightContainer(t *testing.T) {
+	t.Parallel()
+
+	setupExec := &funcExecutor{fn: func(_ context.Context, cmd string) (sshv2.ExecResult, error) {
+		switch {
+		case strings.Contains(cmd, "docker inspect"):
+			return sshv2.ExecResult{Stdout: []byte("running\n")}, nil
+		case strings.Contains(cmd, "docker wait"):
+			return sshv2.ExecResult{Stdout: []byte("0\n")}, nil
+		default:
+			return sshv2.ExecResult{}, nil
+		}
+	}}
+	masterExec := &funcExecutor{} // after the wait the master has a kubeconfig
+	p := ensureTestProvider(t, deps{
+		connector:    routeConnector{execs: map[string]*funcExecutor{testMasterIP: masterExec}},
+		masterConn:   fakeMasterConn{},
+		installReady: func(context.Context, *rest.Config, time.Duration) error { return nil },
+	})
+
+	if err := p.ensureDhctlBootstrapped(context.Background(), setupExec, dhctlTestDef()); err != nil {
+		t.Fatalf("ensureDhctlBootstrapped() error = %v, want nil", err)
+	}
+
+	cmds := setupExec.recorded()
+	if indexMatching(cmds, contains("docker wait", dhctlContainerName)) == -1 {
+		t.Errorf("expected docker wait on the in-flight container: %v", cmds)
+	}
+	if indexMatching(cmds, contains("docker run")) != -1 {
+		t.Errorf("a second bootstrap must not start while waiting out an in-flight one: %v", cmds)
+	}
+}
+
+func TestEnsureDhctlBootstrappedHalfBootstrappedMaster(t *testing.T) {
+	t.Parallel()
+
+	setupExec := &funcExecutor{}
+	masterExec := &funcExecutor{} // kubeconfig present
+	p := ensureTestProvider(t, deps{
+		connector:    routeConnector{execs: map[string]*funcExecutor{testMasterIP: masterExec}},
+		masterConn:   fakeMasterConn{},
+		installReady: func(context.Context, *rest.Config, time.Duration) error { return errors.New("never became healthy") },
+	})
+
+	err := p.ensureDhctlBootstrapped(context.Background(), setupExec, dhctlTestDef())
+	if err == nil {
+		t.Fatal("ensureDhctlBootstrapped() error = nil, want half-bootstrapped error")
+	}
+	if !strings.Contains(err.Error(), "half-bootstrapped") {
+		t.Errorf("error should explain the half-bootstrapped state, got: %v", err)
+	}
+	if indexMatching(setupExec.recorded(), contains("docker run")) != -1 {
+		t.Errorf("dhctl must not run over a half-bootstrapped master: %v", setupExec.recorded())
 	}
 }

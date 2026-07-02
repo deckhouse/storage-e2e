@@ -43,6 +43,8 @@ const (
 	deckhouseDeploymentName = "deckhouse"
 
 	installPollInterval = 5 * time.Second
+
+	existingInstallReadyTimeout = 10 * time.Minute
 )
 
 var controlPlaneNodeLabels = []string{
@@ -72,6 +74,29 @@ func waitBootstrapSecretsClient(ctx context.Context, cs k8s.Interface, timeout t
 		return true, nil
 	}
 	return pollUntil(ctx, timeout, "bootstrap secrets", present)
+}
+
+func waitExistingInstallReady(ctx context.Context, kube *rest.Config, timeout time.Duration) error {
+	cs, err := kubernetes.NewClientsetWithRetry(ctx, kube)
+	if err != nil {
+		return fmt.Errorf("create clientset: %w", err)
+	}
+	return waitExistingInstallReadyClient(ctx, cs, timeout)
+}
+
+func waitExistingInstallReadyClient(ctx context.Context, cs k8s.Interface, timeout time.Duration) error {
+	check := func() (bool, error) {
+		if err := checkHealthClient(ctx, cs); err != nil {
+			return false, nil
+		}
+		for _, name := range []string{masterBootstrapSecret, workerBootstrapSecret} {
+			if _, err := cs.CoreV1().Secrets(bootstrapSecretNamespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	return pollUntil(ctx, timeout, "existing Deckhouse installation to become healthy", check)
 }
 
 func waitNodesReady(ctx context.Context, kube *rest.Config, def *config.ClusterDefinition, timeout time.Duration) error {
