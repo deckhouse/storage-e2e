@@ -56,8 +56,8 @@ const (
 	// Kubernetes operations
 	ModuleCheckTimeout   = 60 * time.Second // Timeout for checking module status
 	NamespaceTimeout     = 30 * time.Second // Timeout for creating namespace
-	NodeGroupTimeout     = 2 * time.Minute  // Timeout for creating NodeGroup (API can be slow right after bootstrap)
-	SecretsWaitTimeout   = 2 * time.Minute  // Timeout for waiting for bootstrap secrets to appear
+	NodeGroupTimeout     = 4 * time.Minute  // Timeout (with retries) for creating NodeGroup; the node-manager validating webhook is often unreachable for a while right after bootstrap
+	SecretsWaitTimeout   = 10 * time.Minute // Timeout for waiting for bootstrap secrets to appear
 	ClusterHealthTimeout = 15 * time.Minute // Timeout for cluster health check
 	ModuleDeployTimeout  = 15 * time.Minute // Timeout for waiting for ONE module to be ready
 
