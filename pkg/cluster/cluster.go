@@ -966,11 +966,14 @@ var providerConnected bool
 func connectViaProvider(ctx context.Context) (resources *TestClusterResources, handled bool, err error) {
 	cfg, cfgErr := clusterprovider.NewClusterConfig()
 	if cfgErr != nil {
-		return nil, false, nil // not a clusterprovider-driven run
+		// Not a clusterprovider-driven run (required env unset) — signal
+		// "not handled" so the caller uses the legacy path; the error is expected.
+		return nil, false, nil //nolint:nilerr // intentional fall-back, not a failure
 	}
 	ctor, getErr := registry.DefaultRegistry.Get(cfg.ClusterProvider)
 	if getErr != nil {
-		return nil, false, nil
+		// Unknown provider mode — fall back to the legacy path rather than fail.
+		return nil, false, nil //nolint:nilerr // intentional fall-back, not a failure
 	}
 	provider, buildErr := ctor(logger.GetLogger(), cfg)
 	if buildErr != nil {
@@ -1039,7 +1042,7 @@ func checkClusterHealthWithRetries(ctx context.Context, restConfig *rest.Config)
 			logger.Warn("Health check attempt %d/%d failed: %v. Retrying in %v...", attempt, maxHealthRetries, healthErr, healthRetryInterval)
 			select {
 			case <-ctx.Done():
-				return fmt.Errorf("context cancelled during health check retries: %w", ctx.Err())
+				return fmt.Errorf("context canceled during health check retries: %w", ctx.Err())
 			case <-time.After(healthRetryInterval):
 			}
 		}

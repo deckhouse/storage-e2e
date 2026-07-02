@@ -59,7 +59,7 @@ func (c *connector) resolveMaster(ctx context.Context) (host, user string, err e
 		return "", "", fmt.Errorf("get connection info for cluster %q: %w", c.conf.ClusterName, err)
 	}
 	if conn.SSHHost == "" {
-		return "", "", fmt.Errorf("Commander returned no SSH host for cluster %q (connection_hosts.masters empty)", c.conf.ClusterName)
+		return "", "", fmt.Errorf("no SSH host for cluster %q from Commander (connection_hosts.masters empty)", c.conf.ClusterName)
 	}
 	user = c.conf.SSHUser
 	if user == "" {
