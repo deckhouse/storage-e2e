@@ -71,7 +71,7 @@ const (
 )
 
 // ElasticStorageClassForceDeleteAnnotation, set to "true" on an
-// ElasticStorageClass, authorises the destructive purge of a non-empty RBD
+// ElasticStorageClass, authorizes the destructive purge of a non-empty RBD
 // pool (the controller propagates it to the underlying CephBlockPool as the
 // Rook force-deletion annotation). It NEVER bypasses the bound-PV guard.
 // Mirror of v1alpha1 ESCForceDeleteAnnotation.
@@ -196,7 +196,7 @@ func WaitForElasticStorageClassCondition(ctx context.Context, kubeconfig *rest.C
 }
 
 // WaitForElasticStorageClassReady waits for the aggregate Ready condition to
-// flip to True (pool/filesystem provisioned, csi-ceph SC materialised).
+// flip to True (pool/filesystem provisioned, csi-ceph SC materialized).
 func WaitForElasticStorageClassReady(ctx context.Context, kubeconfig *rest.Config, name string, timeout time.Duration) error {
 	return WaitForElasticStorageClassCondition(ctx, kubeconfig, name, ElasticStorageClassConditionReady, "True", timeout)
 }
@@ -218,7 +218,7 @@ func GetElasticStorageClassCondition(ctx context.Context, kubeconfig *rest.Confi
 }
 
 // AnnotateElasticStorageClassForceDeletion sets the force-deletion annotation
-// on the named ESC, authorising the destructive purge of a non-empty RBD
+// on the named ESC, authorizing the destructive purge of a non-empty RBD
 // pool. It never bypasses the bound-PV guard. Idempotent; retries on
 // optimistic-concurrency conflicts.
 func AnnotateElasticStorageClassForceDeletion(ctx context.Context, kubeconfig *rest.Config, name string) error {

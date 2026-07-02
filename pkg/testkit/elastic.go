@@ -55,7 +55,7 @@ const (
 	DefaultElasticClusterReadyTimeout = 25 * time.Minute
 
 	// DefaultElasticStorageClassReadyTimeout covers pool/filesystem
-	// provisioning + csi-ceph StorageClass materialisation.
+	// provisioning + csi-ceph StorageClass materialization.
 	DefaultElasticStorageClassReadyTimeout = 10 * time.Minute
 )
 
@@ -82,7 +82,7 @@ type ElasticOSDBlockDevicesConfig struct {
 	BlockDeviceLabelValue string
 
 	// MinBlockDevices is the minimum number of consumable BlockDevices that
-	// must appear on the storage nodes before labelling proceeds. Default: 1.
+	// must appear on the storage nodes before labeling proceeds. Default: 1.
 	MinBlockDevices int
 
 	// BlockDeviceWaitTimeout bounds the wait for consumable BlockDevices to
@@ -115,7 +115,7 @@ const blockDevicePollInterval = 10 * time.Second
 
 // EnsureElasticOSDBlockDevices labels storage nodes and the consumable
 // BlockDevices on them so an ElasticCluster can adopt the disks for OSDs.
-// Returns the names of the labelled BlockDevices.
+// Returns the names of the labeled BlockDevices.
 //
 // Idempotent: re-running re-applies the (already present) labels. It does NOT
 // create the ElasticCluster — call EnsureElasticCluster afterwards with
@@ -139,11 +139,11 @@ func EnsureElasticOSDBlockDevices(ctx context.Context, kubeconfig *rest.Config, 
 	}
 	logger.StepComplete(1, "Storage nodes: %v", nodeNames)
 
-	logger.Step(2, "Labelling storage nodes with %s=%s", cfg.NodeLabelKey, cfg.NodeLabelValue)
+	logger.Step(2, "Labeling storage nodes with %s=%s", cfg.NodeLabelKey, cfg.NodeLabelValue)
 	if err := kubernetes.LabelNodes(ctx, kubeconfig, nodeNames, cfg.NodeLabelKey, cfg.NodeLabelValue); err != nil {
 		return nil, fmt.Errorf("label storage nodes: %w", err)
 	}
-	logger.StepComplete(2, "Storage nodes labelled")
+	logger.StepComplete(2, "Storage nodes labeled")
 
 	logger.Step(3, "Waiting for >= %d consumable BlockDevice(s) on storage nodes (timeout %v)",
 		cfg.MinBlockDevices, cfg.BlockDeviceWaitTimeout)
@@ -153,18 +153,18 @@ func EnsureElasticOSDBlockDevices(ctx context.Context, kubeconfig *rest.Config, 
 	}
 	logger.StepComplete(3, "Found %d consumable BlockDevice(s)", len(bds))
 
-	logger.Step(4, "Labelling %d BlockDevice(s) with %s=%s", len(bds), cfg.BlockDeviceLabelKey, cfg.BlockDeviceLabelValue)
-	labelled := make([]string, 0, len(bds))
+	logger.Step(4, "Labeling %d BlockDevice(s) with %s=%s", len(bds), cfg.BlockDeviceLabelKey, cfg.BlockDeviceLabelValue)
+	labeled := make([]string, 0, len(bds))
 	for _, bd := range bds {
 		if err := kubernetes.LabelBlockDevice(ctx, kubeconfig, bd.Name, cfg.BlockDeviceLabelKey, cfg.BlockDeviceLabelValue); err != nil {
 			return nil, fmt.Errorf("label BlockDevice %s: %w", bd.Name, err)
 		}
-		labelled = append(labelled, bd.Name)
+		labeled = append(labeled, bd.Name)
 	}
-	logger.StepComplete(4, "Labelled BlockDevices: %v", labelled)
+	logger.StepComplete(4, "Labeled BlockDevices: %v", labeled)
 
-	logger.Success("Prepared %d OSD BlockDevice(s) across %d storage node(s)", len(labelled), len(nodeNames))
-	return labelled, nil
+	logger.Success("Prepared %d OSD BlockDevice(s) across %d storage node(s)", len(labeled), len(nodeNames))
+	return labeled, nil
 }
 
 // waitForConsumableBlockDevicesOnNodes polls until at least minCount
@@ -291,7 +291,7 @@ type ElasticStorageClassConfig struct {
 	ReadyTimeout time.Duration
 
 	// StorageClassWaitTimeout bounds the extra wait for the core k8s
-	// StorageClass to materialise after the ESC is Ready. Default: 2m.
+	// StorageClass to materialize after the ESC is Ready. Default: 2m.
 	StorageClassWaitTimeout time.Duration
 }
 
@@ -335,7 +335,7 @@ func EnsureElasticStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 	}
 	logger.StepComplete(2, "ElasticStorageClass %s is Ready", cfg.Name)
 
-	logger.Step(3, "Waiting for core StorageClass %s to materialise", cfg.Name)
+	logger.Step(3, "Waiting for core StorageClass %s to materialize", cfg.Name)
 	if err := kubernetes.WaitForStorageClass(ctx, kubeconfig, cfg.Name, cfg.StorageClassWaitTimeout); err != nil {
 		return "", fmt.Errorf("wait core StorageClass: %w", err)
 	}
@@ -347,7 +347,7 @@ func EnsureElasticStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 
 // TeardownElasticStorageClass deletes an ElasticStorageClass and waits until
 // it is fully gone. When force is true, the destructive force-deletion
-// annotation is set first (authorising the purge of a non-empty RBD pool); it
+// annotation is set first (authorizing the purge of a non-empty RBD pool); it
 // never bypasses the bound-PV guard. Safe to call on missing resources.
 func TeardownElasticStorageClass(ctx context.Context, kubeconfig *rest.Config, name string, force bool, timeout time.Duration) error {
 	if force {

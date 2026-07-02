@@ -251,7 +251,10 @@ func GetElasticClusterCephTopology(ctx context.Context, kubeconfig *rest.Config,
 		return ElasticClusterCephTopology{}, false, fmt.Errorf("failed to get ElasticCluster %s: %w", name, err)
 	}
 	raw, ok, err := unstructured.NestedMap(obj.Object, "status", "cephTopology")
-	if err != nil || !ok || raw == nil {
+	if err != nil {
+		return ElasticClusterCephTopology{}, false, fmt.Errorf("read status.cephTopology of ElasticCluster %s: %w", name, err)
+	}
+	if !ok || raw == nil {
 		return ElasticClusterCephTopology{}, false, nil
 	}
 	mon, _, _ := unstructured.NestedInt64(obj.Object, "status", "cephTopology", "monCount")
