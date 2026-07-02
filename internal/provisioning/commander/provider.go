@@ -19,7 +19,10 @@ limitations under the License.
 // a cluster from a template (or reuses one with the same name) and waits for it
 // to become Ready; Remove deletes it. Both entry points run as independent
 // processes (cmd/bootstrap-cluster, cmd/remove-cluster), so the cluster name is
-// taken verbatim from the config rather than randomized.
+// taken verbatim from the config rather than randomized. Connecting to the
+// created cluster (fetching its kubeconfig, opening the API tunnel) is handled
+// by the connector (connect.go), used by Bootstrap's module enablement
+// (modules.go) and by the test suite.
 package commander
 
 import (
@@ -42,14 +45,9 @@ type commanderProvider struct {
 	logger *slog.Logger
 }
 
-// NewCommanderProvider builds a Commander-backed provider. It parses the
-// E2E_COMMANDER_* environment into a Config and constructs the API client.
-func NewCommanderProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {
-	conf := &Config{}
-	if err := env.Parse(conf); err != nil {
-		return nil, fmt.Errorf("parse commander config: %w", err)
-	}
-
+// newAPIClient constructs the Commander API client from the provider config. It
+// is shared by the provider (bootstrap/teardown) and the connector (Connect).
+func newAPIClient(conf *Config) (*commanderapi.Client, error) {
 	authMethod := commanderapi.AuthMethod(conf.AuthMethod)
 	if authMethod == "" {
 		authMethod = commanderapi.AuthMethodXAuthToken
@@ -64,6 +62,23 @@ func NewCommanderProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfi
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create commander client: %w", err)
+	}
+	return client, nil
+}
+
+// NewCommanderProvider builds a Commander-backed provider. It parses the
+// E2E_COMMANDER_* environment into a Config and constructs the API client.
+// Bootstrap/Remove only talk to the Commander API, so SSH credentials are not
+// required here — they are resolved lazily by the connector (see Connect).
+func NewCommanderProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {
+	conf := &Config{}
+	if err := env.Parse(conf); err != nil {
+		return nil, fmt.Errorf("parse commander config: %w", err)
+	}
+
+	client, err := newAPIClient(conf)
+	if err != nil {
+		return nil, err
 	}
 
 	return &commanderProvider{
@@ -105,16 +120,19 @@ func (p *commanderProvider) Bootstrap(ctx context.Context) error {
 
 	if cluster.Status.Phase == commanderapi.ClusterPhaseReady {
 		p.logger.Info("cluster is already Ready", "cluster", name)
-		return nil
+	} else {
+		p.logger.Info("waiting for cluster to become Ready",
+			"cluster", name, "timeout", p.conf.WaitTimeout)
+		if _, err := p.client.WaitForClusterReady(ctx, name, p.conf.WaitTimeout); err != nil {
+			return fmt.Errorf("wait for cluster %q to become Ready: %w", name, err)
+		}
+		p.logger.Info("cluster is Ready", "cluster", name)
 	}
 
-	p.logger.Info("waiting for cluster to become Ready",
-		"cluster", name, "timeout", p.conf.WaitTimeout)
-	if _, err := p.client.WaitForClusterReady(ctx, name, p.conf.WaitTimeout); err != nil {
-		return fmt.Errorf("wait for cluster %q to become Ready: %w", name, err)
-	}
-	p.logger.Info("cluster is Ready", "cluster", name)
-	return nil
+	// Enable and configure the modules-under-test from cluster_config as part of
+	// bootstrap, so the cluster comes up fully provisioned (no separate
+	// enable-modules step). Idempotent: safe to re-run against a Ready cluster.
+	return p.enableModules(ctx)
 }
 
 // Remove deletes the cluster from Commander. A cluster that is already gone is
@@ -137,6 +155,10 @@ func (p *commanderProvider) Remove(ctx context.Context) error {
 // createCluster resolves the template, its version and (optionally) the
 // registry, then issues the create request.
 func (p *commanderProvider) createCluster(ctx context.Context, name string) (*commanderapi.Cluster, error) {
+	if p.conf.TemplateName == "" {
+		return nil, fmt.Errorf("E2E_COMMANDER_TEMPLATE_NAME is required to create cluster %q", name)
+	}
+
 	template, err := p.client.GetClusterTemplateByName(ctx, p.conf.TemplateName)
 	if err != nil {
 		return nil, fmt.Errorf("resolve template %q: %w", p.conf.TemplateName, err)

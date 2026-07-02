@@ -19,6 +19,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -47,6 +48,8 @@ import (
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/commander"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/internal/logger"
+	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
+	"github.com/deckhouse/storage-e2e/pkg/clusterprovider/registry"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 	"github.com/deckhouse/storage-e2e/pkg/testkit"
 )
@@ -946,6 +949,107 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error) {
 	return clusterResources, nil
 }
 
+// providerConnected records that the suite attached to the cluster via a
+// clusterprovider Connector (e.g. commander) rather than the legacy
+// TEST_CLUSTER_CREATE_MODE path. CleanupTestCluster consults it to release the
+// lock + tear down the connection instead of running VM-based cleanup.
+var providerConnected bool
+
+// connectViaProvider attaches the suite to a provider-managed cluster when the
+// configured clusterprovider implements clusterprovider.Connector (e.g.
+// commander: the cluster was created and its modules enabled by
+// cmd/bootstrap-cluster, so here the suite only connects, acquires the lock and
+// health-checks). It returns handled=false when this is not a clusterprovider
+// run or the provider has no Connect (e.g. dvp), so the caller falls back to the
+// legacy TEST_CLUSTER_CREATE_MODE path. The tunnel/SSH client are torn down by
+// CleanupTestCluster via the returned resources' TunnelInfo.StopFunc.
+func connectViaProvider(ctx context.Context) (resources *TestClusterResources, handled bool, err error) {
+	cfg, cfgErr := clusterprovider.NewClusterConfig()
+	if cfgErr != nil {
+		// Not a clusterprovider-driven run (required env unset) — signal
+		// "not handled" so the caller uses the legacy path; the error is expected.
+		return nil, false, nil //nolint:nilerr // intentional fall-back, not a failure
+	}
+	ctor, getErr := registry.DefaultRegistry.Get(cfg.ClusterProvider)
+	if getErr != nil {
+		// Unknown provider mode — fall back to the legacy path rather than fail.
+		return nil, false, nil //nolint:nilerr // intentional fall-back, not a failure
+	}
+	provider, buildErr := ctor(logger.GetLogger(), cfg)
+	if buildErr != nil {
+		return nil, false, fmt.Errorf("build %s provider: %w", cfg.ClusterProvider, buildErr)
+	}
+	connector, ok := provider.(clusterprovider.Connector)
+	if !ok {
+		return nil, false, nil // provider uses the legacy suite path (e.g. dvp)
+	}
+
+	logger.Step(1, "Connecting to the %s cluster via the provider connector", cfg.ClusterProvider)
+	restConfig, cleanup, connErr := connector.Connect(ctx)
+	if connErr != nil {
+		return nil, true, fmt.Errorf("connect via %s provider: %w", cfg.ClusterProvider, connErr)
+	}
+	configureExtendedTimeouts(restConfig)
+	logger.StepComplete(1, "Connected to the cluster API through the provider")
+
+	// Route teardown of the tunnel + SSH client through the standard cleanup
+	// path (TunnelInfo.StopFunc), so no bespoke cleanup wiring is needed.
+	res := &TestClusterResources{
+		Kubeconfig: restConfig,
+		TunnelInfo: &ssh.TunnelInfo{StopFunc: func() error { cleanup(); return nil }},
+	}
+
+	logger.Step(2, "Acquiring cluster lock")
+	testName := config.TestClusterNamespace
+	if testName == "" {
+		testName = fmt.Sprintf("e2e-test-%d", time.Now().UnixNano())
+	}
+	if lockErr := AcquireClusterLock(ctx, restConfig, testName); lockErr != nil {
+		cleanup()
+		return nil, true, fmt.Errorf("failed to acquire cluster lock: %w", lockErr)
+	}
+	logger.StepComplete(2, "Cluster lock acquired")
+
+	logger.Step(3, "Verifying cluster health (with retries)")
+	if healthErr := checkClusterHealthWithRetries(ctx, restConfig); healthErr != nil {
+		_ = ReleaseClusterLock(ctx, restConfig)
+		cleanup()
+		return nil, true, healthErr
+	}
+	logger.StepComplete(3, "Cluster is healthy")
+
+	providerConnected = true
+	logger.Success("Connected to the %s cluster", cfg.ClusterProvider)
+	return res, true, nil
+}
+
+// checkClusterHealthWithRetries polls CheckClusterHealth until it passes or the
+// retry budget is exhausted.
+func checkClusterHealthWithRetries(ctx context.Context, restConfig *rest.Config) error {
+	const maxHealthRetries = 10
+	const healthRetryInterval = 30 * time.Second
+	var healthErr error
+	for attempt := 1; attempt <= maxHealthRetries; attempt++ {
+		healthCtx, cancel := context.WithTimeout(ctx, config.ClusterHealthTimeout)
+		healthErr = CheckClusterHealth(healthCtx, restConfig, CheckClusterHealthOptions{
+			CheckBootstrapSecrets: false,
+		})
+		cancel()
+		if healthErr == nil {
+			return nil
+		}
+		if attempt < maxHealthRetries {
+			logger.Warn("Health check attempt %d/%d failed: %v. Retrying in %v...", attempt, maxHealthRetries, healthErr, healthRetryInterval)
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("context canceled during health check retries: %w", ctx.Err())
+			case <-time.After(healthRetryInterval):
+			}
+		}
+	}
+	return fmt.Errorf("cluster health check failed after %d attempts: %w", maxHealthRetries, healthErr)
+}
+
 // CleanupExistingCluster releases the cluster lock and closes connections.
 // This should be called after using an existing cluster with UseExistingCluster.
 // Note: Stress namespace cleanup should be done by the caller before calling this function.
@@ -1555,6 +1659,31 @@ func configureExtendedTimeouts(config *rest.Config) {
 func CleanupTestCluster(ctx context.Context, resources *TestClusterResources) error {
 	if resources == nil {
 		return nil // Nothing to clean up
+	}
+
+	// Provider-connected runs own no VMs — the cluster is removed by the separate
+	// teardown step (cmd/remove-cluster). Cleanup releases the lock and tears down
+	// the in-process SSH tunnel / client recorded in TunnelInfo.StopFunc by
+	// connectViaProvider.
+	if providerConnected {
+		providerConnected = false
+		var errs []error
+		if resources.Kubeconfig != nil {
+			if err := ReleaseClusterLock(ctx, resources.Kubeconfig); err != nil {
+				logger.Error("Failed to release cluster lock: %v", err)
+				errs = append(errs, fmt.Errorf("failed to release cluster lock: %w", err))
+			} else {
+				logger.Success("Cluster lock released")
+			}
+		}
+		if resources.TunnelInfo != nil && resources.TunnelInfo.StopFunc != nil {
+			if err := resources.TunnelInfo.StopFunc(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to stop commander tunnel: %w", err))
+			} else {
+				logger.Success("Commander tunnel/SSH closed")
+			}
+		}
+		return errors.Join(errs...)
 	}
 
 	logger.Step(1, "Stopping test cluster tunnel and closing SSH client")
@@ -2343,6 +2472,28 @@ func OutputEnvironmentVariables() {
 // - commander: Use Deckhouse Commander to create or use a cluster
 func CreateOrConnectToTestCluster() *TestClusterResources {
 	var testClusterResources *TestClusterResources
+
+	// Provider-based connect: when the run is driven by a clusterprovider that
+	// implements Connect (e.g. commander — the cluster and its modules are brought
+	// up by cmd/bootstrap-cluster), the suite attaches through it. Providers
+	// without Connect (e.g. dvp) fall through to the legacy TEST_CLUSTER_CREATE_MODE
+	// path below.
+	var providerHandled bool
+	By("Connecting to the provider-managed cluster (if supported)", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), config.ClusterCreationTimeout)
+		defer cancel()
+		res, handled, err := connectViaProvider(ctx)
+		if err != nil {
+			Expect(err).NotTo(HaveOccurred(), "connect via cluster provider")
+		}
+		if handled {
+			testClusterResources = res
+			providerHandled = true
+		}
+	})
+	if providerHandled {
+		return testClusterResources
+	}
 
 	switch config.TestClusterCreateMode {
 	case config.ClusterCreateModeAlwaysUseExisting:

@@ -6,11 +6,11 @@
 # For consumer modules the original go.mod (and go.sum, if present) are backed
 # up before editing and restored via a trap on EXIT, so the working tree is not
 # left mutated on self-hosted runners (which check out with clean: false). After
-# applying the replace we run `go mod download` (only fetches what is already
-# pinned) instead of `go mod tidy`, keeping the run deterministic and avoiding
-# rewriting the dependency graph.
-#
-# No SSH tunnel is created here: the Go code establishes its own tunnel.
+# applying the replace we run `go mod download` (not `go mod tidy`): download is
+# deterministic and fast, whereas tidy re-resolves the whole graph and can stall
+# fetching modules on the runner. The consumer is responsible for keeping its
+# go.mod/go.sum in sync with the storage-e2e revision it pins (so the replaced
+# module's deps are already covered).
 #
 # Inputs (env):
 #   E2E_MODULE_PATH          path to the Go module under test (default ".")

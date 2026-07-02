@@ -21,6 +21,8 @@ package clusterprovider
 
 import (
 	"context"
+
+	"k8s.io/client-go/rest"
 )
 
 // Provider provisions and removes a test cluster for a specific backend
@@ -29,4 +31,17 @@ type Provider interface {
 	Name() string
 	Bootstrap(ctx context.Context) error
 	Remove(ctx context.Context) error
+}
+
+// Connector is an optional Provider capability: attaching a test run to the
+// provider-managed cluster, returning a rest.Config plus a cleanup that
+// releases the connection (e.g. an SSH tunnel + client). Providers whose
+// Bootstrap yields a directly-connectable cluster (e.g. commander) implement it,
+// and the suite uses it in place of the legacy TEST_CLUSTER_CREATE_MODE connect
+// path; providers that do not (yet) implement it keep using that legacy path.
+// The returned cleanup MUST be called once the run no longer needs the
+// connection; implementations must keep the connection alive until then
+// regardless of the ctx passed to Connect.
+type Connector interface {
+	Connect(ctx context.Context) (*rest.Config, func(), error)
 }

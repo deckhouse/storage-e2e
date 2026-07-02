@@ -27,7 +27,9 @@ func main() {
 		log.Fatalf("failed to build provider: %v", err)
 	}
 
-	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), time.Minute*45)
+	// Headroom over the longest provider wait (commander E2E_COMMANDER_WAIT_TIMEOUT,
+	// which may be raised to ~60m for slow cluster provisioning).
+	bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), time.Minute*75)
 	bootstrapErr := clusterProvider.Bootstrap(bootstrapCtx)
 	bootstrapCancel()
 	if bootstrapErr != nil {
