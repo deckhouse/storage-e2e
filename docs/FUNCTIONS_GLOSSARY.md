@@ -127,6 +127,8 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 `pkg/kubernetes/namespace.go`
 
 - `CreateNamespaceIfNotExists(ctx, config, name)` — Creates a namespace if it doesn't exist, or returns the existing one.
+- `DeleteNamespace(ctx, config, name)` — Deletes a namespace and blocks until it is fully removed (idempotent; a missing
+  namespace is treated as success).
 
 ## Nodes
 

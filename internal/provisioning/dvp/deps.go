@@ -52,6 +52,7 @@ type kubeOps interface {
 	CheckReachable(ctx context.Context, kube *rest.Config) error
 	WaitModuleReady(ctx context.Context, kube *rest.Config, module string, timeout time.Duration) error
 	EnsureNamespace(ctx context.Context, kube *rest.Config, namespace string) error
+	DeleteNamespace(ctx context.Context, kube *rest.Config, namespace string) error
 }
 
 type vmFleet interface {
@@ -90,6 +91,13 @@ func (defaultKubeOps) WaitModuleReady(ctx context.Context, kube *rest.Config, mo
 func (defaultKubeOps) EnsureNamespace(ctx context.Context, kube *rest.Config, namespace string) error {
 	if _, err := kubernetes.CreateNamespaceIfNotExists(ctx, kube, namespace); err != nil {
 		return fmt.Errorf("ensure namespace %q: %w", namespace, err)
+	}
+	return nil
+}
+
+func (defaultKubeOps) DeleteNamespace(ctx context.Context, kube *rest.Config, namespace string) error {
+	if err := kubernetes.DeleteNamespace(ctx, kube, namespace); err != nil {
+		return fmt.Errorf("delete namespace %q: %w", namespace, err)
 	}
 	return nil
 }
