@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
@@ -55,6 +56,7 @@ func NewDVPProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (cl
 	d := deps{
 		connector:  connector,
 		masterConn: connector,
+		resolver:   defaultMasterResolver{},
 		kube:       defaultKubeOps{},
 		fleet:      defaultFleetFactory{dvpConf: dvpConf, logger: logger},
 		virt:       defaultVirtFactory{},
@@ -73,6 +75,65 @@ func newProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig, dvpCon
 }
 
 func (p *dvpProvider) Name() string { return clusterprovider.ModeDVP }
+
+// Connect attaches a test run to the cluster the DVP provider bootstrapped,
+// satisfying clusterprovider.Connector. In the split bootstrap/run-tests model
+// (see cmd/bootstrap-cluster and .github/workflows/e2e.yml) the suite process
+// is separate from the one that ran Bootstrap, so it only has the static
+// cluster_config.yml. Connect therefore (1) reads the first master's hostname
+// from that config, (2) resolves the running master VM's internal IP off the
+// base cluster's virtualization API, then (3) reuses connectToMaster to fetch
+// the admin kubeconfig over SSH and open an API tunnel. The returned cleanup
+// closes that tunnel; callers MUST invoke it once the run no longer needs the
+// connection. With Connect implemented, cluster.connectViaProvider drives the
+// suite's connect through the provider (as it already does for commander)
+// instead of the legacy TEST_CLUSTER_CREATE_MODE path.
+func (p *dvpProvider) Connect(ctx context.Context) (*rest.Config, func(), error) {
+	def, err := config.LoadClusterDefinition(p.cfg.ClusterBootstrapConfigPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load cluster bootstrap config: %w", err)
+	}
+	masterHostname, err := firstMasterHostname(def)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	masterIP, err := p.resolveMasterIPFromBase(ctx, masterHostname)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	p.logger.Info("connecting to bootstrapped master", "hostname", masterHostname, "ip", masterIP)
+	return p.deps.masterConn.connectToMaster(ctx, masterIP)
+}
+
+// ConnectBase opens a connection to the DVP base cluster (the infrastructure
+// cluster hosting the nested cluster's node VMs), satisfying
+// clusterprovider.BaseConnector. Suites use it — via
+// TestClusterResources.BaseKubeconfig — to manipulate the VirtualDisks that back
+// node disks (attach/detach/resize) directly on the base cluster. The returned
+// cleanup closes the base SSH tunnel + client.
+func (p *dvpProvider) ConnectBase(ctx context.Context) (*rest.Config, func(), error) {
+	p.logger.Info("connecting to DVP base cluster for VM/disk operations")
+	return p.deps.connector.Connect(ctx)
+}
+
+// resolveMasterIPFromBase opens a short-lived base-cluster connection solely to
+// resolve the master VM's IP, then releases it (connectToMaster establishes its
+// own SSH tunnel to that IP afterwards).
+func (p *dvpProvider) resolveMasterIPFromBase(ctx context.Context, masterHostname string) (string, error) {
+	baseKube, baseCleanup, err := p.deps.connector.Connect(ctx)
+	if err != nil {
+		return "", fmt.Errorf("connect to base cluster: %w", err)
+	}
+	defer baseCleanup()
+
+	masterIP, err := p.deps.resolver.resolveMasterIP(ctx, baseKube, p.dvpConf.Namespace, masterHostname)
+	if err != nil {
+		return "", fmt.Errorf("resolve master IP: %w", err)
+	}
+	return masterIP, nil
+}
 
 type cleanupStack struct {
 	fns []func()
