@@ -18,15 +18,14 @@ package dvp
 
 import (
 	"context"
-	"errors"
 	"fmt"
-
-	cryptossh "golang.org/x/crypto/ssh"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
+
+var _ clusterprovider.Provider = (*dvpProvider)(nil)
 
 func (p *dvpProvider) ConnectTestCluster(ctx context.Context) (*clusterprovider.Cluster, error) {
 	// Detach cancellation: the tunnels must outlive the caller's connect ctx
@@ -90,58 +89,3 @@ func (p *dvpProvider) ConnectTestCluster(ctx context.Context) (*clusterprovider.
 		Cleanup: runCleanups,
 	}, nil
 }
-
-// vmIPResolver maps a cluster node name to its VM IP on the base cluster
-// (node names equal VM names — both come from ClusterDefinition hostnames).
-type vmIPResolver struct {
-	virtClient *virtualization.Client
-	namespace  string
-}
-
-func (r *vmIPResolver) Resolve(ctx context.Context, nodeName string) (string, error) {
-	machine, err := r.virtClient.VirtualMachines().Get(ctx, r.namespace, nodeName)
-	if err != nil {
-		return "", fmt.Errorf("get VM %s/%s: %w", r.namespace, nodeName, err)
-	}
-	if machine.Status.IPAddress == "" {
-		return "", fmt.Errorf("VM %s/%s has no IP address in status", r.namespace, nodeName)
-	}
-	return machine.Status.IPAddress, nil
-}
-
-type dvpNodeExecutor struct {
-	connector baseConnector
-	resolver  *vmIPResolver
-}
-
-func (e *dvpNodeExecutor) Exec(ctx context.Context, nodeName, command string) (clusterprovider.ExecResult, error) {
-	ip, err := e.resolver.Resolve(ctx, nodeName)
-	if err != nil {
-		return clusterprovider.ExecResult{}, err
-	}
-
-	exec, closeExec, err := e.connector.VMExecutor(ctx, ip)
-	if err != nil {
-		return clusterprovider.ExecResult{}, fmt.Errorf("connect to node %s (%s): %w", nodeName, ip, err)
-	}
-	defer closeExec()
-
-	res, err := exec.Exec(ctx, command)
-	out := clusterprovider.ExecResult{
-		Stdout:   res.Stdout,
-		Stderr:   res.Stderr,
-		ExitCode: res.ExitCode,
-	}
-	if _, ok := errors.AsType[*cryptossh.ExitError](err); ok {
-		return out, nil
-	}
-	if err != nil {
-		return out, fmt.Errorf("exec on node %s (%s): %w", nodeName, ip, err)
-	}
-	return out, nil
-}
-
-var (
-	_ clusterprovider.NodeExecutor = (*dvpNodeExecutor)(nil)
-	_ clusterprovider.Provider     = (*dvpProvider)(nil)
-)
