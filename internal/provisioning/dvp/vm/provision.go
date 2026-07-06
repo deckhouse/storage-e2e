@@ -150,7 +150,7 @@ func (p *Provisioner) provisionVMClass(ctx context.Context) error {
 		return fmt.Errorf("get template VirtualMachineClass %q: %w", p.cfg.DefaultVMClassName, err)
 	}
 
-	class := buildVirtualMachineClass(name, template.Spec, managedLabels())
+	class := buildVirtualMachineClass(name, template.Spec, ManagedLabels())
 	if err := createIfAbsentVirtualMachineClass(ctx, p.client, class); err != nil {
 		return err
 	}
@@ -183,7 +183,7 @@ func (p *Provisioner) provisionClusterVirtualImages(ctx context.Context, planned
 	g.SetLimit(maxConcurrentOps)
 	for name, url := range images {
 		g.Go(func() error {
-			cvi := buildClusterVirtualImage(name, url, managedLabels())
+			cvi := buildClusterVirtualImage(name, url, ManagedLabels())
 			if err := createIfAbsentClusterVirtualImage(gctx, p.client, cvi); err != nil {
 				return err
 			}
@@ -218,7 +218,7 @@ func (p *Provisioner) provisionDisksAndVMs(ctx context.Context, planned []planne
 }
 
 func (p *Provisioner) createDiskAndVM(ctx context.Context, pl plannedVM) error {
-	labels := managedLabels()
+	labels := ManagedLabels()
 	diskName := systemDiskName(pl.node.Hostname)
 
 	vd, err := buildVirtualDisk(p.cfg.Namespace, diskName, pl.cviName, p.cfg.StorageClass, pl.node.DiskSize, labels)

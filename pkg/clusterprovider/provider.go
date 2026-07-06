@@ -26,11 +26,18 @@ import (
 )
 
 // Provider provisions and removes a test cluster for a specific backend
-// (for example DVP). Implementations are expected to be idempotent.
+// (for example DVP) and attaches test runs to it. Bootstrap and Remove are
+// expected to be idempotent.
+//
+// ConnectTestCluster attaches a test run to the bootstrapped cluster,
+// returning the API access plus the provider-specific capability strategies
+// (see Cluster). Providers that cannot connect test runs yet return
+// ErrConnectUnsupported.
 type Provider interface {
 	Name() string
 	Bootstrap(ctx context.Context) error
 	Remove(ctx context.Context) error
+	ConnectTestCluster(ctx context.Context) (*Cluster, error)
 }
 
 // Connector is an optional Provider capability: attaching a test run to the

@@ -29,7 +29,7 @@ import (
 
 func TestCreateIfAbsentClusterVirtualImageIdempotent(t *testing.T) {
 	c := newFakeClient()
-	cvi := buildClusterVirtualImage("ubuntu", "http://example/img.qcow2", managedLabels())
+	cvi := buildClusterVirtualImage("ubuntu", "http://example/img.qcow2", ManagedLabels())
 
 	for i := 0; i < 3; i++ {
 		if err := createIfAbsentClusterVirtualImage(context.Background(), c, cvi); err != nil {
