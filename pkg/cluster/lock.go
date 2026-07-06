@@ -34,8 +34,14 @@ import (
 
 const (
 	// ClusterLockNamespace is the namespace where the cluster lock ConfigMap is created
+	//
+	// Deprecated: the ConfigMap-based cluster lock is superseded by the
+	// coordination.k8s.io/v1 Lease lock managed by pkg/e2e (e2e.Connect).
 	ClusterLockNamespace = "default"
 	// ClusterLockConfigMapName is the name of the ConfigMap used to lock the cluster
+	//
+	// Deprecated: the ConfigMap-based cluster lock is superseded by the
+	// coordination.k8s.io/v1 Lease lock managed by pkg/e2e (e2e.Connect).
 	ClusterLockConfigMapName = "e2e-cluster-lock"
 
 	// ConfigMap data keys
@@ -47,6 +53,9 @@ const (
 )
 
 // ClusterLockInfo contains information about who locked the cluster
+//
+// Deprecated: the ConfigMap-based cluster lock is superseded by the
+// coordination.k8s.io/v1 Lease lock managed by pkg/e2e (e2e.Connect).
 type ClusterLockInfo struct {
 	TestName string
 	LockedAt time.Time
@@ -58,6 +67,10 @@ type ClusterLockInfo struct {
 // AcquireClusterLock creates a ConfigMap in the default namespace to indicate the cluster is busy.
 // If the cluster is already locked, it returns an error with information about who holds the lock.
 // Uses retry logic for transient network errors.
+//
+// Deprecated: superseded by the coordination.k8s.io/v1 Lease lock that
+// pkg/e2e (e2e.Connect) acquires automatically. Unlike this ConfigMap, the
+// Lease self-expires when the holding process dies without releasing it.
 func AcquireClusterLock(ctx context.Context, kubeconfig *rest.Config, testName string) error {
 	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -128,6 +141,9 @@ func AcquireClusterLock(ctx context.Context, kubeconfig *rest.Config, testName s
 // ReleaseClusterLock removes the cluster lock ConfigMap.
 // It is safe to call even if the lock doesn't exist (no error will be returned).
 // Uses retry logic for transient network errors.
+//
+// Deprecated: superseded by the coordination.k8s.io/v1 Lease lock managed by
+// pkg/e2e (e2e.Connect / Cluster.Close).
 func ReleaseClusterLock(ctx context.Context, kubeconfig *rest.Config) error {
 	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -149,6 +165,10 @@ func ReleaseClusterLock(ctx context.Context, kubeconfig *rest.Config) error {
 }
 
 // IsClusterLocked checks if the cluster is currently locked by checking for the lock ConfigMap.
+//
+// Deprecated: superseded by the coordination.k8s.io/v1 Lease lock managed by
+// pkg/e2e (e2e.Connect); inspect the "e2e-cluster-lock" Lease in the default
+// namespace instead.
 func IsClusterLocked(ctx context.Context, kubeconfig *rest.Config) (bool, error) {
 	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -167,6 +187,10 @@ func IsClusterLocked(ctx context.Context, kubeconfig *rest.Config) (bool, error)
 
 // GetClusterLockInfo retrieves information about the current cluster lock.
 // Returns an error if the cluster is not locked.
+//
+// Deprecated: superseded by the coordination.k8s.io/v1 Lease lock managed by
+// pkg/e2e (e2e.Connect); inspect the "e2e-cluster-lock" Lease in the default
+// namespace instead.
 func GetClusterLockInfo(ctx context.Context, kubeconfig *rest.Config) (*ClusterLockInfo, error) {
 	clientset, err := k8sutils.NewClientsetWithRetry(ctx, kubeconfig)
 	if err != nil {
@@ -195,6 +219,10 @@ func GetClusterLockInfo(ctx context.Context, kubeconfig *rest.Config) (*ClusterL
 
 // ForceReleaseClusterLock forcefully removes the cluster lock.
 // Use with caution - this should only be used for cleanup when you're sure no other test is running.
+//
+// Deprecated: superseded by the coordination.k8s.io/v1 Lease lock managed by
+// pkg/e2e (e2e.Connect); a stale Lease self-expires, so force-releasing is no
+// longer needed (delete the "e2e-cluster-lock" Lease manually if required).
 func ForceReleaseClusterLock(ctx context.Context, kubeconfig *rest.Config) error {
 	logger.Warn("Force releasing cluster lock")
 	return ReleaseClusterLock(ctx, kubeconfig)
