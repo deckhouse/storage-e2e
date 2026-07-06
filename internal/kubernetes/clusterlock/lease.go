@@ -87,7 +87,9 @@ func acquireLease(ctx context.Context, clientset kubernetes.Interface, testName 
 
 	logger.Info("Cluster lease lock acquired: lease=%s, holder=%s, test=%s", LeaseName, holder, testName)
 
-	renewCtx, cancel := context.WithCancel(context.Background())
+	// Renewal must outlive the caller's acquire ctx (the lock is held for the
+	// whole run); only cancellation is detached, values are inherited.
+	renewCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	lock := &LeaseLock{
 		clientset:   clientset,
 		holder:      holder,
@@ -275,7 +277,7 @@ func leaseHeldError(lease *coordinationv1.Lease) error {
 func lockedError(ctx context.Context, clientset kubernetes.Interface) error {
 	lease, err := clientset.CoordinationV1().Leases(Namespace).Get(ctx, LeaseName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("cluster is already locked by another test (could not retrieve lease details: %v)", err)
+		return fmt.Errorf("cluster is already locked by another test (could not retrieve lease details: %w)", err)
 	}
 	return leaseHeldError(lease)
 }

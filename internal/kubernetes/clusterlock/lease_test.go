@@ -72,8 +72,8 @@ func TestAcquireLeaseFresh(t *testing.T) {
 		t.Errorf("test-name annotation = %q, want %q", lease.Annotations[annotationTestName], "my-test")
 	}
 
-	if err := lock.Release(ctx); err != nil {
-		t.Fatalf("Release: %v", err)
+	if releaseErr := lock.Release(ctx); releaseErr != nil {
+		t.Fatalf("Release: %v", releaseErr)
 	}
 	_, err = clientset.CoordinationV1().Leases(Namespace).Get(ctx, LeaseName, metav1.GetOptions{})
 	if !apierrors.IsNotFound(err) {
@@ -134,12 +134,12 @@ func TestReleaseDoesNotDeleteForeignLease(t *testing.T) {
 
 	// Simulate another run taking the lease over (e.g. after expiry).
 	stolen := foreignLease(time.Now(), 3600)
-	if _, err := clientset.CoordinationV1().Leases(Namespace).Update(ctx, stolen, metav1.UpdateOptions{}); err != nil {
-		t.Fatalf("update lease: %v", err)
+	if _, updateErr := clientset.CoordinationV1().Leases(Namespace).Update(ctx, stolen, metav1.UpdateOptions{}); updateErr != nil {
+		t.Fatalf("update lease: %v", updateErr)
 	}
 
-	if err := lock.Release(ctx); err != nil {
-		t.Fatalf("Release: %v", err)
+	if releaseErr := lock.Release(ctx); releaseErr != nil {
+		t.Fatalf("Release: %v", releaseErr)
 	}
 	lease, err := clientset.CoordinationV1().Leases(Namespace).Get(ctx, LeaseName, metav1.GetOptions{})
 	if err != nil {
@@ -159,11 +159,11 @@ func TestReleaseIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquireLease: %v", err)
 	}
-	if err := lock.Release(ctx); err != nil {
-		t.Fatalf("first Release: %v", err)
+	if releaseErr := lock.Release(ctx); releaseErr != nil {
+		t.Fatalf("first Release: %v", releaseErr)
 	}
-	if err := lock.Release(ctx); err != nil {
-		t.Fatalf("second Release should be a no-op: %v", err)
+	if releaseErr := lock.Release(ctx); releaseErr != nil {
+		t.Fatalf("second Release should be a no-op: %v", releaseErr)
 	}
 }
 
@@ -186,9 +186,9 @@ func TestLeaseRenewal(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		lease, err := clientset.CoordinationV1().Leases(Namespace).Get(ctx, LeaseName, metav1.GetOptions{})
-		if err != nil {
-			t.Fatalf("get lease: %v", err)
+		lease, getErr := clientset.CoordinationV1().Leases(Namespace).Get(ctx, LeaseName, metav1.GetOptions{})
+		if getErr != nil {
+			t.Fatalf("get lease: %v", getErr)
 		}
 		if lease.Spec.RenewTime.After(initial.Spec.RenewTime.Time) {
 			return // renewed
