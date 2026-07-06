@@ -20,13 +20,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"k8s.io/client-go/rest"
 
 	ssh "github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
 	commanderapi "github.com/deckhouse/storage-e2e/internal/kubernetes/commander"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/kubeaccess"
 )
 
 const (
@@ -133,42 +133,26 @@ func (c *connector) Connect(ctx context.Context) (*rest.Config, func(), error) {
 		}
 	})
 
-	kubeconfig, err := c.fetchKubeconfig(ctx, sshClient)
+	// The fetched kubeconfig points the API server at the node-local proxy
+	// (https://127.0.0.1:6445), so it is only usable through the SSH tunnel.
+	kubeconfig, err := kubeaccess.FetchKubeconfig(ctx, sshClient)
 	if err != nil {
 		runCleanups()
 		return nil, nil, err
 	}
 
-	tun, err := sshClient.OpenTunnel(ctx, apiServerRemotePort)
+	restConfig, closeTunnel, err := kubeaccess.TunnelRestConfig(ctx, sshClient, kubeconfig, apiServerRemotePort)
 	if err != nil {
 		runCleanups()
-		return nil, nil, fmt.Errorf("creating tunnel: %w", err)
+		return nil, nil, err
 	}
 	cleanups = append(cleanups, func() {
-		if closeErr := tun.Close(); closeErr != nil {
+		if closeErr := closeTunnel(); closeErr != nil {
 			c.logger.Warn("failed to close tunnel", "err", closeErr)
 		}
 	})
 
-	restConfig, err := buildRestConfig(kubeconfig, tun.LocalAddr())
-	if err != nil {
-		runCleanups()
-		return nil, nil, fmt.Errorf("creating rest config: %w", err)
-	}
-
 	return restConfig, runCleanups, nil
-}
-
-func (c *connector) fetchKubeconfig(ctx context.Context, sshClient *ssh.Client) ([]byte, error) {
-	res, err := sshClient.Exec(ctx, getKubeconfigRemoteShell)
-	if err != nil {
-		return nil, fmt.Errorf("fetch kubeconfig over SSH (exit %d, stderr: %s): %w",
-			res.ExitCode, strings.TrimSpace(string(res.Stderr)), err)
-	}
-	if len(res.Stdout) == 0 {
-		return nil, fmt.Errorf("fetched kubeconfig is empty (stderr: %s)", strings.TrimSpace(string(res.Stderr)))
-	}
-	return res.Stdout, nil
 }
 
 // Connect implements clusterprovider.Connector: it attaches a run to the

@@ -24,11 +24,9 @@ import (
 
 	"k8s.io/client-go/rest"
 
-	ssh "github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
+	"github.com/deckhouse/storage-e2e/internal/infrastructure/ssh/v2"
+	"github.com/deckhouse/storage-e2e/internal/kubernetes/kubeaccess"
 )
-
-const getKubeconfigCmd = "sudo -n /bin/cat /etc/kubernetes/super-admin.conf 2>/dev/null " +
-	"|| sudo -n /bin/cat /etc/kubernetes/admin.conf"
 
 const (
 	setupNodeConnectPoll    = 10 * time.Second
@@ -107,6 +105,15 @@ func (c *dvpConnector) Connect(ctx context.Context) (*rest.Config, func(), error
 		"kubeconfigSource", kubeconfigSource,
 	)
 
+	// The kubeconfig may already be directly reachable (an open cluster, or a
+	// run inside the same network); the SSH tunnel is only for closed clusters.
+	if directConfig, err := kubeaccess.BuildRestConfigDirect(c.creds.Kubeconfig); err == nil {
+		if kubeaccess.DirectReachable(ctx, directConfig) {
+			c.logger.Info("base cluster kubeconfig is directly reachable, skipping SSH tunnel")
+			return directConfig, func() {}, nil
+		}
+	}
+
 	var cleanups []func()
 	runCleanups := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
@@ -124,22 +131,16 @@ func (c *dvpConnector) Connect(ctx context.Context) (*rest.Config, func(), error
 		}
 	})
 
-	tun, err := sshClient.OpenTunnel(ctx, apiServerRemotePort)
+	restConfig, closeTunnel, err := kubeaccess.TunnelRestConfig(ctx, sshClient, c.creds.Kubeconfig, apiServerRemotePort)
 	if err != nil {
 		runCleanups()
-		return nil, nil, fmt.Errorf("creating tunnel: %w", err)
+		return nil, nil, err
 	}
 	cleanups = append(cleanups, func() {
-		if closeErr := tun.Close(); closeErr != nil {
+		if closeErr := closeTunnel(); closeErr != nil {
 			c.logger.Warn("failed to close tunnel", "err", closeErr)
 		}
 	})
-
-	restConfig, err := buildRestConfig(c.creds.Kubeconfig, tun.LocalAddr())
-	if err != nil {
-		runCleanups()
-		return nil, nil, fmt.Errorf("creating rest config: %w", err)
-	}
 
 	return restConfig, runCleanups, nil
 }
@@ -188,7 +189,7 @@ func (c *dvpConnector) connectToMaster(ctx context.Context, masterIP string) (*r
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to master %s: %w", masterIP, err)
 	}
-	kubeconfig, fetchErr := fetchKubeconfig(ctx, exec)
+	kubeconfig, fetchErr := kubeaccess.FetchKubeconfig(ctx, exec)
 	closeExec()
 	if fetchErr != nil {
 		return nil, nil, fmt.Errorf("fetching kubeconfig from master %s: %w", masterIP, fetchErr)
@@ -199,7 +200,7 @@ func (c *dvpConnector) connectToMaster(ctx context.Context, masterIP string) (*r
 		return nil, nil, err
 	}
 
-	rewritten, err := rewriteKubeconfigServer(kubeconfig, localAddr)
+	rewritten, err := kubeaccess.RewriteServer(kubeconfig, localAddr)
 	if err != nil {
 		if closeErr := closeTunnel(); closeErr != nil {
 			c.logger.Warn("failed to close master tunnel after rewrite error", "masterIP", masterIP, "err", closeErr)
@@ -207,7 +208,7 @@ func (c *dvpConnector) connectToMaster(ctx context.Context, masterIP string) (*r
 		return nil, nil, fmt.Errorf("rewriting master kubeconfig: %w", err)
 	}
 
-	restConfig, err := buildRestConfigFromKubeconfig(rewritten)
+	restConfig, err := kubeaccess.BuildRestConfigDirect(rewritten)
 	if err != nil {
 		if closeErr := closeTunnel(); closeErr != nil {
 			c.logger.Warn("failed to close master tunnel after rest config error", "masterIP", masterIP, "err", closeErr)
@@ -221,18 +222,4 @@ func (c *dvpConnector) connectToMaster(ctx context.Context, masterIP string) (*r
 		}
 	}
 	return restConfig, cleanup, nil
-}
-
-// fetchKubeconfig runs getKubeconfigCmd over the executor and returns the raw
-// kubeconfig bytes. A non-zero exit (neither super-admin.conf nor admin.conf
-// readable) is surfaced with the captured stderr for diagnosis.
-func fetchKubeconfig(ctx context.Context, exec remoteExecutor) ([]byte, error) {
-	res, err := exec.Exec(ctx, getKubeconfigCmd)
-	if err != nil {
-		return nil, fmt.Errorf("read kubeconfig over ssh: %w (stderr: %s)", err, string(res.Stderr))
-	}
-	if len(res.Stdout) == 0 {
-		return nil, fmt.Errorf("empty kubeconfig from master (stderr: %s)", string(res.Stderr))
-	}
-	return res.Stdout, nil
 }
