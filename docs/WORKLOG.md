@@ -1,5 +1,10 @@
 # Worklog
 
+## 2026-07-09 (SDK smoke test + CI connection env)
+
+- Added an SDK smoke spec to the self-test suite (`e2e/connect_test.go`, label `smoke`): `e2e.Connect` → list nodes via the typed client → `Nodes().Exec("hostname")` on the first node → `Close`. Skips itself when `E2E_TEST_CLUSTER_PROVIDER` is unset (no provisioned cluster). The `e2e` module now requires `github.com/deckhouse/storage-e2e` with a `replace => ../` (CI re-points the replace to the checked-out ref via `e2e-run-tests.sh`).
+- e2e workflow: added the dvp-gated `Configure dvp connection` step to `run-tests` (mirroring the commander step) — injects `E2E_TEST_CLUSTER_PROVIDER=dvp`, `E2E_CLUSTER_CONFIG_YAML_PATH` and the `E2E_DVP_BASE_CLUSTER_*` credentials (kubeconfig decoded from the base64 secret) into `$GITHUB_ENV`, so `e2e.Connect` works in CI using the already-existing repo secrets. Updated `docs/CI.md`.
+
 ## 2026-07-09 (drop DiskManager capability)
 
 - Removed the `DiskManager` capability from the branch to shrink the change set (deferred as a follow-up task, tracked in `TODO.md`). Deleted `pkg/clusterprovider/disks.go`, `internal/provisioning/dvp/disks.go` + `disks_test.go`; dropped the `Disks DiskManager` field from `clusterprovider.Cluster`, the `Disks` literal from DVP `ConnectTestCluster`, the `Disks()` accessor + nil-check from `pkg/e2e`, the `DiskManager`/`DiskSpec`/`Disk`/`DiskRef` aliases, `VerifyDiskManager` + disk config from `pkg/e2e/conformance`, and the disk methods from the `virtClient` seam + fake. [Possible compatibility break] — `clusterprovider.Cluster.Disks`, `e2e.Cluster.Disks()` and the `Disk*` types are gone (feature branch only, unreleased). The pre-existing `pkg/kubernetes/virtualdisk.go` and `internal/kubernetes/virtualization` VirtualDisk/VMBDA clients (used by VM provisioning) are untouched.

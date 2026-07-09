@@ -14,7 +14,7 @@ resolve ──> bootstrap ──> run-tests ──> teardown
 |-----|---------|-----------|--------------|
 | `resolve` | — | always (workflow invoked) | Sparse-checks-out `.github/scripts`, runs `e2e-resolve-labels.sh` → outputs `keep_cluster`, `ginkgo_filter`, `namespace` |
 | `bootstrap` | resolve | always when reached | `e2e-prune-workspace.sh` + `go run ./cmd/bootstrap-cluster`. For `commander` this creates the cluster (Commander API, wait Ready) **and** enables the modules-under-test from `cluster_config` — connecting **in-process** via the commander connector (SSH to the master through the bastion, kubeconfig fetched off the master, API tunnel). No kubeconfig artifact, no separate enable-modules step |
-| `run-tests` | resolve, bootstrap | bootstrap succeeded | `e2e-run-tests.sh` (`go mod replace` + `go test`). For `commander`, a gated step injects the suite connection env (`E2E_TEST_CLUSTER_PROVIDER=commander` + `E2E_COMMANDER_*`); the suite attaches **in-process** via the provider's `Connect` (commander connector) — no artifact, no external tunnel |
+| `run-tests` | resolve, bootstrap | bootstrap succeeded | `e2e-run-tests.sh` (`go mod replace` + `go test`). A provider-gated step injects the suite connection env: for `dvp` — `E2E_TEST_CLUSTER_PROVIDER=dvp` + `E2E_DVP_BASE_CLUSTER_*` (consumed by `e2e.Connect`); for `commander` — `E2E_TEST_CLUSTER_PROVIDER=commander` + `E2E_COMMANDER_*` (legacy connector path). The suite attaches **in-process** — no kubeconfig artifact, no external tunnel |
 | `teardown` | resolve, bootstrap, run-tests | `always() && bootstrap succeeded && keep_cluster != 'true'` | `e2e-prune-workspace.sh` + `go run ./cmd/remove-cluster` |
 
 > **Provider neutrality.** All commander-specific behavior lives in
@@ -24,9 +24,11 @@ resolve ──> bootstrap ──> run-tests ──> teardown
 > enable modules in-process via `EnableAndConfigureModules` + `cluster_config`),
 > so there is no cross-job dependency that could skip `run-tests` for dvp.
 >
-> **DVP note.** For `cluster_provider: dvp`, every commander step is skipped, so
-> `run-tests` runs with its default (non-commander) environment. The kubeconfig
-> hand-off + in-process module enablement above are implemented for `commander`.
+> **DVP note.** For `cluster_provider: dvp`, the dvp-gated step injects the
+> `pkg/e2e` SDK connection env (`E2E_TEST_CLUSTER_PROVIDER`,
+> `E2E_CLUSTER_CONFIG_YAML_PATH`, `E2E_DVP_BASE_CLUSTER_*`), and the suite
+> attaches via `e2e.Connect`. The in-process module enablement above is
+> implemented for `commander`.
 
 `run-tests` does **not** block teardown by its own result — the cluster is
 cleaned regardless of test pass/fail, unless the `e2e/keep-cluster` label is set.

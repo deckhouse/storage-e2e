@@ -214,12 +214,43 @@ jobs:
           go-version-file: ${{ inputs.module_path }}/go.mod
           cache: false
 
+      # DVP: inject the suite's connection env for e2e.Connect. The DVP provider
+      # runs IN-PROCESS — it reaches the base cluster (directly via kubeconfig or
+      # through an SSH tunnel), resolves the master VM IP and fetches the test
+      # cluster's kubeconfig over SSH — so there is no kubeconfig artifact.
+      # Gated on dvp (writing to $GITHUB_ENV), mirroring the commander step below.
+      - name: Configure dvp connection
+        if: ${{ inputs.cluster_provider == 'dvp' }}
+        env:
+          E2E_DVP_BASE_CLUSTER_SSH_USER: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_USER }}
+          E2E_DVP_BASE_CLUSTER_SSH_HOST: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_HOST }}
+          E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE }}
+          E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY: ${{ secrets.E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY }}
+          E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64: ${{ secrets.E2E_DVP_BASE_CLUSTER_KUBECONFIG }}
+          NAMESPACE: ${{ needs.resolve.outputs.namespace }}
+          CLUSTER_CONFIG: ${{ github.workspace }}/${{ inputs.cluster_config }}
+        run: |
+          set -euo pipefail
+          emit() { printf '%s=%s\n' "$1" "$2" >>"$GITHUB_ENV"; }
+          emit_multiline() {
+            local d="__E2E_EOF_${RANDOM}${RANDOM}__"
+            { printf '%s<<%s\n' "$1" "$d"; printf '%s\n' "$2"; printf '%s\n' "$d"; } >>"$GITHUB_ENV"
+          }
+          emit E2E_TEST_CLUSTER_PROVIDER dvp
+          emit E2E_CLUSTER_CONFIG_YAML_PATH "${CLUSTER_CONFIG}"
+          emit E2E_DVP_BASE_CLUSTER_NAMESPACE "${NAMESPACE}"
+          emit E2E_DVP_BASE_CLUSTER_SSH_USER "${E2E_DVP_BASE_CLUSTER_SSH_USER}"
+          emit E2E_DVP_BASE_CLUSTER_SSH_HOST "${E2E_DVP_BASE_CLUSTER_SSH_HOST}"
+          [ -n "${E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE:-}" ] && emit E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE "${E2E_DVP_BASE_CLUSTER_SSH_PASSPHRASE}" || true
+          emit_multiline E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY "${E2E_DVP_BASE_CLUSTER_SSH_PRIVATE_KEY}"
+          emit_multiline E2E_DVP_BASE_CLUSTER_KUBECONFIG "$(printf '%s' "${E2E_DVP_BASE_CLUSTER_KUBECONFIG_B64}" | base64 -d)"
+
       # Commander: inject the suite's connection env. The commander connector runs
       # IN-PROCESS — it SSHes to the master via the bastion, fetches the kubeconfig
       # off the master and opens an API tunnel — so there is no kubeconfig artifact
       # and no external SSH tunnel. (Module enablement already happened in Bootstrap.)
       # ALL commander wiring lives in this gated step (writing to $GITHUB_ENV), so for
-      # other providers (dvp, …) the "Run E2E tests" step keeps its exact environment.
+      # other providers the "Run E2E tests" step keeps its exact environment.
       - name: Configure commander connection
         if: ${{ inputs.cluster_provider == 'commander' }}
         env:
