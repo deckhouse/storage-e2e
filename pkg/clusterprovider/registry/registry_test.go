@@ -32,6 +32,9 @@ type fakeProvider struct {
 func (p *fakeProvider) Name() string                      { return p.name }
 func (p *fakeProvider) Bootstrap(_ context.Context) error { return nil }
 func (p *fakeProvider) Remove(_ context.Context) error    { return nil }
+func (p *fakeProvider) ConnectTestCluster(_ context.Context) (*clusterprovider.Cluster, error) {
+	return nil, clusterprovider.ErrConnectUnsupported
+}
 
 func newFakeConstructor(name string, called *bool) Constructor {
 	return func(_ *slog.Logger, _ *clusterprovider.ClusterConfig) (clusterprovider.Provider, error) {

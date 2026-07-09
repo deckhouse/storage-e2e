@@ -57,6 +57,7 @@ func NewDVPProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfig) (cl
 		masterConn: connector,
 		kube:       defaultKubeOps{},
 		fleet:      defaultFleetFactory{dvpConf: dvpConf, logger: logger},
+		virt:       defaultVirtFactory{},
 	}
 	return newProvider(logger, cfg, dvpConf, creds, d), nil
 }

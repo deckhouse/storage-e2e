@@ -18,17 +18,19 @@ package vm
 
 import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+// Teardown only touches resources carrying this label, so anything the
+// framework creates on the base cluster must carry it to be swept by Remove.
 const (
-	managedByLabelKey   = "storage-e2e.deckhouse.io/managed-by"
-	managedByLabelValue = "storage-e2e"
+	ManagedByLabelKey   = "storage-e2e.deckhouse.io/managed-by"
+	ManagedByLabelValue = "storage-e2e"
 )
 
-func managedLabels() map[string]string {
+func ManagedLabels() map[string]string {
 	return map[string]string{
-		managedByLabelKey: managedByLabelValue,
+		ManagedByLabelKey: ManagedByLabelValue,
 	}
 }
 
 func isManaged(meta metav1.ObjectMeta) bool {
-	return meta.Labels[managedByLabelKey] == managedByLabelValue
+	return meta.Labels[ManagedByLabelKey] == ManagedByLabelValue
 }

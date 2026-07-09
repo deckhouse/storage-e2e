@@ -69,6 +69,7 @@ type deps struct {
 	masterConn   masterConnector
 	kube         kubeOps
 	fleet        fleetFactory
+	virt         virtFactory
 	installReady func(ctx context.Context, kube *rest.Config, timeout time.Duration) error
 }
 

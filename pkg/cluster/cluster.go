@@ -14,6 +14,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package cluster contains the legacy cluster lifecycle API: in-suite cluster
+// creation (CreateTestCluster), the TEST_CLUSTER_CREATE_MODE dispatch
+// (CreateOrConnectToTestCluster) and the TestClusterResources handle.
+//
+// Deprecated: new test suites should attach to a provider-managed cluster via
+// pkg/e2e (e2e.Connect), with the cluster lifecycle driven by
+// cmd/bootstrap-cluster and cmd/remove-cluster (E2E_TEST_CLUSTER_PROVIDER).
+// This package is kept for backward compatibility with existing suites and
+// importers; no new functionality should be added here.
 package cluster
 
 import (

@@ -23,9 +23,9 @@ import (
 )
 
 func TestManagedLabelsOnlyManagedBy(t *testing.T) {
-	labels := managedLabels()
-	if got := labels[managedByLabelKey]; got != managedByLabelValue {
-		t.Errorf("managed-by = %q, want %q", got, managedByLabelValue)
+	labels := ManagedLabels()
+	if got := labels[ManagedByLabelKey]; got != ManagedByLabelValue {
+		t.Errorf("managed-by = %q, want %q", got, ManagedByLabelValue)
 	}
 	if len(labels) != 1 {
 		t.Errorf("labels = %v, want exactly one (managed-by)", labels)
@@ -33,7 +33,7 @@ func TestManagedLabelsOnlyManagedBy(t *testing.T) {
 }
 
 func TestIsManaged(t *testing.T) {
-	managed := metav1.ObjectMeta{Labels: managedLabels()}
+	managed := metav1.ObjectMeta{Labels: ManagedLabels()}
 	if !isManaged(managed) {
 		t.Error("isManaged(managed) = false, want true")
 	}

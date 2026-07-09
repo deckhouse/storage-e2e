@@ -91,6 +91,11 @@ func NewCommanderProvider(logger *slog.Logger, cfg *clusterprovider.ClusterConfi
 
 func (p *commanderProvider) Name() string { return clusterprovider.ModeCommander }
 
+// ConnectTestCluster is not implemented for Commander yet (separate task).
+func (p *commanderProvider) ConnectTestCluster(context.Context) (*clusterprovider.Cluster, error) {
+	return nil, fmt.Errorf("provider %q: %w", clusterprovider.ModeCommander, clusterprovider.ErrConnectUnsupported)
+}
+
 // Bootstrap ensures a Ready cluster named conf.ClusterName exists in Commander,
 // creating it from the configured template when absent. It is idempotent: a
 // re-run against an already-created (or in-progress) cluster waits for it to
