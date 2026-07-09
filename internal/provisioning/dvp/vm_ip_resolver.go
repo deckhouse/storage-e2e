@@ -19,19 +19,17 @@ package dvp
 import (
 	"context"
 	"fmt"
-
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 )
 
 // vmIPResolver maps a cluster node name to its VM IP on the base cluster
 // (node names equal VM names — both come from ClusterDefinition hostnames).
 type vmIPResolver struct {
-	virtClient *virtualization.Client
-	namespace  string
+	virt      virtClient
+	namespace string
 }
 
 func (r *vmIPResolver) Resolve(ctx context.Context, nodeName string) (string, error) {
-	machine, err := r.virtClient.VirtualMachines().Get(ctx, r.namespace, nodeName)
+	machine, err := r.virt.GetVirtualMachine(ctx, r.namespace, nodeName)
 	if err != nil {
 		return "", fmt.Errorf("get VM %s/%s: %w", r.namespace, nodeName, err)
 	}

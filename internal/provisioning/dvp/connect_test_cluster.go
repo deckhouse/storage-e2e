@@ -21,7 +21,6 @@ import (
 	"fmt"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
 
@@ -53,13 +52,13 @@ func (p *dvpProvider) ConnectTestCluster(ctx context.Context) (*clusterprovider.
 	}
 	cleanups = append(cleanups, baseCleanup)
 
-	virtClient, err := virtualization.NewClient(ctx, baseKube)
+	vc, err := p.deps.virt.New(ctx, baseKube)
 	if err != nil {
 		runCleanups()
 		return nil, fmt.Errorf("create virtualization client: %w", err)
 	}
 
-	resolver := &vmIPResolver{virtClient: virtClient, namespace: p.dvpConf.Namespace}
+	resolver := &vmIPResolver{virt: vc, namespace: p.dvpConf.Namespace}
 
 	masterIP, err := resolver.Resolve(ctx, clusterDef.Masters[0].Hostname)
 	if err != nil {
@@ -81,7 +80,7 @@ func (p *dvpProvider) ConnectTestCluster(ctx context.Context) (*clusterprovider.
 			resolver:  resolver,
 		},
 		Disks: &dvpDiskManager{
-			virtClient:          virtClient,
+			virt:                vc,
 			namespace:           p.dvpConf.Namespace,
 			defaultStorageClass: p.dvpConf.StorageClass,
 			logger:              p.logger,

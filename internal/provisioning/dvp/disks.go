@@ -29,7 +29,6 @@ import (
 
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 
-	"github.com/deckhouse/storage-e2e/internal/kubernetes/virtualization"
 	"github.com/deckhouse/storage-e2e/internal/provisioning/dvp/vm"
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
@@ -46,7 +45,7 @@ const (
 // dvpDiskManager labels everything it creates with the framework's managed-by
 // label, so Provider.Remove sweeps leftovers even after a crashed test run.
 type dvpDiskManager struct {
-	virtClient          *virtualization.Client
+	virt                virtClient
 	namespace           string
 	defaultStorageClass string
 	logger              *slog.Logger
@@ -102,7 +101,7 @@ func (m *dvpDiskManager) Attach(ctx context.Context, spec clusterprovider.DiskSp
 			},
 		},
 	}
-	if err := m.virtClient.VirtualDisks().Create(ctx, disk); err != nil {
+	if err := m.virt.CreateVirtualDisk(ctx, disk); err != nil {
 		return nil, fmt.Errorf("create VirtualDisk %s/%s: %w", m.namespace, diskName, err)
 	}
 
@@ -120,7 +119,7 @@ func (m *dvpDiskManager) Attach(ctx context.Context, spec clusterprovider.DiskSp
 			},
 		},
 	}
-	if err := m.virtClient.VirtualMachineBlockDeviceAttachments().Create(ctx, attachment); err != nil {
+	if err := m.virt.CreateVirtualMachineBlockDeviceAttachment(ctx, attachment); err != nil {
 		return nil, fmt.Errorf("create VirtualMachineBlockDeviceAttachment %s/%s: %w",
 			m.namespace, attachment.Name, err)
 	}
@@ -149,7 +148,7 @@ func (m *dvpDiskManager) waitAttached(ctx context.Context, name string) error {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for attachment %s/%s: %w", m.namespace, name, ctx.Err())
 		case <-ticker.C:
-			attachment, err := m.virtClient.VirtualMachineBlockDeviceAttachments().Get(ctx, m.namespace, name)
+			attachment, err := m.virt.GetVirtualMachineBlockDeviceAttachment(ctx, m.namespace, name)
 			if err != nil {
 				m.logger.Warn("get attachment failed, retrying", "attachment", name, "err", err)
 				continue
@@ -169,12 +168,12 @@ func (m *dvpDiskManager) Detach(ctx context.Context, ref clusterprovider.DiskRef
 		return fmt.Errorf("disk ref: Name is required")
 	}
 
-	err := m.virtClient.VirtualMachineBlockDeviceAttachments().Delete(ctx, m.namespace, attachmentName(ref.Name))
+	err := m.virt.DeleteVirtualMachineBlockDeviceAttachment(ctx, m.namespace, attachmentName(ref.Name))
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete attachment for disk %s: %w", ref.Name, err)
 	}
 
-	err = m.virtClient.VirtualDisks().Delete(ctx, m.namespace, ref.Name)
+	err = m.virt.DeleteVirtualDisk(ctx, m.namespace, ref.Name)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete VirtualDisk %s: %w", ref.Name, err)
 	}
@@ -193,7 +192,7 @@ func (m *dvpDiskManager) waitDiskGone(ctx context.Context, name string) error {
 	ticker := time.NewTicker(diskAttachPollInterval)
 	defer ticker.Stop()
 	for {
-		_, err := m.virtClient.VirtualDisks().Get(ctx, m.namespace, name)
+		_, err := m.virt.GetVirtualDisk(ctx, m.namespace, name)
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -207,7 +206,7 @@ func (m *dvpDiskManager) waitDiskGone(ctx context.Context, name string) error {
 }
 
 func (m *dvpDiskManager) List(ctx context.Context, nodeName string) ([]clusterprovider.Disk, error) {
-	disks, err := m.virtClient.VirtualDisks().List(ctx, m.namespace)
+	disks, err := m.virt.ListVirtualDisks(ctx, m.namespace)
 	if err != nil {
 		return nil, fmt.Errorf("list VirtualDisks in %s: %w", m.namespace, err)
 	}
