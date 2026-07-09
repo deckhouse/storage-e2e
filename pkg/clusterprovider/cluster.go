@@ -42,8 +42,6 @@ type Cluster struct {
 	RESTConfig *rest.Config
 	// Nodes runs commands on cluster nodes.
 	Nodes NodeExecutor
-	// Disks manages extra block devices on cluster nodes.
-	Disks DiskManager
 	// Cleanup tears the connection down. Never nil.
 	Cleanup func()
 }

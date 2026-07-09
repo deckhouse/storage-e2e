@@ -4,6 +4,9 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 ## Table of Contents
 
+- [E2E SDK (pkg/e2e)](#e2e-sdk-pkge2e)
+- [Provider Conformance (pkg/e2e/conformance)](#provider-conformance-pkge2econformance)
+- [Cluster Provider Contracts (pkg/clusterprovider)](#cluster-provider-contracts-pkgclusterprovider)
 - [Cluster](#cluster)
 - [Cluster Lock](#cluster-lock)
 - [VM (Virtual Machine)](#vm-virtual-machine)
@@ -37,9 +40,68 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 ---
 
+## E2E SDK (pkg/e2e)
+
+`pkg/e2e/e2e.go`, `pkg/e2e/cluster.go`
+
+The SDK entry point for test suites: attach to a provider-managed cluster (bootstrapped by `cmd/bootstrap-cluster`) and
+use provider-supplied capability strategies without mode-specific branching.
+
+- `Connect(ctx, opts...)` — Attaches the test run to the provider-managed cluster: reads `E2E_TEST_CLUSTER_PROVIDER`
+  from env, builds the provider via the registry, calls `Provider.ConnectTestCluster` (API access + strategies), waits
+  for the cluster to be healthy and acquires the cluster lock (a `coordination.k8s.io/v1` Lease renewed in the
+  background; a stale lock from a dead run self-expires). Returns a `*Cluster` handle.
+- `WithTestName(name)` — Connect option: sets the test name recorded in the cluster lock (defaults to the test binary
+  name).
+- `WithoutLock()` — Connect option: skips acquiring the cluster lock.
+- `WithoutHealthCheck()` — Connect option: skips the post-connect cluster health check.
+- `WithHealthCheckTimeout(d)` — Connect option: overrides the health check wait budget (default 10m).
+- `(*Cluster) ProviderName()` — Reports which provider manages the cluster (`dvp`, `commander`).
+- `(*Cluster) RESTConfig()` — Returns the `*rest.Config` pointed at the test cluster's API server; pass to
+  `pkg/kubernetes` / `pkg/testkit` helpers.
+- `(*Cluster) Clientset()` — Returns a cached typed Kubernetes client.
+- `(*Cluster) Dynamic()` — Returns a cached dynamic Kubernetes client.
+- `(*Cluster) Nodes()` — Returns the provider's `NodeExecutor` (run commands on cluster nodes).
+- `(*Cluster) Close(ctx)` — Releases the cluster lock and the provider connection (SSH clients, tunnels). Idempotent.
+
+Type aliases `NodeExecutor`, `ExecResult` re-export the contracts from `pkg/clusterprovider` so suites only need the
+`e2e` import.
+
+## Provider Conformance (pkg/e2e/conformance)
+
+`pkg/e2e/conformance/conformance.go`
+
+Contract checks every provider must pass against a live cluster (run explicitly; they exercise real infrastructure).
+
+- `Verify(ctx, cluster, cfg)` — Runs all conformance checks against a connected `*e2e.Cluster` and returns a per-check
+  `*Report`; picks the first worker node when `cfg.NodeName` is empty.
+- `VerifyNodeExecutor(ctx, nodes, nodeName)` — Checks the `NodeExecutor` contract: stdout/stderr captured separately,
+  non-zero exit codes reported without error, passwordless sudo available.
+- `(*Report) Err()` — Joins the errors of all failed checks (nil when everything passed).
+
+## Cluster Provider Contracts (pkg/clusterprovider)
+
+`pkg/clusterprovider/provider.go`, `pkg/clusterprovider/cluster.go`, `pkg/clusterprovider/config.go`,
+`pkg/clusterprovider/mode.go`
+
+- `Provider` (interface: `Name`, `Bootstrap`, `Remove`, `ConnectTestCluster`) — Provisions and removes a test cluster
+  for a specific backend (`cmd/bootstrap-cluster` / `cmd/remove-cluster`) and attaches test runs to it:
+  `ConnectTestCluster` returns a `*Cluster` (rest.Config + `NodeExecutor` + cleanup) or
+  `ErrConnectUnsupported` when the provider cannot connect test runs yet (commander).
+- `ErrConnectUnsupported` — Sentinel returned by `Provider.ConnectTestCluster` when the provider does not support
+  connecting test runs; re-exported as `e2e.ErrConnectUnsupported`.
+- `Connector` (interface: `Connect`) — Optional legacy capability returning a bare `*rest.Config` + cleanup; superseded
+  by `Provider.ConnectTestCluster` for the SDK path.
+- `NodeExecutor` (interface: `Exec(ctx, nodeName, command)`) — Runs commands on cluster nodes; a completed command with
+  a non-zero exit code is not an error (exit code is in `ExecResult.ExitCode`).
+- `NewClusterConfig()` — Reads the provider-agnostic settings (`E2E_TEST_CLUSTER_PROVIDER`,
+  `E2E_CLUSTER_CONFIG_YAML_PATH`) from the environment.
+
 ## Cluster
 
 `pkg/cluster/cluster.go`
+
+> **Deprecated:** the whole `pkg/cluster` package is legacy; new suites should use [pkg/e2e](#e2e-sdk-pkge2e).
 
 - `CreateTestCluster(ctx, yamlConfigFilename)` — Creates a complete test cluster end-to-end: loads config, connects to base cluster, creates VMs, bootstraps Kubernetes, adds nodes, enables modules.
 - `UseExistingCluster(ctx)` — Connects to an existing cluster, retrieves kubeconfig, and acquires a cluster lock. Supports jump host via `SSH_JUMP_HOST`.
@@ -65,11 +127,19 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 
 `pkg/cluster/lock.go`
 
-- `AcquireClusterLock(ctx, kubeconfig, testName)` — Creates a ConfigMap lock to indicate the cluster is busy. Returns error if already locked.
-- `ReleaseClusterLock(ctx, kubeconfig)` — Removes the cluster lock ConfigMap. Safe to call if lock doesn't exist.
-- `IsClusterLocked(ctx, kubeconfig)` — Checks if the cluster is currently locked by looking for the lock ConfigMap.
-- `GetClusterLockInfo(ctx, kubeconfig)` — Retrieves information about the current cluster lock holder.
-- `ForceReleaseClusterLock(ctx, kubeconfig)` — Forcefully removes the cluster lock. Use only when sure no other test is running.
+> **Deprecated.** The ConfigMap-based lock is superseded by the `coordination.k8s.io/v1` Lease lock that `e2e.Connect`
+> acquires automatically (renewed in the background, self-expires after a crash). These functions are kept for
+> backward compatibility with the legacy `pkg/cluster` flow.
+
+- `AcquireClusterLock(ctx, kubeconfig, testName)` — Deprecated. Creates a ConfigMap lock to indicate the cluster is
+  busy. Returns error if already locked.
+- `ReleaseClusterLock(ctx, kubeconfig)` — Deprecated. Removes the cluster lock ConfigMap. Safe to call if lock doesn't
+  exist.
+- `IsClusterLocked(ctx, kubeconfig)` — Deprecated. Checks if the cluster is currently locked by looking for the lock
+  ConfigMap.
+- `GetClusterLockInfo(ctx, kubeconfig)` — Deprecated. Retrieves information about the current cluster lock holder.
+- `ForceReleaseClusterLock(ctx, kubeconfig)` — Deprecated. Forcefully removes the cluster lock. Use only when sure no
+  other test is running.
 
 ## VM (Virtual Machine)
 

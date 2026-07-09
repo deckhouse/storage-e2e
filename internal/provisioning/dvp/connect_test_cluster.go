@@ -79,12 +79,6 @@ func (p *dvpProvider) ConnectTestCluster(ctx context.Context) (*clusterprovider.
 			connector: p.deps.connector,
 			resolver:  resolver,
 		},
-		Disks: &dvpDiskManager{
-			virt:                vc,
-			namespace:           p.dvpConf.Namespace,
-			defaultStorageClass: p.dvpConf.StorageClass,
-			logger:              p.logger,
-		},
 		Cleanup: runCleanups,
 	}, nil
 }

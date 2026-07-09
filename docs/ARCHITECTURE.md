@@ -30,6 +30,10 @@ storage-e2e/
 │   │   └── cluster.go            # Core cluster operations (kubeconfig, port patching)
 │   │
 │   ├── kubernetes/                # Kubernetes API operations
+│   │   ├── clusterlock/          # Cluster lock used by pkg/e2e
+│   │   │   └── lease.go          # coordination.k8s.io/v1 Lease lock with background renewal
+│   │   ├── kubeaccess/           # Shared kubeconfig/rest.Config plumbing for providers
+│   │   │   └── kubeaccess.go     # FetchKubeconfig, RewriteServer, BuildRestConfig(Direct), TunnelRestConfig, DirectReachable
 │   │   ├── commander/            # Deckhouse Commander HTTP API client
 │   │   │   ├── client.go
 │   │   │   ├── errors.go
@@ -67,12 +71,17 @@ storage-e2e/
 │   │           └── tunnel.go     # Tunnel, accept loop
 │   │
 │   ├── provisioning/             # Cluster provisioning strategies (Provider impls)
-│   │   ├── commander/           # Deckhouse Commander provider
+│   │   ├── commander/           # Deckhouse Commander provider (ConnectTestCluster is a not-implemented stub — SDK support is a separate task)
 │   │   │   ├── provider.go      # Commander-backed Provider (Bootstrap/Remove)
-│   │   │   └── config.go        # Commander provider configuration
+│   │   │   ├── connect.go       # connector: master from connection API, kubeconfig fetch + API tunnel via kubeaccess (legacy Connector)
+│   │   │   ├── modules.go       # module enablement during Bootstrap
+│   │   │   └── config.go        # Commander provider configuration (E2E_COMMANDER_*)
 │   │   └── dvp/                 # DVP (Deckhouse Virtualization Platform) provider
 │   │       ├── provider.go      # dvpProvider: Bootstrap (provision + installDeckhouse via cleanupStack) / Remove
-│   │       ├── connect.go       # dvpConnector: SSH tunnel + base-cluster rest.Config + per-VM executors (baseEndpoints/VMExecutor) + openTunnelToVM/connectToMaster (kubeconfig fetch)
+│   │       ├── connect.go       # dvpConnector: direct-reachability probe or SSH tunnel to base cluster + per-VM executors (baseEndpoints/VMExecutor) + openTunnelToVM/connectToMaster
+│   │       ├── connect_test_cluster.go # Provider.ConnectTestCluster: connect orchestration (base cluster → master → capabilities)
+│   │       ├── vm_ip_resolver.go # vmIPResolver: node name → VM IP on the base cluster
+│   │       ├── node_executor.go # dvpNodeExecutor: SSH command execution on test cluster nodes
 │   │       ├── deps.go          # DI seam: baseConnector/masterConnector/kubeOps/fleetFactory + remoteExecutor + adapters
 │   │       ├── setupnode.go     # setup-node synthesis (newSetupNode, fixed name) + readiness gating (buildDockerReadyCommand + waitDockerReady)
 │   │       ├── bootstrap.go     # dhctl bootstrap-config rendering (param derivation + render + CIDR calc)
@@ -82,7 +91,7 @@ storage-e2e/
 │   │       ├── modules.go       # module enable: pure buildModuleLevels (topo sort) + moduleApplier seam + enableModulesInLevels (client-go, no SSH)
 │   │       ├── install.go       # post-install k8s waits on rest.Config: waitBootstrapSecrets/waitNodesReady/checkHealth (client-go)
 │   │       ├── config.go        # Config, Credentials, env parsing/validation
-│   │       ├── kubeconfig.go    # rest.Config build + rewriteKubeconfigServer + ssh public-key derivation
+│   │       ├── kubeconfig.go    # ssh public-key derivation from a private key
 │   │       └── vm/              # VM graph provisioning in the base cluster
 │   │           ├── client.go    # Virtualization client wrapper
 │   │           ├── build.go     # VM/disk/image resource builders
@@ -102,11 +111,26 @@ storage-e2e/
 │       └── README.md             # Logging documentation
 │
 ├── pkg/                           # Public API (importable by external packages)
-│   ├── cluster/                  # Public cluster management API
+│   ├── cluster/                  # Legacy cluster management API (Deprecated: use pkg/e2e)
 │   │   ├── cluster.go            # Main cluster creation/management
 │   │   ├── setup.go              # Cluster setup and bootstrap operations
-│   │   ├── lock.go               # Cluster locking (ConfigMap-based)
+│   │   ├── lock.go               # Cluster locking (ConfigMap-based, deprecated)
 │   │   └── vms.go                # VM lifecycle management
+│   │
+│   ├── clusterprovider/          # Provider contracts + env config
+│   │   ├── provider.go           # Provider (Bootstrap/Remove/ConnectTestCluster) + legacy Connector
+│   │   ├── cluster.go            # Cluster aggregate + ErrConnectUnsupported
+│   │   ├── nodeexec.go           # NodeExecutor contract + ExecResult
+│   │   ├── config.go             # ClusterConfig (E2E_TEST_CLUSTER_PROVIDER, E2E_CLUSTER_CONFIG_YAML_PATH)
+│   │   ├── mode.go               # ProviderMode (dvp | commander)
+│   │   └── registry/             # Provider mode → constructor registry
+│   │
+│   ├── e2e/                      # Test-suite SDK: attach to a provider-managed cluster
+│   │   ├── e2e.go                # Connect (env → registry → ConnectTestCluster → health check → Lease lock) + options
+│   │   ├── cluster.go            # Cluster handle: RESTConfig/Clientset/Dynamic + Nodes() + Close
+│   │   ├── health.go             # Post-connect cluster health check
+│   │   └── conformance/          # Provider conformance checks (run against a live cluster)
+│   │       └── conformance.go    # Verify / VerifyNodeExecutor
 │   │
 │   ├── kubernetes/               # Public Kubernetes utilities
 │   │   ├── apply.go              # YAML manifest application
@@ -273,6 +297,7 @@ func UseExistingCluster(ctx context.Context) (*TestClusterResources, error)
 func CleanupExistingCluster(ctx context.Context, resources *TestClusterResources) error
 
 // Cluster locking functions (for exclusive access in alwaysUseExisting mode)
+// Deprecated: superseded by the Lease-based lock acquired by e2e.Connect.
 func AcquireClusterLock(ctx context.Context, kubeconfig *rest.Config, testName string) error
 func ReleaseClusterLock(ctx context.Context, kubeconfig *rest.Config) error
 func IsClusterLocked(ctx context.Context, kubeconfig *rest.Config) (bool, error)
@@ -280,6 +305,13 @@ func GetClusterLockInfo(ctx context.Context, kubeconfig *rest.Config) (*ClusterL
 ```
 
 #### Cluster Locking Mechanism
+
+> **Deprecated.** The ConfigMap lock below is the legacy `pkg/cluster` mechanism.
+> The current mechanism is a `coordination.k8s.io/v1` **Lease** named
+> `e2e-cluster-lock` in the `default` namespace, acquired by `e2e.Connect` and
+> renewed in the background (default duration 5m); a lease left behind by a
+> dead run self-expires and is taken over by the next run. Holder metadata
+> (test name, user, hostname, pid) is stored in the Lease annotations.
 
 When using the `alwaysUseExisting` mode, the framework implements a cluster locking mechanism to ensure exclusive access:
 
@@ -427,7 +459,7 @@ config/
 pkg/cluster/
 ├── cluster.go          # Main cluster lifecycle functions
 ├── setup.go            # Cluster setup and bootstrap
-├── lock.go             # Cluster locking (ConfigMap-based)
+├── lock.go             # Cluster locking (ConfigMap-based, deprecated — see Lease lock in internal/kubernetes/clusterlock)
 └── vms.go              # VM lifecycle management
 
 internal/cluster/
@@ -470,6 +502,10 @@ pkg/kubernetes/                    # Public Kubernetes utilities
 └── vmpod.go                       # VM pod lookup
 
 internal/kubernetes/               # Internal Kubernetes clients
+├── clusterlock/                   # Lease-based cluster lock used by pkg/e2e
+│   └── lease.go                   # AcquireLease/Release with background renewal
+├── kubeaccess/                    # Shared kubeconfig/rest.Config plumbing for providers
+│   └── kubeaccess.go              # FetchKubeconfig, RewriteServer, BuildRestConfig(Direct), TunnelRestConfig, DirectReachable
 ├── commander/                     # Deckhouse Commander HTTP API client
 │   ├── client.go                  # Commander client (clusters, templates, kubeconfig)
 │   ├── errors.go                  # Error types
@@ -643,11 +679,23 @@ Initialize() error
 
 ```
 pkg/
-├── cluster/
+├── cluster/            # Deprecated: legacy lifecycle API, use pkg/e2e for new suites
 │   ├── cluster.go      # Main cluster lifecycle (CreateTestCluster, CleanupTestCluster)
 │   ├── setup.go        # Cluster setup and bootstrap operations
-│   ├── lock.go         # Cluster locking (ConfigMap-based)
+│   ├── lock.go         # Cluster locking (ConfigMap-based, deprecated)
 │   └── vms.go          # VM lifecycle management
+├── clusterprovider/
+│   ├── provider.go     # Provider (Bootstrap/Remove/ConnectTestCluster) + legacy Connector
+│   ├── cluster.go      # Cluster aggregate + ErrConnectUnsupported
+│   ├── nodeexec.go     # NodeExecutor contract + ExecResult
+│   ├── config.go       # ClusterConfig from env (E2E_TEST_CLUSTER_PROVIDER, E2E_CLUSTER_CONFIG_YAML_PATH)
+│   ├── mode.go         # ProviderMode (dvp | commander)
+│   └── registry/       # Provider registry (mode → constructor)
+├── e2e/
+│   ├── e2e.go          # Connect(ctx, opts...) — SDK entry point for suites
+│   ├── cluster.go      # Cluster handle (RESTConfig/Clientset/Dynamic/Nodes/Close)
+│   ├── health.go       # Post-connect health check
+│   └── conformance/    # Provider conformance checks (Verify*)
 ├── kubernetes/
 │   ├── apply.go                 # YAML manifest application
 │   ├── blockdevice.go           # BlockDevice operations
@@ -926,6 +974,25 @@ logger.Error("Failed to create resource: %v", err)
 | `COMMANDER_AUTH_METHOD` | `x-auth-token` | Auth method (`x-auth-token`, `bearer`, `basic`, etc.) |
 | `COMMANDER_API_PREFIX` | `/api/v1` | API path prefix |
 
+### Provider / SDK Variables (`pkg/e2e`, `cmd/bootstrap-cluster`, `cmd/remove-cluster`)
+
+| Variable                       | Default    | Description                                   |
+|--------------------------------|------------|-----------------------------------------------|
+| `E2E_TEST_CLUSTER_PROVIDER`    | (required) | Cluster provider mode: `dvp` or `commander`   |
+| `E2E_CLUSTER_CONFIG_YAML_PATH` | (required) | Path to the cluster bootstrap definition YAML |
+
+The provider-specific `E2E_COMMANDER_*` / `E2E_DVP_*` variables (see the DVP
+table above and `internal/provisioning/commander/config.go`) configure the
+selected provider for all three phases: bootstrap, test run (`e2e.Connect`)
+and teardown. `e2e.Connect` currently supports the `dvp` provider only;
+commander's `ConnectTestCluster` is a not-implemented stub (separate task) and
+`Connect` on it fails with `ErrConnectUnsupported`.
+
+For the DVP base cluster, the connector first probes whether the configured
+kubeconfig reaches the API server directly (`kubeaccess.DirectReachable`,
+short `/version` probe); only when it does not is the SSH tunnel opened. No
+extra configuration is needed — the detection is automatic.
+
 ### DVP Base Cluster Variables (mode `dvp`)
 
 Each file-backed secret accepts **either a path or inline content** (exactly one;
@@ -983,7 +1050,10 @@ content directly. Inline content is less safe than a path (it sits in
 
 - Use `TEST_CLUSTER_CREATE_MODE=alwaysUseExisting` for faster test iterations
 - The cluster lock prevents concurrent test execution on the same cluster
-- If a test crashes, manually delete the lock ConfigMap: `kubectl delete configmap e2e-cluster-lock -n default`
+- With `e2e.Connect` the lock is a Lease that self-expires after a crash (no manual cleanup needed); inspect it with
+  `kubectl get lease e2e-cluster-lock -n default -o yaml`
+- If a legacy (`pkg/cluster`) test crashes, manually delete the lock ConfigMap:
+  `kubectl delete configmap e2e-cluster-lock -n default`
 - Existing cluster mode is ideal for debugging and iterative development
 - New cluster mode (`alwaysCreateNew`) is recommended for CI/CD to ensure clean state
 
@@ -1002,6 +1072,8 @@ content directly. Inline content is less safe than a path (it sits in
 
 - [x] Support for existing cluster reuse (`alwaysUseExisting` mode)
 - [x] Deckhouse Commander integration (`commander` mode)
+- [x] Provider SDK (`pkg/e2e`): unified `Cluster` handle with capability strategies (`NodeExecutor`)
+  supplied by the provider; legacy `pkg/cluster` deprecated
 - [ ] Parallel test execution support
 - [ ] Test result reporting and metrics
 - [ ] Integration with CI/CD systems
