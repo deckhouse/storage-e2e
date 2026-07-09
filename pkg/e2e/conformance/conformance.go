@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// Package conformance verifies that a cluster provider honours the pkg/e2e
+// Package conformance verifies that a cluster provider honors the pkg/e2e
 // capability contracts (NodeExecutor) against a live cluster. Every provider
 // must pass it — that is what keeps the semantics of the modes (dvp, commander,
 // future ones) from silently diverging.
