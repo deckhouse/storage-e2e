@@ -19,15 +19,32 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 
+	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/logger"
 	"github.com/deckhouse/storage-e2e/pkg/kubernetes"
 )
+
+// moduleImageTagFromEnv returns the per-module image tag override read from the
+// <MODULE>_MODULE_PULL_OVERRIDE env var (the same generic convention config load
+// applies to cluster_config.yml modules; see config.EnvKeyForModulePullOverride),
+// e.g. "sds-local-volume" -> SDS_LOCAL_VOLUME_MODULE_PULL_OVERRIDE. It returns ""
+// when the var is unset, which preserves the caller's default (the module-enable
+// path applies "main" for dev registries), so an unset var is a no-op. Wiring this
+// into the runtime storage-module enable keeps the runtime tag consistent with the
+// bring-up tag: a suite that pins sds-local-volume to a pr<N>/mr<N> image in its
+// cluster_config.yml (via the env var) won't have that image clobbered back to
+// "main" when this helper re-enables the module to provision the StorageClass.
+func moduleImageTagFromEnv(moduleName string) string {
+	return strings.TrimSpace(os.Getenv(config.EnvKeyForModulePullOverride(moduleName)))
+}
 
 // DefaultStorageClassConfig configures CreateDefaultStorageClass behavior.
 type DefaultStorageClassConfig struct {
@@ -176,18 +193,23 @@ func CreateDefaultStorageClass(ctx context.Context, kubeconfig *rest.Config, cfg
 	}
 	logger.Info("Target nodes (%d): %v", len(nodes), nodes)
 
-	// 2. Enable sds-node-configurator and sds-local-volume modules.
+	// 2. Enable sds-node-configurator and sds-local-volume modules. Each module's
+	//    image tag honors its per-module <MODULE>_MODULE_PULL_OVERRIDE env var so a
+	//    runtime re-enable does not clobber a pr<N>/mr<N> image the suite pinned at
+	//    bring-up (an unset var yields "", i.e. the "main" default — a no-op).
 	storageModules := []kubernetes.ModuleSpec{
 		{
-			Name:    "sds-node-configurator",
-			Version: 1,
-			Enabled: true,
+			Name:               "sds-node-configurator",
+			Version:            1,
+			Enabled:            true,
+			ModulePullOverride: moduleImageTagFromEnv("sds-node-configurator"),
 		},
 		{
-			Name:         "sds-local-volume",
-			Version:      1,
-			Enabled:      true,
-			Dependencies: []string{"sds-node-configurator"},
+			Name:               "sds-local-volume",
+			Version:            1,
+			Enabled:            true,
+			ModulePullOverride: moduleImageTagFromEnv("sds-local-volume"),
+			Dependencies:       []string{"sds-node-configurator"},
 		},
 	}
 	if err := kubernetes.EnableModulesAndWait(ctx, kubeconfig, nil, nil, storageModules, 10*time.Minute); err != nil {
