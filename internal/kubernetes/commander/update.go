@@ -82,17 +82,27 @@ func (c *Client) UpdateCluster(ctx context.Context, id string, req UpdateCluster
 func (c *Client) UpdateClusterValues(ctx context.Context, name string, mutate func(values map[string]interface{})) (*ClusterResponse, error) {
 	var lastErr error
 	for attempt := 0; attempt < updateRevisionRetries; attempt++ {
-		cluster, err := c.GetClusterByName(ctx, name)
+		// Resolve the ID by name, then read the full object by ID: the list
+		// endpoint may omit values / cluster_template_version_id, which the PUT
+		// (a wholesale replace) requires.
+		byName, err := c.GetClusterByName(ctx, name)
 		if err != nil {
 			return nil, fmt.Errorf("get cluster %q: %w", name, err)
+		}
+		cluster, err := c.GetClusterByID(ctx, byName.ID)
+		if err != nil {
+			return nil, fmt.Errorf("get cluster %q by id %q: %w", name, byName.ID, err)
 		}
 
 		values := valuesToMap(cluster.Values)
 		mutate(values)
 
 		updated, err := c.UpdateCluster(ctx, cluster.ID, UpdateClusterRequest{
-			CurrentRevision: cluster.CurrentRevision,
-			Values:          values,
+			Name:                     cluster.Name,
+			ClusterTemplateVersionID: cluster.ClusterTemplateVersionID,
+			RegistryID:               cluster.RegistryID,
+			CurrentRevision:          cluster.CurrentRevision,
+			Values:                   values,
 		})
 		if err == nil {
 			return updated, nil

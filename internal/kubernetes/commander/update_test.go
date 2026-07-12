@@ -38,8 +38,10 @@ func TestUpdateCluster(t *testing.T) {
 
 		c := mustClient(t, srv.URL, "tok", ClientOptions{})
 		got, err := c.UpdateCluster(context.Background(), "c1", UpdateClusterRequest{
-			CurrentRevision: 5,
-			Values:          map[string]interface{}{"prefix": "sys", "masterCount": 1},
+			Name:                     "sys",
+			ClusterTemplateVersionID: "tpl-v1",
+			CurrentRevision:          5,
+			Values:                   map[string]interface{}{"prefix": "sys", "masterCount": 1},
 		})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -57,6 +59,11 @@ func TestUpdateCluster(t *testing.T) {
 		var body UpdateClusterRequest
 		if err := json.Unmarshal(r.BodyBytes, &body); err != nil {
 			t.Fatalf("body not JSON: %v (raw=%s)", err, string(r.BodyBytes))
+		}
+		// PUT is a wholesale replace, so the body must carry name + template
+		// version (the API 400s without them), plus revision and values.
+		if body.Name != "sys" || body.ClusterTemplateVersionID != "tpl-v1" {
+			t.Errorf("name/template not forwarded: %+v", body)
 		}
 		if body.CurrentRevision != 5 {
 			t.Errorf("current_revision=%d, want 5", body.CurrentRevision)
@@ -162,7 +169,11 @@ func TestUpdateClusterValues_MergesAndRetriesOnConflict(t *testing.T) {
 		defer mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clusters":
-			_, _ = w.Write([]byte(`[{"id":"c1","name":"sys","current_revision":5,"values":{"prefix":"sys","masterCount":3,"foo":"bar"}}]`))
+			// The list may be partial (no values / template version) — the client
+			// only takes the id from here and reads the full object by id.
+			_, _ = w.Write([]byte(`[{"id":"c1","name":"sys"}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clusters/c1":
+			_, _ = w.Write([]byte(`{"id":"c1","name":"sys","current_revision":5,"cluster_template_version_id":"tpl-v1","values":{"prefix":"sys","masterCount":3,"foo":"bar"}}`))
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/clusters/c1":
 			body, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(body, &lastPut)
@@ -199,6 +210,10 @@ func TestUpdateClusterValues_MergesAndRetriesOnConflict(t *testing.T) {
 	if lastPut.CurrentRevision != 5 {
 		t.Errorf("current_revision=%d, want 5 (re-fetched)", lastPut.CurrentRevision)
 	}
+	// Wholesale replace: name + template version carried through from the by-id read.
+	if lastPut.Name != "sys" || lastPut.ClusterTemplateVersionID != "tpl-v1" {
+		t.Errorf("name/template not carried into PUT: %+v", lastPut)
+	}
 }
 
 func TestSetClusterInputValueAndWait_ApprovesAndConverges(t *testing.T) {
@@ -216,6 +231,8 @@ func TestSetClusterInputValueAndWait_ApprovesAndConverges(t *testing.T) {
 				status = "in_sync"
 			}
 			_, _ = w.Write([]byte(`[{"id":"c1","name":"sys","current_revision":5,"status":"` + status + `","values":{"prefix":"sys","masterCount":3}}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clusters/c1":
+			_, _ = w.Write([]byte(`{"id":"c1","name":"sys","current_revision":5,"cluster_template_version_id":"tpl-v1","values":{"prefix":"sys","masterCount":3}}`))
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/clusters/c1":
 			_, _ = w.Write([]byte(`{"id":"c1","name":"sys","current_revision":6,"status":"updating"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/cluster_change_requests":

@@ -206,15 +206,20 @@ type CreateClusterRequest struct {
 	Values map[string]interface{} `json:"values,omitempty"`
 }
 
-// UpdateClusterRequest is the body of PUT /clusters/:id. CurrentRevision is the
-// optimistic-locking token read from the cluster (GET returns current_revision);
-// a stale value makes the API reject the update so the caller re-fetches and
-// retries. Values is the full desired set of template input values (the caller
-// merges its change onto the cluster's current values before sending).
+// UpdateClusterRequest is the body of PUT /clusters/:id. The PUT replaces the
+// cluster wholesale, so — like the create request — it must carry Name and
+// ClusterTemplateVersionID (the API rejects the update with a 400
+// "name/cluster_template_version_id missing" otherwise), plus CurrentRevision
+// for optimistic locking (a stale value is rejected so the caller re-fetches and
+// retries) and the full desired set of template input Values (the caller merges
+// its change onto the cluster's current values before sending).
 // See: https://deckhouse.io/modules/commander/stable/integration_api.html
 type UpdateClusterRequest struct {
-	CurrentRevision int                    `json:"current_revision"`
-	Values          map[string]interface{} `json:"values"`
+	Name                     string                 `json:"name"`
+	ClusterTemplateVersionID string                 `json:"cluster_template_version_id"`
+	RegistryID               string                 `json:"registry_id,omitempty"`
+	CurrentRevision          int                    `json:"current_revision"`
+	Values                   map[string]interface{} `json:"values"`
 }
 
 // ClusterChangeRequest represents a Commander cluster_change_request: a pending
