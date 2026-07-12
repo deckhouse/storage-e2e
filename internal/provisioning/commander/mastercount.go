@@ -19,6 +19,7 @@ package commander
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -62,5 +63,7 @@ func SetMasterCount(ctx context.Context, masterCount int) error {
 		timeout = 30 * time.Minute
 	}
 
-	return client.SetClusterInputValueAndWait(ctx, conf.ClusterName, masterCountInputKey, masterCount, timeout)
+	// The template's masterCount input is a string enum ("1"/"3"), so send the
+	// value as a string — a JSON number is rejected with a 422 enum mismatch.
+	return client.SetClusterInputValueAndWait(ctx, conf.ClusterName, masterCountInputKey, strconv.Itoa(masterCount), timeout)
 }
