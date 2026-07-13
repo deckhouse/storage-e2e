@@ -8,6 +8,7 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 - [Provider Conformance (pkg/e2e/conformance)](#provider-conformance-pkge2econformance)
 - [Cluster Provider Contracts (pkg/clusterprovider)](#cluster-provider-contracts-pkgclusterprovider)
 - [Cluster](#cluster)
+- [Commander Operations (pkg/commander)](#commander-operations-pkgcommander)
 - [Cluster Lock](#cluster-lock)
 - [VM (Virtual Machine)](#vm-virtual-machine)
 - [Setup / Bootstrap](#setup--bootstrap)
@@ -122,6 +123,14 @@ Contract checks every provider must pass against a live cluster (run explicitly;
 - `GetCommanderResources()` — Returns stored Commander cluster resources.
 - `SetCommanderResources(res)` — Stores Commander cluster resources for later cleanup.
 - `ClearCommanderResources()` — Clears stored Commander cluster resources.
+
+## Commander Operations (pkg/commander)
+
+`pkg/commander/mastercount.go`
+
+Suite-facing operations against the Deckhouse Commander that provisioned the cluster. Env-driven (reuse the `E2E_COMMANDER_*` vars), so callable from both the legacy `pkg/cluster` flow and the [pkg/e2e](#e2e-sdk-pkge2e) SDK.
+
+- `SetMasterCount(ctx, masterCount)` — Changes the Commander cluster's control-plane node count to `masterCount` (1 or 3), approving the disruptive change request Commander raises, and blocks until the cluster converges (`in_sync`). Use for master-count transition tests (e.g. 3→1→3).
 
 ## Cluster Lock
 

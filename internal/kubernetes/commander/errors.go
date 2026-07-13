@@ -30,4 +30,13 @@ var (
 
 	// ErrKubeconfigNotAvailable indicates kubeconfig is not yet available
 	ErrKubeconfigNotAvailable = errors.New("kubeconfig is not available")
+
+	// ErrRevisionConflict indicates a cluster update was rejected because the
+	// current_revision was stale (the cluster changed concurrently); the caller
+	// should re-fetch and retry.
+	ErrRevisionConflict = errors.New("cluster revision conflict")
+
+	// ErrClusterCannotConverge indicates Commander reported the cluster cannot be
+	// converged (a change-request approval returned cluster_cannot_be_converged).
+	ErrClusterCannotConverge = errors.New("cluster cannot be converged")
 )

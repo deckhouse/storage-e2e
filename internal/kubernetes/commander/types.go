@@ -206,6 +206,39 @@ type CreateClusterRequest struct {
 	Values map[string]interface{} `json:"values,omitempty"`
 }
 
+// UpdateClusterRequest is the body of PUT /clusters/:id. The PUT replaces the
+// cluster wholesale, so — like the create request — it must carry Name and
+// ClusterTemplateVersionID (the API rejects the update with a 400
+// "name/cluster_template_version_id missing" otherwise), plus CurrentRevision
+// for optimistic locking (a stale value is rejected so the caller re-fetches and
+// retries) and the full desired set of template input Values (the caller merges
+// its change onto the cluster's current values before sending).
+// See: https://deckhouse.io/modules/commander/stable/integration_api.html
+type UpdateClusterRequest struct {
+	Name                     string                 `json:"name"`
+	ClusterTemplateVersionID string                 `json:"cluster_template_version_id"`
+	RegistryID               string                 `json:"registry_id,omitempty"`
+	CurrentRevision          int                    `json:"current_revision"`
+	Values                   map[string]interface{} `json:"values"`
+}
+
+// ClusterChangeRequest represents a Commander cluster_change_request: a pending
+// change to a cluster (e.g. a disruptive control-plane resize) that must be
+// approved before the cluster converges. The exact schema is not fully
+// documented; only the fields the approval flow needs are modeled.
+type ClusterChangeRequest struct {
+	ID        string `json:"id"`
+	ClusterID string `json:"cluster_id,omitempty"`
+	Status    string `json:"status,omitempty"`
+}
+
+// ClusterChangeRequestListResponse tolerates both a bare array and an
+// items/data-wrapped list (the API is inconsistent, like the cluster list).
+type ClusterChangeRequestListResponse struct {
+	Items []ClusterChangeRequest `json:"items,omitempty"`
+	Data  []ClusterChangeRequest `json:"data,omitempty"`
+}
+
 // ClusterTemplateResponse represents a cluster template from Commander API
 type ClusterTemplateResponse struct {
 	ID                              string                    `json:"id"`
