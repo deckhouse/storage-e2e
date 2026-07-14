@@ -101,6 +101,60 @@ func TestConnectWithProviderAssemblesCluster(t *testing.T) {
 	}
 }
 
+func TestClusterDisksStubReportsUnsupported(t *testing.T) {
+	cleanupRan := false
+	provider := fakeProvider{cluster: validCluster(&cleanupRan)} // Disks left nil
+
+	cluster, err := connectWithProvider(context.Background(), provider, testOptions())
+	if err != nil {
+		t.Fatalf("connectWithProvider: %v", err)
+	}
+	defer cluster.Close(context.Background())
+
+	disks := cluster.Disks()
+	if disks == nil {
+		t.Fatal("Disks() = nil, want the unsupported stub")
+	}
+
+	ctx := context.Background()
+	if _, err := disks.CreateDisk(ctx, DiskSpec{}); !errors.Is(err, ErrDisksUnsupported) {
+		t.Errorf("CreateDisk err = %v, want ErrDisksUnsupported", err)
+	}
+	if err := disks.DeleteDisk(ctx, "d"); !errors.Is(err, ErrDisksUnsupported) {
+		t.Errorf("DeleteDisk err = %v, want ErrDisksUnsupported", err)
+	}
+	if err := disks.AttachDisk(ctx, "n", "d"); !errors.Is(err, ErrDisksUnsupported) {
+		t.Errorf("AttachDisk err = %v, want ErrDisksUnsupported", err)
+	}
+	if err := disks.DetachDisk(ctx, "n", "d"); !errors.Is(err, ErrDisksUnsupported) {
+		t.Errorf("DetachDisk err = %v, want ErrDisksUnsupported", err)
+	}
+}
+
+func TestClusterDisksUsesProviderManager(t *testing.T) {
+	cleanupRan := false
+	conn := validCluster(&cleanupRan)
+	manager := fakeDiskManager{}
+	conn.Disks = manager
+
+	cluster, err := connectWithProvider(context.Background(), fakeProvider{cluster: conn}, testOptions())
+	if err != nil {
+		t.Fatalf("connectWithProvider: %v", err)
+	}
+	defer cluster.Close(context.Background())
+
+	if cluster.Disks() != DiskManager(manager) {
+		t.Error("Disks() did not return the provider-supplied manager")
+	}
+}
+
+type fakeDiskManager struct{}
+
+func (fakeDiskManager) CreateDisk(context.Context, DiskSpec) (*Disk, error) { return &Disk{}, nil }
+func (fakeDiskManager) DeleteDisk(context.Context, string) error            { return nil }
+func (fakeDiskManager) AttachDisk(context.Context, string, string) error    { return nil }
+func (fakeDiskManager) DetachDisk(context.Context, string, string) error    { return nil }
+
 func TestConnectWithProviderRejectsUnsupportedConnect(t *testing.T) {
 	_, err := connectWithProvider(context.Background(), bareProvider{}, testOptions())
 	if !errors.Is(err, ErrConnectUnsupported) {

@@ -82,6 +82,7 @@ storage-e2e/
 │   │       ├── connect_test_cluster.go # Provider.ConnectTestCluster: connect orchestration (base cluster → master → capabilities)
 │   │       ├── vm_ip_resolver.go # vmIPResolver: node name → VM IP on the base cluster
 │   │       ├── node_executor.go # dvpNodeExecutor: SSH command execution on test cluster nodes
+│   │       ├── disks.go         # dvpDiskManager: DiskManager via VirtualDisk/VMBDA on the base cluster
 │   │       ├── deps.go          # DI seam: baseConnector/masterConnector/kubeOps/fleetFactory + remoteExecutor + adapters
 │   │       ├── setupnode.go     # setup-node synthesis (newSetupNode, fixed name) + readiness gating (buildDockerReadyCommand + waitDockerReady)
 │   │       ├── bootstrap.go     # dhctl bootstrap-config rendering (param derivation + render + CIDR calc)
@@ -121,13 +122,14 @@ storage-e2e/
 │   │   ├── provider.go           # Provider (Bootstrap/Remove/ConnectTestCluster) + legacy Connector
 │   │   ├── cluster.go            # Cluster aggregate + ErrConnectUnsupported
 │   │   ├── nodeexec.go           # NodeExecutor contract + ExecResult
+│   │   ├── disks.go              # DiskManager contract + DiskSpec/Disk + ErrDisksUnsupported
 │   │   ├── config.go             # ClusterConfig (E2E_TEST_CLUSTER_PROVIDER, E2E_CLUSTER_CONFIG_YAML_PATH)
 │   │   ├── mode.go               # ProviderMode (dvp | commander)
 │   │   └── registry/             # Provider mode → constructor registry
 │   │
 │   ├── e2e/                      # Test-suite SDK: attach to a provider-managed cluster
 │   │   ├── e2e.go                # Connect (env → registry → ConnectTestCluster → health check → Lease lock) + options
-│   │   ├── cluster.go            # Cluster handle: RESTConfig/Clientset/Dynamic + Nodes() + Close
+│   │   ├── cluster.go            # Cluster handle: RESTConfig/Clientset/Dynamic + Nodes()/Disks() + Close
 │   │   ├── health.go             # Post-connect cluster health check
 │   │   └── conformance/          # Provider conformance checks (run against a live cluster)
 │   │       └── conformance.go    # Verify / VerifyNodeExecutor
@@ -688,12 +690,13 @@ pkg/
 │   ├── provider.go     # Provider (Bootstrap/Remove/ConnectTestCluster) + legacy Connector
 │   ├── cluster.go      # Cluster aggregate + ErrConnectUnsupported
 │   ├── nodeexec.go     # NodeExecutor contract + ExecResult
+│   ├── disks.go        # DiskManager contract + DiskSpec/Disk + ErrDisksUnsupported
 │   ├── config.go       # ClusterConfig from env (E2E_TEST_CLUSTER_PROVIDER, E2E_CLUSTER_CONFIG_YAML_PATH)
 │   ├── mode.go         # ProviderMode (dvp | commander)
 │   └── registry/       # Provider registry (mode → constructor)
 ├── e2e/
 │   ├── e2e.go          # Connect(ctx, opts...) — SDK entry point for suites
-│   ├── cluster.go      # Cluster handle (RESTConfig/Clientset/Dynamic/Nodes/Close)
+│   ├── cluster.go      # Cluster handle (RESTConfig/Clientset/Dynamic/Nodes/Disks/Close)
 │   ├── health.go       # Post-connect health check
 │   └── conformance/    # Provider conformance checks (Verify*)
 ├── kubernetes/
@@ -1072,8 +1075,10 @@ content directly. Inline content is less safe than a path (it sits in
 
 - [x] Support for existing cluster reuse (`alwaysUseExisting` mode)
 - [x] Deckhouse Commander integration (`commander` mode)
-- [x] Provider SDK (`pkg/e2e`): unified `Cluster` handle with capability strategies (`NodeExecutor`)
-  supplied by the provider; legacy `pkg/cluster` deprecated
+- [x] Provider SDK (`pkg/e2e`): unified `Cluster` handle with capability strategies (`NodeExecutor`,
+  `DiskManager`) supplied by the provider; legacy `pkg/cluster` deprecated
+- [ ] `DiskManager` for the Commander provider (template change + convergence); DVP-only for now,
+  Commander gets the `ErrDisksUnsupported` stub
 - [ ] Parallel test execution support
 - [ ] Test result reporting and metrics
 - [ ] Integration with CI/CD systems

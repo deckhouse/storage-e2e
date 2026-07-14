@@ -60,6 +60,9 @@ func newCluster(provider clusterprovider.Provider, conn *clusterprovider.Cluster
 	if conn.Cleanup == nil {
 		conn.Cleanup = func() {}
 	}
+	if conn.Disks == nil {
+		conn.Disks = unsupportedDiskManager{provider: provider.Name()}
+	}
 	return &Cluster{provider: provider, conn: conn}, nil
 }
 
@@ -88,6 +91,32 @@ func (c *Cluster) Dynamic() (dynamic.Interface, error) {
 
 // Nodes returns the provider's node command executor.
 func (c *Cluster) Nodes() NodeExecutor { return c.conn.Nodes }
+
+// Disks returns the provider's disk manager. When the provider does not
+// support disk management (e.g. commander, for now) every operation on the
+// returned manager fails with ErrDisksUnsupported.
+func (c *Cluster) Disks() DiskManager { return c.conn.Disks }
+
+// unsupportedDiskManager is substituted when a provider leaves Disks nil.
+type unsupportedDiskManager struct {
+	provider string
+}
+
+var _ clusterprovider.DiskManager = unsupportedDiskManager{}
+
+func (u unsupportedDiskManager) err() error {
+	return fmt.Errorf("provider %q: %w", u.provider, clusterprovider.ErrDisksUnsupported)
+}
+
+func (u unsupportedDiskManager) CreateDisk(context.Context, DiskSpec) (*Disk, error) {
+	return nil, u.err()
+}
+
+func (u unsupportedDiskManager) DeleteDisk(context.Context, string) error { return u.err() }
+
+func (u unsupportedDiskManager) AttachDisk(context.Context, string, string) error { return u.err() }
+
+func (u unsupportedDiskManager) DetachDisk(context.Context, string, string) error { return u.err() }
 
 // Close releases everything the run holds on the cluster: the cluster lock
 // (when acquired by Connect) and the provider connection (SSH clients,

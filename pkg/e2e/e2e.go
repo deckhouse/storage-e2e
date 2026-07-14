@@ -27,6 +27,7 @@
 //	defer cl.Close(context.Background())
 //
 //	res, err := cl.Nodes().Exec(ctx, "worker-0", "lsblk -J")
+//	err = cl.Disks().AttachDisk(ctx, "worker-0", "extra-disk")
 //
 // Provider-neutral Kubernetes helpers from pkg/kubernetes and fixtures from
 // pkg/testkit keep working as-is via cl.RESTConfig().
@@ -57,11 +58,21 @@ type (
 	NodeExecutor = clusterprovider.NodeExecutor
 	// ExecResult is the outcome of a node command.
 	ExecResult = clusterprovider.ExecResult
+	// DiskManager manages additional block devices on cluster nodes.
+	DiskManager = clusterprovider.DiskManager
+	// DiskSpec describes the disk to create via DiskManager.CreateDisk.
+	DiskSpec = clusterprovider.DiskSpec
+	// Disk describes a provider-managed additional disk.
+	Disk = clusterprovider.Disk
 )
 
 // ErrConnectUnsupported is returned by Connect when the selected provider's
 // ConnectTestCluster reports that it cannot attach test runs to its cluster.
 var ErrConnectUnsupported = clusterprovider.ErrConnectUnsupported
+
+// ErrDisksUnsupported is returned by DiskManager operations when the selected
+// provider does not support disk management.
+var ErrDisksUnsupported = clusterprovider.ErrDisksUnsupported
 
 const (
 	defaultHealthCheckTimeout = 10 * time.Minute
