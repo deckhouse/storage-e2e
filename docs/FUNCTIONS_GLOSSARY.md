@@ -82,6 +82,9 @@ Contract checks every provider must pass against a live cluster (run explicitly;
   `*Report`; picks the first worker node when `cfg.NodeName` is empty.
 - `VerifyNodeExecutor(ctx, nodes, nodeName)` — Checks the `NodeExecutor` contract: stdout/stderr captured separately,
   non-zero exit codes reported without error, passwordless sudo available.
+- `VerifyDiskManager(ctx, cluster, nodeName)` — Checks the `DiskManager` contract with a full disk lifecycle: create,
+  attach (a new block device must appear in the node's `lsblk`), detach (it must disappear), delete. A provider without
+  disk support passes as long as every operation consistently reports `ErrDisksUnsupported`.
 - `(*Report) Err()` — Joins the errors of all failed checks (nil when everything passed).
 
 ## Cluster Provider Contracts (pkg/clusterprovider)

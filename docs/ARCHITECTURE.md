@@ -132,7 +132,7 @@ storage-e2e/
 │   │   ├── cluster.go            # Cluster handle: RESTConfig/Clientset/Dynamic + Nodes()/Disks() + Close
 │   │   ├── health.go             # Post-connect cluster health check
 │   │   └── conformance/          # Provider conformance checks (run against a live cluster)
-│   │       └── conformance.go    # Verify / VerifyNodeExecutor
+│   │       └── conformance.go    # Verify / VerifyNodeExecutor / VerifyDiskManager
 │   │
 │   ├── kubernetes/               # Public Kubernetes utilities
 │   │   ├── apply.go              # YAML manifest application

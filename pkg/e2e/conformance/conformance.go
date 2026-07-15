@@ -15,9 +15,9 @@
  */
 
 // Package conformance verifies that a cluster provider honors the pkg/e2e
-// capability contracts (NodeExecutor) against a live cluster. Every provider
-// must pass it — that is what keeps the semantics of the modes (dvp, commander,
-// future ones) from silently diverging.
+// capability contracts (NodeExecutor, DiskManager) against a live cluster.
+// Every provider must pass it — that is what keeps the semantics of the modes
+// (dvp, commander, future ones) from silently diverging.
 //
 // It runs against real infrastructure, so it is invoked explicitly, e.g. from
 // a dedicated suite or a plain test:
@@ -33,8 +33,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/deckhouse/storage-e2e/pkg/e2e"
 )
@@ -88,6 +91,7 @@ func Verify(ctx context.Context, cluster *e2e.Cluster, cfg Config) *Report {
 	}
 
 	record("node executor", VerifyNodeExecutor(ctx, cluster.Nodes(), nodeName))
+	record("disk manager", VerifyDiskManager(ctx, cluster, nodeName))
 	return report
 }
 
@@ -126,6 +130,117 @@ func VerifyNodeExecutor(ctx context.Context, nodes e2e.NodeExecutor, nodeName st
 			res.ExitCode, strings.TrimSpace(string(res.Stderr)))
 	}
 	return nil
+}
+
+// devicePollInterval paces the node-side lsblk checks after attach/detach:
+// the DiskManager already waits for the attachment state, this only absorbs
+// the guest OS noticing the hotplug.
+const devicePollInterval = 5 * time.Second
+
+// VerifyDiskManager checks the DiskManager contract on the given node with a
+// full disk lifecycle: create, attach (a new block device must appear in the
+// node's lsblk), detach (the device must disappear), delete. A provider that
+// does not support disk management passes too, as long as every operation
+// consistently reports ErrDisksUnsupported.
+func VerifyDiskManager(ctx context.Context, cluster *e2e.Cluster, nodeName string) error {
+	disks := cluster.Disks()
+	diskName := fmt.Sprintf("conformance-disk-%s", rand.String(5))
+
+	disk, err := disks.CreateDisk(ctx, e2e.DiskSpec{Name: diskName, Size: resource.MustParse("1Gi")})
+	if errors.Is(err, e2e.ErrDisksUnsupported) {
+		return verifyDisksUnsupportedStub(ctx, disks)
+	}
+	if err != nil {
+		return fmt.Errorf("create disk: %w", err)
+	}
+	// Best-effort teardown for whatever the checks below leave behind.
+	defer func() {
+		cleanupCtx := context.WithoutCancel(ctx)
+		_ = disks.DetachDisk(cleanupCtx, nodeName, diskName)
+		_ = disks.DeleteDisk(cleanupCtx, diskName)
+	}()
+	if disk.Name != diskName {
+		return fmt.Errorf("created disk name mismatch: got %q, want %q", disk.Name, diskName)
+	}
+
+	before, err := blockDeviceNames(ctx, cluster.Nodes(), nodeName)
+	if err != nil {
+		return fmt.Errorf("list node block devices: %w", err)
+	}
+
+	if err := disks.AttachDisk(ctx, nodeName, diskName); err != nil {
+		return fmt.Errorf("attach disk: %w", err)
+	}
+	if err := waitDeviceCount(ctx, cluster.Nodes(), nodeName, len(before)+1); err != nil {
+		return fmt.Errorf("after attach: %w", err)
+	}
+
+	if err := disks.DetachDisk(ctx, nodeName, diskName); err != nil {
+		return fmt.Errorf("detach disk: %w", err)
+	}
+	if err := waitDeviceCount(ctx, cluster.Nodes(), nodeName, len(before)); err != nil {
+		return fmt.Errorf("after detach: %w", err)
+	}
+
+	if err := disks.DeleteDisk(ctx, diskName); err != nil {
+		return fmt.Errorf("delete disk: %w", err)
+	}
+	return nil
+}
+
+// verifyDisksUnsupportedStub checks that a provider without disk support
+// reports ErrDisksUnsupported from every operation, not just CreateDisk.
+func verifyDisksUnsupportedStub(ctx context.Context, disks e2e.DiskManager) error {
+	if err := disks.DeleteDisk(ctx, "conformance-none"); !errors.Is(err, e2e.ErrDisksUnsupported) {
+		return fmt.Errorf("DeleteDisk on an unsupported provider: got %v, want ErrDisksUnsupported", err)
+	}
+	if err := disks.AttachDisk(ctx, "conformance-none", "conformance-none"); !errors.Is(err, e2e.ErrDisksUnsupported) {
+		return fmt.Errorf("AttachDisk on an unsupported provider: got %v, want ErrDisksUnsupported", err)
+	}
+	if err := disks.DetachDisk(ctx, "conformance-none", "conformance-none"); !errors.Is(err, e2e.ErrDisksUnsupported) {
+		return fmt.Errorf("DetachDisk on an unsupported provider: got %v, want ErrDisksUnsupported", err)
+	}
+	return nil
+}
+
+// blockDeviceNames returns the names of the node's whole block devices
+// (lsblk TYPE=disk, partitions excluded).
+func blockDeviceNames(ctx context.Context, nodes e2e.NodeExecutor, nodeName string) ([]string, error) {
+	res, err := nodes.Exec(ctx, nodeName, "lsblk -dno NAME,TYPE")
+	if err != nil {
+		return nil, err
+	}
+	if res.ExitCode != 0 {
+		return nil, fmt.Errorf("lsblk exit %d: %s", res.ExitCode, strings.TrimSpace(string(res.Stderr)))
+	}
+	var names []string
+	for line := range strings.Lines(string(res.Stdout)) {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == "disk" {
+			names = append(names, fields[0])
+		}
+	}
+	return names, nil
+}
+
+func waitDeviceCount(ctx context.Context, nodes e2e.NodeExecutor, nodeName string, want int) error {
+	ticker := time.NewTicker(devicePollInterval)
+	defer ticker.Stop()
+
+	var got []string
+	for {
+		var err error
+		got, err = blockDeviceNames(ctx, nodes, nodeName)
+		if err == nil && len(got) == want {
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("node reports %d block devices %v, want %d: %w", len(got), got, want, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func pickWorkerNode(ctx context.Context, cluster *e2e.Cluster) (string, error) {
