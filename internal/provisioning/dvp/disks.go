@@ -140,9 +140,26 @@ func (m *dvpDiskManager) AttachDisk(ctx context.Context, nodeName, diskName stri
 		},
 	}
 
-	// AlreadyExists makes a retried attach converge on the same attachment.
-	if err := m.virt.CreateVMBDA(ctx, vmbda); err != nil && !apierrors.IsAlreadyExists(err) {
-		return fmt.Errorf("create VirtualMachineBlockDeviceAttachment %s/%s: %w", m.namespace, name, err)
+	// AlreadyExists makes a retried attach converge on the same attachment —
+	// but only after verifying the existing object actually binds this disk
+	// to this VM. Blindly adopting a leftover with a colliding name would
+	// report a successful attach that never happened on this node.
+	if err := m.virt.CreateVMBDA(ctx, vmbda); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("create VirtualMachineBlockDeviceAttachment %s/%s: %w", m.namespace, name, err)
+		}
+		existing, getErr := m.virt.GetVMBDA(ctx, m.namespace, name)
+		if getErr != nil {
+			return fmt.Errorf("get existing VirtualMachineBlockDeviceAttachment %s/%s: %w", m.namespace, name, getErr)
+		}
+		if existing.Spec.VirtualMachineName != nodeName ||
+			existing.Spec.BlockDeviceRef.Kind != v1alpha2.VMBDAObjectRefKindVirtualDisk ||
+			existing.Spec.BlockDeviceRef.Name != diskName {
+			return fmt.Errorf("attachment %s/%s already exists but binds %s %q to VM %q, not %s %q to VM %q",
+				m.namespace, name,
+				existing.Spec.BlockDeviceRef.Kind, existing.Spec.BlockDeviceRef.Name, existing.Spec.VirtualMachineName,
+				v1alpha2.VMBDAObjectRefKindVirtualDisk, diskName, nodeName)
+		}
 	}
 
 	return pollObject(ctx, m.pollInterval, fmt.Sprintf("attachment %s/%s attached", m.namespace, name),

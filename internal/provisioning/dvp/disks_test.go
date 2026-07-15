@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
 
@@ -251,6 +252,37 @@ func TestAttachDiskFailsOnFailedPhase(t *testing.T) {
 	err := m.AttachDisk(context.Background(), "worker-0", "extra-disk")
 	if err == nil || !strings.Contains(err.Error(), "Failed") {
 		t.Fatalf("AttachDisk() error = %v, want Failed-phase error", err)
+	}
+}
+
+func TestAttachDiskRejectsForeignAttachmentWithSameName(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeVirt()
+	m := newTestDiskManager(fake)
+
+	// A leftover VMBDA with the colliding name binds a different disk to a
+	// different VM; AttachDisk must refuse to adopt it.
+	foreign := &v1alpha2.VirtualMachineBlockDeviceAttachment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "extra-disk-worker-0",
+			Namespace: testDisksNamespace,
+		},
+		Spec: v1alpha2.VirtualMachineBlockDeviceAttachmentSpec{
+			VirtualMachineName: "other-vm",
+			BlockDeviceRef: v1alpha2.VMBDAObjectRef{
+				Kind: v1alpha2.VMBDAObjectRefKindVirtualDisk,
+				Name: "other-disk",
+			},
+		},
+	}
+	if err := fake.CreateVMBDA(context.Background(), foreign); err != nil {
+		t.Fatalf("seed foreign VMBDA: %v", err)
+	}
+
+	err := m.AttachDisk(context.Background(), "worker-0", "extra-disk")
+	if err == nil || !strings.Contains(err.Error(), "already exists but binds") {
+		t.Fatalf("AttachDisk() error = %v, want foreign-attachment rejection", err)
 	}
 }
 

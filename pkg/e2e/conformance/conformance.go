@@ -32,6 +32,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -137,13 +138,20 @@ func VerifyNodeExecutor(ctx context.Context, nodes e2e.NodeExecutor, nodeName st
 // the guest OS noticing the hotplug.
 const devicePollInterval = 5 * time.Second
 
+const cleanupTimeout = 5 * time.Minute
+
 // VerifyDiskManager checks the DiskManager contract on the given node with a
 // full disk lifecycle: create, attach (a new block device must appear in the
 // node's lsblk), detach (the device must disappear), delete. A provider that
 // does not support disk management passes too, as long as every operation
 // consistently reports ErrDisksUnsupported.
 func VerifyDiskManager(ctx context.Context, cluster *e2e.Cluster, nodeName string) error {
-	disks := cluster.Disks()
+	return verifyDiskLifecycle(ctx, cluster.Disks(), cluster.Nodes(), nodeName)
+}
+
+// verifyDiskLifecycle is the testable core of VerifyDiskManager: it depends
+// only on the capability contracts, so unit tests drive it with fakes.
+func verifyDiskLifecycle(ctx context.Context, disks e2e.DiskManager, nodes e2e.NodeExecutor, nodeName string) error {
 	diskName := fmt.Sprintf("conformance-disk-%s", rand.String(5))
 
 	disk, err := disks.CreateDisk(ctx, e2e.DiskSpec{Name: diskName, Size: resource.MustParse("1Gi")})
@@ -155,7 +163,8 @@ func VerifyDiskManager(ctx context.Context, cluster *e2e.Cluster, nodeName strin
 	}
 	// Best-effort teardown for whatever the checks below leave behind.
 	defer func() {
-		cleanupCtx := context.WithoutCancel(ctx)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+		defer cancel()
 		_ = disks.DetachDisk(cleanupCtx, nodeName, diskName)
 		_ = disks.DeleteDisk(cleanupCtx, diskName)
 	}()
@@ -163,7 +172,7 @@ func VerifyDiskManager(ctx context.Context, cluster *e2e.Cluster, nodeName strin
 		return fmt.Errorf("created disk name mismatch: got %q, want %q", disk.Name, diskName)
 	}
 
-	before, err := blockDeviceNames(ctx, cluster.Nodes(), nodeName)
+	before, err := blockDeviceNames(ctx, nodes, nodeName)
 	if err != nil {
 		return fmt.Errorf("list node block devices: %w", err)
 	}
@@ -171,14 +180,15 @@ func VerifyDiskManager(ctx context.Context, cluster *e2e.Cluster, nodeName strin
 	if err := disks.AttachDisk(ctx, nodeName, diskName); err != nil {
 		return fmt.Errorf("attach disk: %w", err)
 	}
-	if err := waitDeviceCount(ctx, cluster.Nodes(), nodeName, len(before)+1); err != nil {
+	device, err := waitNewBlockDevice(ctx, nodes, nodeName, before)
+	if err != nil {
 		return fmt.Errorf("after attach: %w", err)
 	}
 
 	if err := disks.DetachDisk(ctx, nodeName, diskName); err != nil {
 		return fmt.Errorf("detach disk: %w", err)
 	}
-	if err := waitDeviceCount(ctx, cluster.Nodes(), nodeName, len(before)); err != nil {
+	if err := waitBlockDeviceGone(ctx, nodes, nodeName, device); err != nil {
 		return fmt.Errorf("after detach: %w", err)
 	}
 
@@ -223,21 +233,69 @@ func blockDeviceNames(ctx context.Context, nodes e2e.NodeExecutor, nodeName stri
 	return names, nil
 }
 
-func waitDeviceCount(ctx context.Context, nodes e2e.NodeExecutor, nodeName string, want int) error {
+// waitNewBlockDevice polls the node until exactly one block device beyond the
+// before snapshot shows up and returns its name. Identifying the device by
+// name (rather than comparing counts) keeps the check meaningful when other
+// disk activity happens on the node concurrently — and lets the detach check
+// wait for this specific device to disappear. More than one new device is an
+// unattributable state and fails immediately.
+func waitNewBlockDevice(ctx context.Context, nodes e2e.NodeExecutor, nodeName string, before []string) (string, error) {
 	ticker := time.NewTicker(devicePollInterval)
 	defer ticker.Stop()
 
-	var got []string
+	var lastErr error
 	for {
-		var err error
-		got, err = blockDeviceNames(ctx, nodes, nodeName)
-		if err == nil && len(got) == want {
+		got, err := blockDeviceNames(ctx, nodes, nodeName)
+		if err != nil {
+			lastErr = err
+		} else {
+			var extra []string
+			for _, name := range got {
+				if !slices.Contains(before, name) {
+					extra = append(extra, name)
+				}
+			}
+			switch len(extra) {
+			case 0:
+				// keep polling
+			case 1:
+				return extra[0], nil
+			default:
+				return "", fmt.Errorf("%d new block devices appeared %v, cannot attribute the attached disk", len(extra), extra)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return "", fmt.Errorf("waiting for a new block device: %w (last error: %w)", ctx.Err(), lastErr)
+			}
+			return "", fmt.Errorf("no new block device appeared (before: %v): %w", before, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// waitBlockDeviceGone polls the node until the named block device disappears.
+func waitBlockDeviceGone(ctx context.Context, nodes e2e.NodeExecutor, nodeName, device string) error {
+	ticker := time.NewTicker(devicePollInterval)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		got, err := blockDeviceNames(ctx, nodes, nodeName)
+		if err != nil {
+			lastErr = err
+		} else if !slices.Contains(got, device) {
 			return nil
 		}
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("node reports %d block devices %v, want %d: %w", len(got), got, want, ctx.Err())
+			if lastErr != nil {
+				return fmt.Errorf("waiting for block device %q to disappear: %w (last error: %w)", device, ctx.Err(), lastErr)
+			}
+			return fmt.Errorf("block device %q still present: %w", device, ctx.Err())
 		case <-ticker.C:
 		}
 	}
