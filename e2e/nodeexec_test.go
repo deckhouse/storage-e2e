@@ -17,7 +17,6 @@ limitations under the License.
 package e2e
 
 import (
-	"os"
 	"strings"
 	"time"
 
@@ -30,15 +29,11 @@ import (
 // error, and passwordless sudo is available on the node.
 var _ = Describe("Node executor", func() {
 	It("honors the exec contract on a worker node", Label("nodes"), func(ctx SpecContext) {
-		if os.Getenv("E2E_TEST_CLUSTER_PROVIDER") == "" {
-			Skip("E2E_TEST_CLUSTER_PROVIDER is not set — no provisioned cluster to attach to")
-		}
-
 		cl, nodeName := connectAndPickWorker(ctx, "storage-e2e-node-executor")
 		nodes := cl.Nodes()
 
 		By("capturing stdout and stderr separately")
-		res, err := nodes.Exec(ctx, nodeName, "echo -n e2e-stdout; echo -n e2e-stderr 1>&2")
+		res, err := nodes.Exec(ctx, nodeName, "printf '%s' e2e-stdout; printf '%s' e2e-stderr 1>&2")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(res.Stdout)).To(Equal("e2e-stdout"))
 		Expect(string(res.Stderr)).To(Equal("e2e-stderr"))

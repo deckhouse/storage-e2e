@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -64,10 +63,6 @@ func blockDeviceNames(ctx context.Context, nodes e2esdk.NodeExecutor, nodeName s
 // ErrDisksUnsupported).
 var _ = Describe("Disk management", func() {
 	It("runs the full disk lifecycle on a worker node", Label("disks"), func(ctx SpecContext) {
-		if os.Getenv("E2E_TEST_CLUSTER_PROVIDER") == "" {
-			Skip("E2E_TEST_CLUSTER_PROVIDER is not set — no provisioned cluster to attach to")
-		}
-
 		cl, nodeName := connectAndPickWorker(ctx, "storage-e2e-disk-lifecycle")
 		disks := cl.Disks()
 		nodes := cl.Nodes()
@@ -113,10 +108,6 @@ var _ = Describe("Disk management", func() {
 	}, SpecTimeout(45*time.Minute))
 
 	It("converges when attaching an already attached disk", Label("disks"), func(ctx SpecContext) {
-		if os.Getenv("E2E_TEST_CLUSTER_PROVIDER") == "" {
-			Skip("E2E_TEST_CLUSTER_PROVIDER is not set — no provisioned cluster to attach to")
-		}
-
 		cl, nodeName := connectAndPickWorker(ctx, "storage-e2e-disk-attach-idempotent")
 
 		disks := cl.Disks()

@@ -17,6 +17,8 @@ limitations under the License.
 package e2e
 
 import (
+	"os"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -25,9 +27,14 @@ import (
 )
 
 // connectAndPickWorker attaches to the provisioned cluster, registers its
-// cleanup, and returns the first worker node to exercise the checks on.
+// cleanup, and returns the first worker node to exercise the checks on. Specs
+// that need a live cluster are skipped when no provider was provisioned.
 func connectAndPickWorker(ctx SpecContext, testName string) (*e2esdk.Cluster, string) {
 	GinkgoHelper()
+
+	if os.Getenv("E2E_TEST_CLUSTER_PROVIDER") == "" {
+		Skip("E2E_TEST_CLUSTER_PROVIDER is not set — no provisioned cluster to attach to")
+	}
 
 	cl, err := e2esdk.Connect(ctx, e2esdk.WithTestName(testName))
 	Expect(err).NotTo(HaveOccurred(), "e2e.Connect should attach to the provisioned cluster")
