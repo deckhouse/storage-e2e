@@ -130,9 +130,7 @@ storage-e2e/
 │   ├── e2e/                      # Test-suite SDK: attach to a provider-managed cluster
 │   │   ├── e2e.go                # Connect (env → registry → ConnectTestCluster → health check → Lease lock) + options
 │   │   ├── cluster.go            # Cluster handle: RESTConfig/Clientset/Dynamic + Nodes()/Disks() + Close
-│   │   ├── health.go             # Post-connect cluster health check
-│   │   └── conformance/          # Provider conformance checks (run against a live cluster)
-│   │       └── conformance.go    # Verify / VerifyNodeExecutor / VerifyDiskManager
+│   │   └── health.go             # Post-connect cluster health check
 │   │
 │   ├── kubernetes/               # Public Kubernetes utilities
 │   │   ├── apply.go              # YAML manifest application
@@ -697,8 +695,7 @@ pkg/
 ├── e2e/
 │   ├── e2e.go          # Connect(ctx, opts...) — SDK entry point for suites
 │   ├── cluster.go      # Cluster handle (RESTConfig/Clientset/Dynamic/Nodes/Disks/Close)
-│   ├── health.go       # Post-connect health check
-│   └── conformance/    # Provider conformance checks (Verify*)
+│   └── health.go       # Post-connect health check
 ├── kubernetes/
 │   ├── apply.go                 # YAML manifest application
 │   ├── blockdevice.go           # BlockDevice operations

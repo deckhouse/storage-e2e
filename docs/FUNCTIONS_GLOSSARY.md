@@ -5,7 +5,6 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 ## Table of Contents
 
 - [E2E SDK (pkg/e2e)](#e2e-sdk-pkge2e)
-- [Provider Conformance (pkg/e2e/conformance)](#provider-conformance-pkge2econformance)
 - [Cluster Provider Contracts (pkg/clusterprovider)](#cluster-provider-contracts-pkgclusterprovider)
 - [Cluster](#cluster)
 - [Commander Operations (pkg/commander)](#commander-operations-pkgcommander)
@@ -71,21 +70,6 @@ use provider-supplied capability strategies without mode-specific branching.
 Type aliases `NodeExecutor`, `ExecResult`, `DiskManager`, `DiskSpec`, `Disk` re-export the contracts from
 `pkg/clusterprovider` so suites only need the `e2e` import; `ErrDisksUnsupported` is re-exported as
 `e2e.ErrDisksUnsupported`.
-
-## Provider Conformance (pkg/e2e/conformance)
-
-`pkg/e2e/conformance/conformance.go`
-
-Contract checks every provider must pass against a live cluster (run explicitly; they exercise real infrastructure).
-
-- `Verify(ctx, cluster, cfg)` — Runs all conformance checks against a connected `*e2e.Cluster` and returns a per-check
-  `*Report`; picks the first worker node when `cfg.NodeName` is empty.
-- `VerifyNodeExecutor(ctx, nodes, nodeName)` — Checks the `NodeExecutor` contract: stdout/stderr captured separately,
-  non-zero exit codes reported without error, passwordless sudo available.
-- `VerifyDiskManager(ctx, cluster, nodeName)` — Checks the `DiskManager` contract with a full disk lifecycle: create,
-  attach (a new block device must appear in the node's `lsblk`), detach (it must disappear), delete. A provider without
-  disk support passes as long as every operation consistently reports `ErrDisksUnsupported`.
-- `(*Report) Err()` — Joins the errors of all failed checks (nil when everything passed).
 
 ## Cluster Provider Contracts (pkg/clusterprovider)
 

@@ -96,8 +96,8 @@ func WithTestName(name string) Option {
 }
 
 // WithoutLock skips acquiring the cluster lock. Use only for runs that are
-// known to have exclusive access to the cluster (e.g. conformance checks
-// against a scratch cluster).
+// known to have exclusive access to the cluster (e.g. checks against a
+// scratch cluster).
 func WithoutLock() Option {
 	return func(o *connectOptions) { o.acquireLock = false }
 }

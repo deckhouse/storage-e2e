@@ -102,8 +102,7 @@ func TestConnectWithProviderAssemblesCluster(t *testing.T) {
 }
 
 func TestClusterDisksStubReportsUnsupported(t *testing.T) {
-	cleanupRan := false
-	provider := fakeProvider{cluster: validCluster(&cleanupRan)} // Disks left nil
+	provider := fakeProvider{cluster: validCluster(new(false))} // Disks left nil
 
 	cluster, err := connectWithProvider(context.Background(), provider, testOptions())
 	if err != nil {
@@ -132,8 +131,7 @@ func TestClusterDisksStubReportsUnsupported(t *testing.T) {
 }
 
 func TestClusterDisksUsesProviderManager(t *testing.T) {
-	cleanupRan := false
-	conn := validCluster(&cleanupRan)
+	conn := validCluster(new(false))
 	manager := fakeDiskManager{}
 	conn.Disks = manager
 
