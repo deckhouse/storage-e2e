@@ -177,7 +177,7 @@ func verifyDiskLifecycle(ctx context.Context, disks e2e.DiskManager, nodes e2e.N
 		return fmt.Errorf("list node block devices: %w", err)
 	}
 
-	if err := disks.AttachDisk(ctx, nodeName, diskName); err != nil {
+	if err = disks.AttachDisk(ctx, nodeName, diskName); err != nil {
 		return fmt.Errorf("attach disk: %w", err)
 	}
 	device, err := waitNewBlockDevice(ctx, nodes, nodeName, before)
@@ -185,14 +185,14 @@ func verifyDiskLifecycle(ctx context.Context, disks e2e.DiskManager, nodes e2e.N
 		return fmt.Errorf("after attach: %w", err)
 	}
 
-	if err := disks.DetachDisk(ctx, nodeName, diskName); err != nil {
+	if err = disks.DetachDisk(ctx, nodeName, diskName); err != nil {
 		return fmt.Errorf("detach disk: %w", err)
 	}
-	if err := waitBlockDeviceGone(ctx, nodes, nodeName, device); err != nil {
+	if err = waitBlockDeviceGone(ctx, nodes, nodeName, device); err != nil {
 		return fmt.Errorf("after detach: %w", err)
 	}
 
-	if err := disks.DeleteDisk(ctx, diskName); err != nil {
+	if err = disks.DeleteDisk(ctx, diskName); err != nil {
 		return fmt.Errorf("delete disk: %w", err)
 	}
 	return nil
@@ -202,13 +202,13 @@ func verifyDiskLifecycle(ctx context.Context, disks e2e.DiskManager, nodes e2e.N
 // reports ErrDisksUnsupported from every operation, not just CreateDisk.
 func verifyDisksUnsupportedStub(ctx context.Context, disks e2e.DiskManager) error {
 	if err := disks.DeleteDisk(ctx, "conformance-none"); !errors.Is(err, e2e.ErrDisksUnsupported) {
-		return fmt.Errorf("DeleteDisk on an unsupported provider: got %v, want ErrDisksUnsupported", err)
+		return fmt.Errorf("DeleteDisk on an unsupported provider: got %w, want ErrDisksUnsupported", err)
 	}
 	if err := disks.AttachDisk(ctx, "conformance-none", "conformance-none"); !errors.Is(err, e2e.ErrDisksUnsupported) {
-		return fmt.Errorf("AttachDisk on an unsupported provider: got %v, want ErrDisksUnsupported", err)
+		return fmt.Errorf("AttachDisk on an unsupported provider: got %w, want ErrDisksUnsupported", err)
 	}
 	if err := disks.DetachDisk(ctx, "conformance-none", "conformance-none"); !errors.Is(err, e2e.ErrDisksUnsupported) {
-		return fmt.Errorf("DetachDisk on an unsupported provider: got %v, want ErrDisksUnsupported", err)
+		return fmt.Errorf("DetachDisk on an unsupported provider: got %w, want ErrDisksUnsupported", err)
 	}
 	return nil
 }

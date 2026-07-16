@@ -44,7 +44,7 @@ const liveStepTimeout = 10 * time.Minute
 
 // liveConnect attaches the test to the provider-managed cluster and picks the
 // first worker node, skipping the test when no live cluster is configured.
-func liveConnect(t *testing.T, testName string) (*e2e.Cluster, string) {
+func liveConnect(t *testing.T, testName string) (cl *e2e.Cluster, nodeName string) {
 	t.Helper()
 
 	if os.Getenv("E2E_TEST_CLUSTER_PROVIDER") == "" {
@@ -104,8 +104,8 @@ func TestLiveDiskAttachIsIdempotent(t *testing.T) {
 		t.Fatalf("CreateDisk: %v", err)
 	}
 	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), liveStepTimeout)
-		defer cancel()
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), liveStepTimeout)
+		defer cleanupCancel()
 		_ = disks.DetachDisk(cleanupCtx, nodeName, diskName)
 		_ = disks.DeleteDisk(cleanupCtx, diskName)
 	})

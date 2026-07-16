@@ -59,7 +59,6 @@ func (m *dvpDiskManager) CreateDisk(ctx context.Context, spec clusterprovider.Di
 		storageClass = m.defaultStorageClass
 	}
 
-	size := spec.Size
 	vd := &v1alpha2.VirtualDisk{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      spec.Name,
@@ -68,7 +67,7 @@ func (m *dvpDiskManager) CreateDisk(ctx context.Context, spec clusterprovider.Di
 		},
 		Spec: v1alpha2.VirtualDiskSpec{
 			PersistentVolumeClaim: v1alpha2.VirtualDiskPersistentVolumeClaim{
-				Size: &size,
+				Size: new(spec.Size),
 			},
 		},
 	}
@@ -88,7 +87,9 @@ func (m *dvpDiskManager) CreateDisk(ctx context.Context, spec clusterprovider.Di
 		},
 		func(got *v1alpha2.VirtualDisk, getErr error) (bool, error) {
 			if getErr != nil {
-				return false, nil
+				// Transient Get errors are retried; pollObject records getErr as
+				// lastErr and surfaces it if ctx is done before a Get succeeds.
+				return false, nil //nolint:nilerr // intentional retry, see comment above
 			}
 			observed = got
 			switch got.Status.Phase {
@@ -168,7 +169,9 @@ func (m *dvpDiskManager) AttachDisk(ctx context.Context, nodeName, diskName stri
 		},
 		func(got *v1alpha2.VirtualMachineBlockDeviceAttachment, getErr error) (bool, error) {
 			if getErr != nil {
-				return false, nil
+				// Transient Get errors are retried; pollObject records getErr as
+				// lastErr and surfaces it if ctx is done before a Get succeeds.
+				return false, nil //nolint:nilerr // intentional retry, see comment above
 			}
 			switch got.Status.Phase {
 			case v1alpha2.BlockDeviceAttachmentPhaseAttached:
