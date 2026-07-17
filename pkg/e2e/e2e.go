@@ -164,12 +164,7 @@ func connectWithProvider(ctx context.Context, provider clusterprovider.Provider,
 	}
 
 	if o.healthCheck {
-		cs, csErr := cluster.Clientset()
-		if csErr != nil {
-			conn.Cleanup()
-			return nil, fmt.Errorf("create clientset: %w", csErr)
-		}
-		if err := waitClusterHealthy(ctx, cs, o.healthCheckTimeout); err != nil {
+		if err := waitClusterHealthy(ctx, cluster.Clientset(), o.healthCheckTimeout); err != nil {
 			conn.Cleanup()
 			return nil, fmt.Errorf("cluster health check: %w", err)
 		}

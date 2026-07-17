@@ -59,8 +59,8 @@ use provider-supplied capability strategies without mode-specific branching.
 - `(*Cluster) ProviderName()` — Reports which provider manages the cluster (`dvp`, `commander`).
 - `(*Cluster) RESTConfig()` — Returns the `*rest.Config` pointed at the test cluster's API server; pass to
   `pkg/kubernetes` / `pkg/testkit` helpers.
-- `(*Cluster) Clientset()` — Returns a cached typed Kubernetes client.
-- `(*Cluster) Dynamic()` — Returns a cached dynamic Kubernetes client.
+- `(*Cluster) Clientset()` — Returns the cached typed Kubernetes client (built eagerly by `Connect`; never fails).
+- `(*Cluster) Dynamic()` — Returns the cached dynamic Kubernetes client (built eagerly by `Connect`; never fails).
 - `(*Cluster) Nodes()` — Returns the provider's `NodeExecutor` (run commands on cluster nodes).
 - `(*Cluster) Disks()` — Returns the provider's `DiskManager` (create/delete/attach/detach additional node disks).
   When the provider does not support disk management (commander, for now), every operation on the returned manager

@@ -30,20 +30,20 @@ import (
 )
 
 // Cluster is the test run's handle to a provider-managed cluster. It bundles
-// the API access (rest.Config plus lazily-built cached clients) with the
+// the API access (rest.Config plus ready-built cached clients) with the
 // provider-specific capability strategies (node command execution). Obtain it
 // with Connect and release it with Close.
+//
+// Invariant: a Cluster returned by Connect always carries valid, ready-to-use
+// clients — client construction failures fail Connect itself. Keep any future
+// client that is expensive to build (network calls, API discovery) out of this
+// eager set and expose it through a lazy, error-returning accessor instead.
 type Cluster struct {
 	provider clusterprovider.Provider
 	conn     *clusterprovider.Cluster
 
-	clientsetOnce sync.Once
-	clientset     kubernetes.Interface
-	clientsetErr  error
-
-	dynamicOnce sync.Once
-	dynamic     dynamic.Interface
-	dynamicErr  error
+	clientset kubernetes.Interface
+	dynamic   dynamic.Interface
 
 	lock      *clusterlock.LeaseLock
 	closeOnce sync.Once
@@ -63,7 +63,20 @@ func newCluster(provider clusterprovider.Provider, conn *clusterprovider.Cluster
 	if conn.Disks == nil {
 		conn.Disks = unsupportedDiskManager{provider: provider.Name()}
 	}
-	return &Cluster{provider: provider, conn: conn}, nil
+	clientset, err := kubernetes.NewForConfig(conn.RESTConfig)
+	if err != nil {
+		return nil, fmt.Errorf("provider %q: build clientset: %w", provider.Name(), err)
+	}
+	dynamicClient, err := dynamic.NewForConfig(conn.RESTConfig)
+	if err != nil {
+		return nil, fmt.Errorf("provider %q: build dynamic client: %w", provider.Name(), err)
+	}
+	return &Cluster{
+		provider:  provider,
+		conn:      conn,
+		clientset: clientset,
+		dynamic:   dynamicClient,
+	}, nil
 }
 
 // ProviderName reports which provider manages the cluster ("dvp", "commander").
@@ -73,21 +86,13 @@ func (c *Cluster) ProviderName() string { return c.provider.Name() }
 // Pass it to the provider-neutral helpers in pkg/kubernetes and pkg/testkit.
 func (c *Cluster) RESTConfig() *rest.Config { return c.conn.RESTConfig }
 
-// Clientset returns a cached typed Kubernetes client for the test cluster.
-func (c *Cluster) Clientset() (kubernetes.Interface, error) {
-	c.clientsetOnce.Do(func() {
-		c.clientset, c.clientsetErr = kubernetes.NewForConfig(c.conn.RESTConfig)
-	})
-	return c.clientset, c.clientsetErr
-}
+// Clientset returns the cached typed Kubernetes client for the test cluster.
+// The client is built eagerly by Connect, which fails when construction fails.
+func (c *Cluster) Clientset() kubernetes.Interface { return c.clientset }
 
-// Dynamic returns a cached dynamic Kubernetes client for the test cluster.
-func (c *Cluster) Dynamic() (dynamic.Interface, error) {
-	c.dynamicOnce.Do(func() {
-		c.dynamic, c.dynamicErr = dynamic.NewForConfig(c.conn.RESTConfig)
-	})
-	return c.dynamic, c.dynamicErr
-}
+// Dynamic returns the cached dynamic Kubernetes client for the test cluster.
+// The client is built eagerly by Connect, which fails when construction fails.
+func (c *Cluster) Dynamic() dynamic.Interface { return c.dynamic }
 
 // Nodes returns the provider's node command executor.
 func (c *Cluster) Nodes() NodeExecutor { return c.conn.Nodes }
