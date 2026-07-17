@@ -28,13 +28,22 @@ import (
 )
 
 // virtClient is the narrow virtualization surface the DVP connect path needs:
-// the vmIPResolver reads VirtualMachines. It is a flat interface (not
+// the vmIPResolver reads VirtualMachines and dvpDiskManager manages
+// VirtualDisks and their attachments. It is a flat interface (not
 // accessor-based) because Go method sets are invariant — the concrete
 // *virtualization.Client returns concrete sub-clients that would not satisfy an
 // accessor-returning interface — so it is bridged by virtClientAdapter and
 // faked directly in tests. This mirrors the vm.Client seam.
 type virtClient interface {
 	GetVirtualMachine(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachine, error)
+
+	GetVirtualDisk(ctx context.Context, namespace, name string) (*v1alpha2.VirtualDisk, error)
+	CreateVirtualDisk(ctx context.Context, vd *v1alpha2.VirtualDisk) error
+	DeleteVirtualDisk(ctx context.Context, namespace, name string) error
+
+	GetVMBDA(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachineBlockDeviceAttachment, error)
+	CreateVMBDA(ctx context.Context, vmbda *v1alpha2.VirtualMachineBlockDeviceAttachment) error
+	DeleteVMBDA(ctx context.Context, namespace, name string) error
 }
 
 // virtFactory builds a virtClient for a base-cluster rest.Config. Routing it
@@ -53,6 +62,30 @@ func newVirtClient(c *virtualization.Client) virtClient { return virtClientAdapt
 
 func (a virtClientAdapter) GetVirtualMachine(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachine, error) {
 	return a.c.VirtualMachines().Get(ctx, namespace, name)
+}
+
+func (a virtClientAdapter) GetVirtualDisk(ctx context.Context, namespace, name string) (*v1alpha2.VirtualDisk, error) {
+	return a.c.VirtualDisks().Get(ctx, namespace, name)
+}
+
+func (a virtClientAdapter) CreateVirtualDisk(ctx context.Context, vd *v1alpha2.VirtualDisk) error {
+	return a.c.VirtualDisks().Create(ctx, vd)
+}
+
+func (a virtClientAdapter) DeleteVirtualDisk(ctx context.Context, namespace, name string) error {
+	return a.c.VirtualDisks().Delete(ctx, namespace, name)
+}
+
+func (a virtClientAdapter) GetVMBDA(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachineBlockDeviceAttachment, error) {
+	return a.c.VirtualMachineBlockDeviceAttachments().Get(ctx, namespace, name)
+}
+
+func (a virtClientAdapter) CreateVMBDA(ctx context.Context, vmbda *v1alpha2.VirtualMachineBlockDeviceAttachment) error {
+	return a.c.VirtualMachineBlockDeviceAttachments().Create(ctx, vmbda)
+}
+
+func (a virtClientAdapter) DeleteVMBDA(ctx context.Context, namespace, name string) error {
+	return a.c.VirtualMachineBlockDeviceAttachments().Delete(ctx, namespace, name)
 }
 
 // defaultVirtFactory builds a real virtClient over the base cluster.

@@ -5,7 +5,6 @@ All exported functions available in the `pkg/` directory, grouped by resource.
 ## Table of Contents
 
 - [E2E SDK (pkg/e2e)](#e2e-sdk-pkge2e)
-- [Provider Conformance (pkg/e2e/conformance)](#provider-conformance-pkge2econformance)
 - [Cluster Provider Contracts (pkg/clusterprovider)](#cluster-provider-contracts-pkgclusterprovider)
 - [Cluster](#cluster)
 - [Commander Operations (pkg/commander)](#commander-operations-pkgcommander)
@@ -63,27 +62,19 @@ use provider-supplied capability strategies without mode-specific branching.
 - `(*Cluster) Clientset()` — Returns a cached typed Kubernetes client.
 - `(*Cluster) Dynamic()` — Returns a cached dynamic Kubernetes client.
 - `(*Cluster) Nodes()` — Returns the provider's `NodeExecutor` (run commands on cluster nodes).
+- `(*Cluster) Disks()` — Returns the provider's `DiskManager` (create/delete/attach/detach additional node disks).
+  When the provider does not support disk management (commander, for now), every operation on the returned manager
+  fails with `ErrDisksUnsupported`.
 - `(*Cluster) Close(ctx)` — Releases the cluster lock and the provider connection (SSH clients, tunnels). Idempotent.
 
-Type aliases `NodeExecutor`, `ExecResult` re-export the contracts from `pkg/clusterprovider` so suites only need the
-`e2e` import.
-
-## Provider Conformance (pkg/e2e/conformance)
-
-`pkg/e2e/conformance/conformance.go`
-
-Contract checks every provider must pass against a live cluster (run explicitly; they exercise real infrastructure).
-
-- `Verify(ctx, cluster, cfg)` — Runs all conformance checks against a connected `*e2e.Cluster` and returns a per-check
-  `*Report`; picks the first worker node when `cfg.NodeName` is empty.
-- `VerifyNodeExecutor(ctx, nodes, nodeName)` — Checks the `NodeExecutor` contract: stdout/stderr captured separately,
-  non-zero exit codes reported without error, passwordless sudo available.
-- `(*Report) Err()` — Joins the errors of all failed checks (nil when everything passed).
+Type aliases `NodeExecutor`, `ExecResult`, `DiskManager`, `DiskSpec`, `Disk` re-export the contracts from
+`pkg/clusterprovider` so suites only need the `e2e` import; `ErrDisksUnsupported` is re-exported as
+`e2e.ErrDisksUnsupported`.
 
 ## Cluster Provider Contracts (pkg/clusterprovider)
 
-`pkg/clusterprovider/provider.go`, `pkg/clusterprovider/cluster.go`, `pkg/clusterprovider/config.go`,
-`pkg/clusterprovider/mode.go`
+`pkg/clusterprovider/provider.go`, `pkg/clusterprovider/cluster.go`, `pkg/clusterprovider/disks.go`,
+`pkg/clusterprovider/config.go`, `pkg/clusterprovider/mode.go`
 
 - `Provider` (interface: `Name`, `Bootstrap`, `Remove`, `ConnectTestCluster`) — Provisions and removes a test cluster
   for a specific backend (`cmd/bootstrap-cluster` / `cmd/remove-cluster`) and attaches test runs to it:
@@ -95,6 +86,18 @@ Contract checks every provider must pass against a live cluster (run explicitly;
   by `Provider.ConnectTestCluster` for the SDK path.
 - `NodeExecutor` (interface: `Exec(ctx, nodeName, command)`) — Runs commands on cluster nodes; a completed command with
   a non-zero exit code is not an error (exit code is in `ExecResult.ExitCode`).
+- `DiskManager` (interface: `CreateDisk`, `DeleteDisk`, `AttachDisk`, `DetachDisk`) — Manages additional block devices
+  on cluster nodes; all operations block until the target state is reached (deadline via ctx). DVP implements it with
+  `VirtualDisk`/`VirtualMachineBlockDeviceAttachment` resources on the base cluster; providers that do not support it
+  leave `Cluster.Disks` nil and the `e2e` facade substitutes an `ErrDisksUnsupported` stub. Encapsulates the
+  provider/base-cluster choice that the lower-level `AttachVirtualDiskToVM`/`DetachAndDeleteVirtualDisk` helpers in
+  `pkg/kubernetes` leave to the caller.
+- `DiskSpec` (struct: `Name`, `Size`, `StorageClass`) — Input for `DiskManager.CreateDisk`; empty `StorageClass` means
+  the provider default.
+- `Disk` (struct: `Name`, `Size`, `StorageClass`, `Phase`) — Provider-managed disk description returned by
+  `DiskManager.CreateDisk`.
+- `ErrDisksUnsupported` — Sentinel returned by `DiskManager` operations when the provider does not support disk
+  management; re-exported as `e2e.ErrDisksUnsupported`.
 - `NewClusterConfig()` — Reads the provider-agnostic settings (`E2E_TEST_CLUSTER_PROVIDER`,
   `E2E_CLUSTER_CONFIG_YAML_PATH`) from the environment.
 

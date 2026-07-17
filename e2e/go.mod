@@ -13,6 +13,21 @@ require (
 // to the checked-out storage-e2e ref (see .github/scripts/e2e-run-tests.sh).
 replace github.com/deckhouse/storage-e2e => ../
 
+// Same stubs as in the root go.mod: the deckhouse monorepo's go.mod requires
+// these submodules at versions that do not exist in any proxy (they are wired
+// via in-tree replace directives inside the monorepo). Replace directives are
+// only honored from the main module, so they must be repeated here for IDE
+// indexing and `go list -m all` to work in this module.
+replace (
+	github.com/deckhouse/deckhouse/dhctl => ../hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/egress-gateway-agent => ../hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/go_lib/cloud-data => ../hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/go_lib/configtools/conversion => ../hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/go_lib/dependency/k8s/drain => ../hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/go_lib/dependency/vsphere => ../hack/deckhouse-stub
+	github.com/deckhouse/deckhouse/go_lib/registry => ../hack/deckhouse-stub
+)
+
 require (
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/caarlos0/env/v11 v11.4.1 // indirect
