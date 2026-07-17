@@ -83,6 +83,12 @@ func TestConnectWithProviderAssemblesCluster(t *testing.T) {
 	if cluster.Nodes() == nil {
 		t.Error("capability strategies are nil")
 	}
+	if cluster.Clientset() == nil {
+		t.Error("Clientset is nil — Connect must build it eagerly")
+	}
+	if cluster.Dynamic() == nil {
+		t.Error("Dynamic is nil — Connect must build it eagerly")
+	}
 
 	if err := cluster.Close(context.Background()); err != nil {
 		t.Fatalf("Close: %v", err)

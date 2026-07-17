@@ -45,10 +45,7 @@ var _ = Describe("SDK Connect", func() {
 
 		GinkgoWriter.Printf("connected via provider %q\n", cl.ProviderName())
 
-		cs, err := cl.Clientset()
-		Expect(err).NotTo(HaveOccurred())
-
-		nodes, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		nodes, err := cl.Clientset().CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nodes.Items).NotTo(BeEmpty(), "the test cluster should report its nodes")
 
