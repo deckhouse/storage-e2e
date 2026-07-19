@@ -473,9 +473,11 @@ func createVM(ctx context.Context, virtClient *virtualization.Client, namespace 
 			return fmt.Errorf("failed to get SSH public key content: %w", err)
 		}
 
-		// Use setup node cloud-init (with Docker) for bootstrap nodes, regular for others
+		// Use setup node cloud-init (with Docker) for the bootstrap node, regular for others.
+		// The setup VM is named "<DefaultSetupVM.Hostname><unix-ts>" (see CreateVirtualMachines),
+		// i.e. "bootstrap-node<ts>" with NO separator — match that exact prefix, not "bootstrap-node-".
 		var cloudInitData string
-		if strings.HasPrefix(vmName, "bootstrap-node-") {
+		if strings.HasPrefix(vmName, "bootstrap-node") {
 			cloudInitData = generateSetupNodeCloudInit(vmName, sshPublicKey)
 		} else {
 			cloudInitData = generateCloudInitUserData(vmName, sshPublicKey)
@@ -735,7 +737,7 @@ func RemoveAllVMs(ctx context.Context, resources *VMResources) error {
 }
 
 // GetSetupNode returns the setup VM node from ClusterDefinition.
-// The setup node is always a separate VM with a unique name (bootstrap-node-<suffix>).
+// The setup node is always a separate VM with a unique name (bootstrap-node<unix-ts>).
 // Note: clusterDef.Setup.Hostname must be set to the generated VM name (done by GatherVMInfo)
 func GetSetupNode(clusterDef *config.ClusterDefinition) (*config.ClusterNode, error) {
 	if clusterDef == nil {

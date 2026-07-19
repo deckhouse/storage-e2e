@@ -19,6 +19,6 @@ This repository is imported as a library by other repos. Breaking the public API
 ## Rules
 
 1. **Always ask the user** before making any change that could break backward compatibility. Phrase it clearly: "This renames/removes an exported symbol — existing importers will break. Proceed?"
-2. If the user confirms, **add `[Possible compatibility break]`** to the worklog entry in `docs/WORKLOG.md` for that change.
+2. If the user confirms, **note `[Possible compatibility break]`** in the commit message / PR description for that change.
 3. Prefer **adding new symbols** alongside old ones (deprecate, don't delete) when possible.
 4. When renaming, add a comment into code with the old name and link to the new one, like this `// Deprecated: renamed to NewName.`
