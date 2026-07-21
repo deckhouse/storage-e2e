@@ -212,6 +212,172 @@ func TestDeleteDiskIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestResizeDiskGrowsAndWaits(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeVirt()
+	fake.onCreateDisk = func(vd *v1alpha2.VirtualDisk) {
+		vd.Status.Phase = v1alpha2.DiskReady
+	}
+	// A resize converges when the disk reports the new capacity while Ready.
+	fake.onUpdateDisk = func(vd *v1alpha2.VirtualDisk) {
+		vd.Status.Phase = v1alpha2.DiskReady
+		if vd.Spec.PersistentVolumeClaim.Size != nil {
+			vd.Status.Capacity = vd.Spec.PersistentVolumeClaim.Size.String()
+		}
+	}
+	m := newTestDiskManager(fake)
+
+	if _, err := m.CreateDisk(context.Background(), clusterprovider.DiskSpec{
+		Name: "grow-disk",
+		Size: resource.MustParse("10Gi"),
+	}); err != nil {
+		t.Fatalf("CreateDisk() error = %v", err)
+	}
+
+	newSize := resource.MustParse("20Gi")
+	if err := m.ResizeDisk(context.Background(), "grow-disk", newSize); err != nil {
+		t.Fatalf("ResizeDisk() error = %v", err)
+	}
+
+	stored := fake.disks[fvKey(testDisksNamespace, "grow-disk")]
+	if stored == nil {
+		t.Fatal("VirtualDisk missing after resize")
+	}
+	if stored.Spec.PersistentVolumeClaim.Size == nil {
+		t.Fatal("resized VirtualDisk has nil Spec size")
+	}
+	if got := *stored.Spec.PersistentVolumeClaim.Size; got.Cmp(newSize) != 0 {
+		t.Errorf("resized Spec size = %s, want %s", got.String(), newSize.String())
+	}
+}
+
+func TestResizeDiskRejectsShrink(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeVirt()
+	fake.onCreateDisk = func(vd *v1alpha2.VirtualDisk) {
+		vd.Status.Phase = v1alpha2.DiskReady
+	}
+	m := newTestDiskManager(fake)
+
+	if _, err := m.CreateDisk(context.Background(), clusterprovider.DiskSpec{
+		Name: "shrink-disk",
+		Size: resource.MustParse("10Gi"),
+	}); err != nil {
+		t.Fatalf("CreateDisk() error = %v", err)
+	}
+
+	err := m.ResizeDisk(context.Background(), "shrink-disk", resource.MustParse("5Gi"))
+	if err == nil || !strings.Contains(err.Error(), "shrink") {
+		t.Fatalf("ResizeDisk() error = %v, want shrink rejection", err)
+	}
+	// A rejected shrink must not touch the stored disk.
+	stored := fake.disks[fvKey(testDisksNamespace, "shrink-disk")]
+	if got := *stored.Spec.PersistentVolumeClaim.Size; got.Cmp(resource.MustParse("10Gi")) != 0 {
+		t.Errorf("Spec size after rejected shrink = %s, want 10Gi", got.String())
+	}
+}
+
+func TestResizeDiskEqualSizeIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeVirt()
+	fake.onCreateDisk = func(vd *v1alpha2.VirtualDisk) {
+		vd.Status.Phase = v1alpha2.DiskReady
+	}
+	fake.onUpdateDisk = func(*v1alpha2.VirtualDisk) {
+		t.Error("UpdateVirtualDisk must not be called for an equal-size resize")
+	}
+	m := newTestDiskManager(fake)
+
+	if _, err := m.CreateDisk(context.Background(), clusterprovider.DiskSpec{
+		Name: "same-disk",
+		Size: resource.MustParse("10Gi"),
+	}); err != nil {
+		t.Fatalf("CreateDisk() error = %v", err)
+	}
+
+	if err := m.ResizeDisk(context.Background(), "same-disk", resource.MustParse("10Gi")); err != nil {
+		t.Fatalf("ResizeDisk() equal size error = %v, want nil (no-op)", err)
+	}
+}
+
+func TestResizeDiskFailsOnNotFound(t *testing.T) {
+	t.Parallel()
+
+	m := newTestDiskManager(newFakeVirt())
+
+	err := m.ResizeDisk(context.Background(), "ghost-disk", resource.MustParse("10Gi"))
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("ResizeDisk() error = %v, want not-found error", err)
+	}
+}
+
+func TestResizeDiskValidatesSize(t *testing.T) {
+	t.Parallel()
+
+	m := newTestDiskManager(newFakeVirt())
+
+	if err := m.ResizeDisk(context.Background(), "d", resource.Quantity{}); err == nil {
+		t.Error("ResizeDisk() with zero size: want error")
+	}
+}
+
+func TestResizeDiskFailsOnFailedPhase(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeVirt()
+	fake.onCreateDisk = func(vd *v1alpha2.VirtualDisk) {
+		vd.Status.Phase = v1alpha2.DiskReady
+	}
+	fake.onUpdateDisk = func(vd *v1alpha2.VirtualDisk) {
+		vd.Status.Phase = v1alpha2.DiskFailed
+	}
+	m := newTestDiskManager(fake)
+
+	if _, err := m.CreateDisk(context.Background(), clusterprovider.DiskSpec{
+		Name: "bad-resize",
+		Size: resource.MustParse("10Gi"),
+	}); err != nil {
+		t.Fatalf("CreateDisk() error = %v", err)
+	}
+
+	err := m.ResizeDisk(context.Background(), "bad-resize", resource.MustParse("20Gi"))
+	if err == nil || !strings.Contains(err.Error(), "Failed") {
+		t.Fatalf("ResizeDisk() error = %v, want Failed-phase error", err)
+	}
+}
+
+func TestResizeDiskTimesOutWhileResizing(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeVirt()
+	fake.onCreateDisk = func(vd *v1alpha2.VirtualDisk) {
+		vd.Status.Phase = v1alpha2.DiskReady
+	}
+	// The disk stays in Resizing and never reports the new capacity.
+	fake.onUpdateDisk = func(vd *v1alpha2.VirtualDisk) {
+		vd.Status.Phase = v1alpha2.DiskResizing
+	}
+	m := newTestDiskManager(fake)
+
+	if _, err := m.CreateDisk(context.Background(), clusterprovider.DiskSpec{
+		Name: "stuck-disk",
+		Size: resource.MustParse("10Gi"),
+	}); err != nil {
+		t.Fatalf("CreateDisk() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	err := m.ResizeDisk(ctx, "stuck-disk", resource.MustParse("20Gi"))
+	if err == nil || !strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("ResizeDisk() error = %v, want context deadline error", err)
+	}
+}
+
 func TestAttachDiskCreatesAttachmentAndWaits(t *testing.T) {
 	t.Parallel()
 

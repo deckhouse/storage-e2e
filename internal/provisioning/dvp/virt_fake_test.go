@@ -38,11 +38,13 @@ type fakeVirt struct {
 	// Hooks run under the lock right after a successful create; tests use
 	// them to set the status a controller would converge to.
 	onCreateDisk  func(vd *v1alpha2.VirtualDisk)
+	onUpdateDisk  func(vd *v1alpha2.VirtualDisk)
 	onCreateVMBDA func(vmbda *v1alpha2.VirtualMachineBlockDeviceAttachment)
 
 	// Injected errors (nil = success).
 	getVMErr       error
 	createDiskErr  error
+	updateDiskErr  error
 	deleteDiskErr  error
 	createVMBDAErr error
 	deleteVMBDAErr error
@@ -109,6 +111,24 @@ func (f *fakeVirt) CreateVirtualDisk(_ context.Context, vd *v1alpha2.VirtualDisk
 	stored := vd.DeepCopy()
 	if f.onCreateDisk != nil {
 		f.onCreateDisk(stored)
+	}
+	f.disks[key] = stored
+	return nil
+}
+
+func (f *fakeVirt) UpdateVirtualDisk(_ context.Context, vd *v1alpha2.VirtualDisk) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.updateDiskErr != nil {
+		return f.updateDiskErr
+	}
+	key := fvKey(vd.Namespace, vd.Name)
+	if _, ok := f.disks[key]; !ok {
+		return fvNotFound("virtualdisks", vd.Name)
+	}
+	stored := vd.DeepCopy()
+	if f.onUpdateDisk != nil {
+		f.onUpdateDisk(stored)
 	}
 	f.disks[key] = stored
 	return nil

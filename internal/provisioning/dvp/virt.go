@@ -39,6 +39,7 @@ type virtClient interface {
 
 	GetVirtualDisk(ctx context.Context, namespace, name string) (*v1alpha2.VirtualDisk, error)
 	CreateVirtualDisk(ctx context.Context, vd *v1alpha2.VirtualDisk) error
+	UpdateVirtualDisk(ctx context.Context, vd *v1alpha2.VirtualDisk) error
 	DeleteVirtualDisk(ctx context.Context, namespace, name string) error
 
 	GetVMBDA(ctx context.Context, namespace, name string) (*v1alpha2.VirtualMachineBlockDeviceAttachment, error)
@@ -70,6 +71,10 @@ func (a virtClientAdapter) GetVirtualDisk(ctx context.Context, namespace, name s
 
 func (a virtClientAdapter) CreateVirtualDisk(ctx context.Context, vd *v1alpha2.VirtualDisk) error {
 	return a.c.VirtualDisks().Create(ctx, vd)
+}
+
+func (a virtClientAdapter) UpdateVirtualDisk(ctx context.Context, vd *v1alpha2.VirtualDisk) error {
+	return a.c.VirtualDisks().Update(ctx, vd)
 }
 
 func (a virtClientAdapter) DeleteVirtualDisk(ctx context.Context, namespace, name string) error {
