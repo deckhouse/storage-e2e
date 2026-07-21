@@ -121,7 +121,13 @@ func (c *dvpConnector) Connect(ctx context.Context) (*rest.Config, func(), error
 		}
 	}
 
-	sshClient, err := c.buildSSHClient(ctx)
+	// The SSH client and tunnel must outlive this call — callers time-box Connect
+	// with a context they cancel once it returns, so binding the persistent
+	// connection to ctx would drop it immediately (later requests fail with
+	// "connection refused"). Detach their lifetime from ctx; the dial/retry is
+	// still bounded by the client's own timeout, and runCleanups tears them down.
+	tunnelCtx := context.WithoutCancel(ctx)
+	sshClient, err := c.buildSSHClient(tunnelCtx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating ssh client: %w", err)
 	}
@@ -131,7 +137,7 @@ func (c *dvpConnector) Connect(ctx context.Context) (*rest.Config, func(), error
 		}
 	})
 
-	restConfig, closeTunnel, err := kubeaccess.TunnelRestConfig(ctx, sshClient, c.creds.Kubeconfig, apiServerRemotePort)
+	restConfig, closeTunnel, err := kubeaccess.TunnelRestConfig(tunnelCtx, sshClient, c.creds.Kubeconfig, apiServerRemotePort)
 	if err != nil {
 		runCleanups()
 		return nil, nil, err
@@ -195,7 +201,14 @@ func (c *dvpConnector) connectToMaster(ctx context.Context, masterIP string) (*r
 		return nil, nil, fmt.Errorf("fetching kubeconfig from master %s: %w", masterIP, fetchErr)
 	}
 
-	localAddr, closeTunnel, err := c.openTunnelToVM(ctx, masterIP, apiServerRemotePort)
+	// The API tunnel must outlive this call: callers time-box Connect with a
+	// context they cancel as soon as it returns (e.g.
+	// cluster.CreateOrConnectToTestCluster does `defer cancel()`). Binding the
+	// persistent tunnel to that ctx would tear it down immediately after connect,
+	// so every later request to the local tunnel address fails with
+	// "connection refused". Detach the tunnel's lifetime from ctx (ctx still
+	// scopes the dial/retry); the returned cleanup closes it.
+	localAddr, closeTunnel, err := c.openTunnelToVM(context.WithoutCancel(ctx), masterIP, apiServerRemotePort)
 	if err != nil {
 		return nil, nil, err
 	}

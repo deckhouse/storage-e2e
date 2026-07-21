@@ -52,3 +52,16 @@ type Provider interface {
 type Connector interface {
 	Connect(ctx context.Context) (*rest.Config, func(), error)
 }
+
+// BaseConnector is an optional Provider capability for providers whose test
+// cluster is itself hosted on a separate base/infrastructure cluster (for
+// example dvp: the nested cluster's node VMs live on a DVP base cluster). Suites
+// that must manipulate that base cluster — e.g. attach/detach the VirtualDisks
+// that back node disks — use the returned rest.Config, which the suite surfaces
+// as TestClusterResources.BaseKubeconfig. The returned cleanup releases the base
+// connection (SSH tunnel + client) and MUST be called once the run no longer
+// needs it; implementations must keep it alive until then regardless of the ctx
+// passed to ConnectBase.
+type BaseConnector interface {
+	ConnectBase(ctx context.Context) (*rest.Config, func(), error)
+}

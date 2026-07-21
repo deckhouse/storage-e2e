@@ -48,6 +48,15 @@ type masterConnector interface {
 	connectToMaster(ctx context.Context, masterIP string) (*rest.Config, func(), error)
 }
 
+// masterResolver looks up the running master VM's internal IP on the base
+// cluster. Connect needs it because a fresh run-tests process (separate from the
+// bootstrap process) only has the static cluster_config.yml, which carries
+// hostnames but no dynamically assigned VM IPs. Kept as its own seam so Connect
+// stays unit testable without a live virtualization API.
+type masterResolver interface {
+	resolveMasterIP(ctx context.Context, baseKube *rest.Config, namespace, hostname string) (string, error)
+}
+
 type kubeOps interface {
 	CheckReachable(ctx context.Context, kube *rest.Config) error
 	WaitModuleReady(ctx context.Context, kube *rest.Config, module string, timeout time.Duration) error
@@ -67,6 +76,7 @@ type fleetFactory interface {
 type deps struct {
 	connector    baseConnector
 	masterConn   masterConnector
+	resolver     masterResolver
 	kube         kubeOps
 	fleet        fleetFactory
 	virt         virtFactory

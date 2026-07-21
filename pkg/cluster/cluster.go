@@ -1027,6 +1027,31 @@ func connectViaProvider(ctx context.Context) (resources *TestClusterResources, h
 	}
 	logger.StepComplete(3, "Cluster is healthy")
 
+	// Optionally attach to the base/infrastructure cluster (e.g. dvp: the DVP
+	// cluster hosting the node VMs). Suites use res.BaseKubeconfig to manipulate
+	// the VirtualDisks that back node disks. The base teardown is chained into the
+	// standard cleanup path so no bespoke wiring is needed downstream.
+	if baseConn, ok := provider.(clusterprovider.BaseConnector); ok {
+		logger.Step(4, "Connecting to the %s base cluster", cfg.ClusterProvider)
+		baseCfg, baseCleanup, baseErr := baseConn.ConnectBase(ctx)
+		if baseErr != nil {
+			_ = ReleaseClusterLock(ctx, restConfig)
+			cleanup()
+			return nil, true, fmt.Errorf("connect to base cluster via %s provider: %w", cfg.ClusterProvider, baseErr)
+		}
+		configureExtendedTimeouts(baseCfg)
+		res.BaseKubeconfig = baseCfg
+		prevStop := res.TunnelInfo.StopFunc
+		res.TunnelInfo.StopFunc = func() error {
+			baseCleanup()
+			if prevStop != nil {
+				return prevStop()
+			}
+			return nil
+		}
+		logger.StepComplete(4, "Connected to the base cluster")
+	}
+
 	providerConnected = true
 	logger.Success("Connected to the %s cluster", cfg.ClusterProvider)
 	return res, true, nil
