@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"sync"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -122,6 +123,10 @@ func (u unsupportedDiskManager) DeleteDisk(context.Context, string) error { retu
 func (u unsupportedDiskManager) AttachDisk(context.Context, string, string) error { return u.err() }
 
 func (u unsupportedDiskManager) DetachDisk(context.Context, string, string) error { return u.err() }
+
+func (u unsupportedDiskManager) ResizeDisk(context.Context, string, resource.Quantity) error {
+	return u.err()
+}
 
 // Close releases everything the run holds on the cluster: the cluster lock
 // (when acquired by Connect) and the provider connection (SSH clients,

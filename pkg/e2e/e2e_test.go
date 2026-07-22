@@ -21,6 +21,7 @@ import (
 	"errors"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/rest"
 
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
@@ -158,6 +159,9 @@ func (fakeDiskManager) CreateDisk(context.Context, DiskSpec) (*Disk, error) { re
 func (fakeDiskManager) DeleteDisk(context.Context, string) error            { return nil }
 func (fakeDiskManager) AttachDisk(context.Context, string, string) error    { return nil }
 func (fakeDiskManager) DetachDisk(context.Context, string, string) error    { return nil }
+func (fakeDiskManager) ResizeDisk(context.Context, string, resource.Quantity) error {
+	return nil
+}
 
 func TestConnectWithProviderRejectsUnsupportedConnect(t *testing.T) {
 	_, err := connectWithProvider(context.Background(), bareProvider{}, testOptions())

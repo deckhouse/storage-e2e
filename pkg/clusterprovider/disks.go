@@ -58,4 +58,10 @@ type DiskManager interface {
 	AttachDisk(ctx context.Context, nodeName, diskName string) error
 	// DetachDisk removes the attachment; the disk itself is kept.
 	DetachDisk(ctx context.Context, nodeName, diskName string) error
+	// ResizeDisk grows an existing disk to newSize and blocks until the disk
+	// reports the new capacity. Only growth is supported: the underlying PVC
+	// expansion cannot shrink a volume, so a newSize smaller than the current
+	// size is rejected; a newSize equal to the current size is a no-op success.
+	// Bound the wait via ctx.
+	ResizeDisk(ctx context.Context, diskName string, newSize resource.Quantity) error
 }

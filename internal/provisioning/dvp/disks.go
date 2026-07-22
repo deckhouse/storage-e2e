@@ -25,6 +25,7 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/deckhouse/virtualization/api/core/v1alpha2"
@@ -197,6 +198,85 @@ func (m *dvpDiskManager) DetachDisk(ctx context.Context, nodeName, diskName stri
 		func(_ *v1alpha2.VirtualMachineBlockDeviceAttachment, getErr error) (bool, error) {
 			return apierrors.IsNotFound(getErr), nil
 		})
+}
+
+func (m *dvpDiskManager) ResizeDisk(ctx context.Context, diskName string, newSize resource.Quantity) error {
+	if diskName == "" {
+		return fmt.Errorf("resize disk: name is required")
+	}
+	if newSize.Sign() <= 0 {
+		return fmt.Errorf("resize disk %q: size must be greater than 0, got %s", diskName, newSize.String())
+	}
+
+	vd, err := m.virt.GetVirtualDisk(ctx, m.namespace, diskName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("resize disk %q: VirtualDisk %s/%s not found: %w", diskName, m.namespace, diskName, err)
+		}
+		return fmt.Errorf("resize disk %q: get VirtualDisk %s/%s: %w", diskName, m.namespace, diskName, err)
+	}
+
+	// PVC expansion can only grow a volume: reject shrink outright and treat an
+	// equal size as a no-op success (nothing to apply, so no Update and no wait).
+	// A nil Spec size means the size is controller-derived (e.g. from a
+	// DataSource); we cannot validate growth against it, so we set the desired
+	// size explicitly and let the poll confirm it applied.
+	if cur := vd.Spec.PersistentVolumeClaim.Size; cur != nil {
+		switch newSize.Cmp(*cur) {
+		case 0:
+			return nil
+		case -1:
+			return fmt.Errorf("resize disk %q: cannot shrink from %s to %s (PVC expansion only grows)",
+				diskName, cur.String(), newSize.String())
+		}
+	}
+
+	vd.Spec.PersistentVolumeClaim.Size = new(newSize)
+	if err := m.virt.UpdateVirtualDisk(ctx, vd); err != nil {
+		return fmt.Errorf("resize disk %q: update VirtualDisk %s/%s: %w", diskName, m.namespace, diskName, err)
+	}
+
+	return pollObject(ctx, m.pollInterval, fmt.Sprintf("VirtualDisk %s/%s resized to %s", m.namespace, diskName, newSize.String()),
+		func(ctx context.Context) (*v1alpha2.VirtualDisk, error) {
+			return m.virt.GetVirtualDisk(ctx, m.namespace, diskName)
+		},
+		func(got *v1alpha2.VirtualDisk, getErr error) (bool, error) {
+			if getErr != nil {
+				// Transient Get errors are retried; pollObject records getErr as
+				// lastErr and surfaces it if ctx is done before a Get succeeds.
+				return false, nil //nolint:nilerr // intentional retry, see comment above
+			}
+			switch got.Status.Phase {
+			case v1alpha2.DiskFailed, v1alpha2.DiskLost:
+				return false, fmt.Errorf("VirtualDisk %s/%s entered phase %s", m.namespace, diskName, got.Status.Phase)
+			// A blank disk on a WFFC storage class has no PVC yet, so it never
+			// leaves WaitForFirstConsumer before a VM consumes it — the desired
+			// size is recorded and will apply on first use, so treat it as done.
+			case v1alpha2.DiskReady, v1alpha2.DiskWaitForFirstConsumer:
+				return resizeApplied(got, newSize), nil
+			default:
+				// Pending/Provisioning/Resizing: keep waiting for the disk to
+				// settle on the new capacity.
+				return false, nil
+			}
+		})
+}
+
+// resizeApplied reports whether vd reflects at least newSize. Status.Capacity
+// is the authoritative "requested PVC capacity" the controller converged on
+// (a human-readable string like "50G"); when it is set and parseable it wins.
+// Otherwise we fall back to the desired Spec size we just wrote, which is a
+// best-effort signal (see the API note that Status.Capacity may lag).
+func resizeApplied(vd *v1alpha2.VirtualDisk, newSize resource.Quantity) bool {
+	if vd.Status.Capacity != "" {
+		if got, err := resource.ParseQuantity(vd.Status.Capacity); err == nil {
+			return got.Cmp(newSize) >= 0
+		}
+	}
+	if size := vd.Spec.PersistentVolumeClaim.Size; size != nil {
+		return size.Cmp(newSize) >= 0
+	}
+	return false
 }
 
 func diskFromVirtualDisk(vd *v1alpha2.VirtualDisk) *clusterprovider.Disk {
