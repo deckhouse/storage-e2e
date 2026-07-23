@@ -313,6 +313,13 @@ jobs:
           E2E_GINKGO_LABEL_FILTER: ${{ needs.resolve.outputs.ginkgo_filter }}
           E2E_STORAGE_E2E_DIR: ${{ github.workspace }}/_storage-e2e
           E2E_GO_TEST_TIMEOUT: "3h30m"
+          # Also expose the module image tag to the run-tests job: the suite's
+          # e2e.Connect -> LoadClusterDefinition re-runs ResolveModulePullOverrides
+          # on the cluster_config here too, so a cluster_config that references
+          # ${E2E_MODULE_IMAGE_TAG} in modulePullOverride would otherwise abort at
+          # connect ("references unset ${E2E_MODULE_IMAGE_TAG}"). The resolved value
+          # is unused at connect (the cluster already exists) but must be present.
+          E2E_MODULE_IMAGE_TAG: ${{ inputs.module_image_tag }}
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
