@@ -313,6 +313,7 @@ jobs:
           E2E_GINKGO_LABEL_FILTER: ${{ needs.resolve.outputs.ginkgo_filter }}
           E2E_STORAGE_E2E_DIR: ${{ github.workspace }}/_storage-e2e
           E2E_GO_TEST_TIMEOUT: "3h30m"
+          E2E_MODULE_IMAGE_TAG: ${{ inputs.module_image_tag }}
         run: |
           set -euo pipefail
           mkdir -p "${GOMODCACHE}" "${GOCACHE}"
