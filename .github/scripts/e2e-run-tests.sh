@@ -7,11 +7,15 @@
 # up before editing and restored via a trap on EXIT, so the working tree is not
 # left mutated on self-hosted runners (defensive even though checkout uses
 # clean: true; a caller may still override it to clean: false). After
-# applying the replace we run `go mod download` (not `go mod tidy`): download is
-# deterministic and fast, whereas tidy re-resolves the whole graph and can stall
-# fetching modules on the runner. The consumer is responsible for keeping its
-# go.mod/go.sum in sync with the storage-e2e revision it pins (so the replaced
-# module's deps are already covered).
+# applying the replace we run `go mod tidy` (not `go mod download`): the
+# directory replace points at storage-e2e@main (and PR merge commits may carry
+# further local replaces such as ../api), so the effective dependency graph can
+# differ from what the consumer's go.mod/go.sum were resolved against. download
+# does not re-resolve the graph, and MVS may then pick module versions missing
+# from the consumer's go.sum, failing with "missing go.sum entry for module
+# providing package ...". tidy re-resolves go.mod/go.sum against the actual
+# graph; mutating them is safe because both are backed up and restored by the
+# EXIT trap below.
 #
 # Inputs (env):
 #   E2E_MODULE_PATH          path to the Go module under test (default ".")
@@ -55,13 +59,17 @@ if [ "$module_name" != "github.com/deckhouse/storage-e2e" ]; then
     if [ -n "$gosum_backup" ]; then
       cp "$gosum_backup" go.sum
       rm -f "$gosum_backup"
+    else
+      # No go.sum existed before; `go mod tidy` may have created one. Remove it
+      # so the working tree is left unchanged.
+      rm -f go.sum
     fi
     return $rc
   }
   trap restore_gomod EXIT
 
   "$go_bin" mod edit -replace="github.com/deckhouse/storage-e2e=${E2E_STORAGE_E2E_DIR}"
-  "$go_bin" mod download
+  "$go_bin" mod tidy
 fi
 
 echo "Ginkgo label filter: ${label_filter}"
