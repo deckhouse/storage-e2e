@@ -167,6 +167,34 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(usr.HomeDir, strings.TrimPrefix(path, "~/")), nil
 }
 
+// loadCertSigner looks for an adjacent OpenSSH certificate file ("<keyPath>-cert.pub") and, if present and
+// valid, returns a signer that presents that certificate backed by the given private-key signer. Returns
+// nil when there is no certificate or it cannot be used (callers then fall back to the bare key / agent).
+func loadCertSigner(keyPath string, signer ssh.Signer) ssh.Signer {
+	certPath := keyPath + "-cert.pub"
+	certBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil // no adjacent certificate: normal for plain key-based access
+	}
+	pub, _, _, _, err := ssh.ParseAuthorizedKey(certBytes)
+	if err != nil {
+		logger.Debug("SSH certificate %s present but unparseable: %v", certPath, err)
+		return nil
+	}
+	cert, ok := pub.(*ssh.Certificate)
+	if !ok {
+		logger.Debug("SSH certificate %s is not a certificate, ignoring", certPath)
+		return nil
+	}
+	certSigner, err := ssh.NewCertSigner(cert, signer)
+	if err != nil {
+		logger.Debug("SSH certificate %s could not be paired with key: %v", certPath, err)
+		return nil
+	}
+	logger.Debug("SSH certificate loaded: path=%s, keyID=%q", certPath, cert.KeyId)
+	return certSigner
+}
+
 // createSSHConfig creates SSH client config with support for passphrase-protected keys.
 // It returns the SSH client config, key metadata (for diagnostics), and an error.
 // The key metadata includes the resolved path, algorithm, and SHA256 fingerprint of the key,
@@ -217,8 +245,15 @@ func createSSHConfig(user, keyPath string) (*ssh.ClientConfig, *sshKeyInfo, erro
 	}
 	logger.Debug("SSH key loaded: path=%s, algorithm=%s, fingerprint=%s", keyInfo.Path, keyInfo.Algorithm, keyInfo.Fingerprint)
 
-	// Collect all signers: file-based key first, then SSH agent keys as fallback
-	allSigners := []ssh.Signer{signer}
+	// Collect all signers. If an adjacent OpenSSH certificate ("<key>-cert.pub", as issued by e.g. Vault
+	// SSH) exists, offer a cert signer FIRST: with certificate-based access the bare public key is not in
+	// the target's authorized_keys (only the signing CA is trusted), so presenting the raw key alone fails
+	// authentication. This mirrors what the openssh client does automatically.
+	allSigners := []ssh.Signer{}
+	if certSigner := loadCertSigner(expandedKeyPath, signer); certSigner != nil {
+		allSigners = append(allSigners, certSigner)
+	}
+	allSigners = append(allSigners, signer)
 
 	// Try SSH agent as fallback (matches terminal ssh behavior)
 	if agentSock := os.Getenv("SSH_AUTH_SOCK"); agentSock != "" {
