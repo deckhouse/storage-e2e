@@ -37,4 +37,13 @@ jobs:
       # label_filter: "!stress-test"   # optional override
       # storage_e2e_ref: main          # optional
       # test_timeout: 90m              # optional
+      #
+      # Environment your suite needs to reach its backend, which the pipeline
+      # knows nothing about. Non-secret values only - they are logged. Secrets go
+      # in the repository secret E2E_MODULE_ENV, same KEY=VALUE format; they are
+      # masked and merged in automatically. See docs/CI.md
+      # "Module-specific environment".
+      # extra_env: |
+      #   E2E_MY_BACKEND_HOST=${{ vars.E2E_MY_BACKEND_HOST }}
+      #   E2E_MY_BACKEND_POOL=${{ vars.E2E_MY_BACKEND_POOL }}
     secrets: inherit

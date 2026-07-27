@@ -58,6 +58,7 @@ same namespace → "same cluster".
 | `cluster_config` | path (in the module repo) to the cluster YAML (`E2E_CLUSTER_CONFIG_YAML_PATH`) | (required) |
 | `cluster_provider` | provider for bootstrap/teardown: `dvp` or `commander` | `dvp` |
 | `module_image_tag` | image tag for the module under test, exposed to `enable-modules` as `E2E_MODULE_IMAGE_TAG` (reference it from `cluster_config` as `modulePullOverride: "${E2E_MODULE_IMAGE_TAG}"`) | `""` |
+| `extra_env` | module-specific suite environment, newline-separated `KEY=VALUE` (see [Module-specific environment](#module-specific-environment)) | `""` |
 | `storage_e2e_ref` | git ref of storage-e2e to checkout | `main` |
 | `runner_labels` | JSON array of runner labels | `["self-hosted","regular"]` |
 | `test_timeout` | Ginkgo suite timeout | `90m` |
@@ -119,6 +120,49 @@ per-PR namespace and must not be overridden.
 |--------|----------|---------|
 | `E2E_TEST_CLUSTER_PROVIDER` | No | provider mode override (default `dvp`); normally set from the `cluster_provider` input |
 | `GOPROXY` | No | Go module proxy |
+| `E2E_MODULE_ENV` | No | module-specific **secret** suite environment, `KEY=VALUE` per line (see [Module-specific environment](#module-specific-environment)) |
+
+## Module-specific environment
+
+The pipeline forwards its own connection variables (`E2E_DVP_*`,
+`E2E_COMMANDER_*`, …) but knows nothing about the backend an individual module's
+suite talks to — csi-nfs points at external NFS servers, csi-huawei at a storage
+system, csi-scsi-generic at an iSCSI target. Rather than extending the allowlist
+once per module, callers pass their own `KEY=VALUE` pairs:
+
+```yaml
+    with:
+      module_slug: csi-nfs
+      extra_env: |
+        E2E_NFS_V3_HOST=${{ vars.E2E_NFS_V3_HOST }}
+        E2E_NFS_V4_HOST=${{ vars.E2E_NFS_V4_HOST }}
+        E2E_NFS_TLS_HOST=${{ vars.E2E_NFS_TLS_HOST }}
+    secrets: inherit
+```
+
+Secrets do **not** go in `extra_env` — its values are echoed to the log. Put them
+in the module repository's `E2E_MODULE_ENV` secret instead, in the same
+`KEY=VALUE` format:
+
+```
+E2E_NFS_TLS_CA=<base64 PEM>
+E2E_NFS_TLS_CLIENT_CERT=<base64 PEM>
+E2E_NFS_TLS_CLIENT_KEY=<base64 PEM>
+```
+
+The pipeline reads that secret **by fixed name**, so callers keep using
+`secrets: inherit` — a per-module secret *input* would force every caller to
+enumerate its secrets explicitly instead. Each value is registered with
+`::add-mask::` before use and is never printed.
+
+Both sources are optional and parsed the same way: one `KEY=VALUE` per line,
+blank lines and `#` comments ignored, whitespace around the key trimmed, and the
+value taken verbatim after the first `=` (so `=` inside a value, such as base64
+padding, is fine). Values must be **single-line** — pass PEM or kubeconfig
+material base64-encoded. Malformed lines, invalid variable names, and attempts to
+override a variable the pipeline sets itself (`E2E_TEST_PACKAGE`,
+`E2E_STORAGE_E2E_DIR`, `GOPROXY`, …) fail the step rather than silently
+retargeting the run.
 
 ## Scripts
 
@@ -126,6 +170,7 @@ per-PR namespace and must not be overridden.
 |------------------------------------------|---------------------|-----------------------------------------------------------------------------------------------------------------|
 | `.github/scripts/e2e-resolve-labels.sh`  | resolve             | PR labels → `keep_cluster` / `ginkgo_filter` / `namespace`                                                      |
 | `.github/scripts/e2e-prune-workspace.sh` | bootstrap, teardown | Prune stale Go-cache trees from the self-hosted workspace (credentials are passed as inline content, not files) |
+| `.github/scripts/e2e-module-env.sh`      | run-tests           | Merge `extra_env` + the `E2E_MODULE_ENV` secret into `$GITHUB_ENV` for the suite                                |
 | `.github/scripts/e2e-run-tests.sh`       | run-tests           | self-aware `go mod replace` + `go test` (no SSH tunnel)                                                         |
 
 Tests for these scripts live in `.github/scripts/tests/`.

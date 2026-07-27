@@ -50,6 +50,20 @@ on:
         type: string
         required: false
         default: ""
+      extra_env:
+        description: |
+          Module-specific environment for the suite, as newline-separated
+          KEY=VALUE pairs (blank lines and # comments ignored). Use it for the
+          backend a module's suite talks to - external NFS servers, a storage
+          system, an iSCSI target - which this pipeline knows nothing about.
+          Values are logged, so keep secrets out of it: put those in the
+          repository secret E2E_MODULE_ENV, in the same KEY=VALUE format, and
+          they are masked and merged in automatically (no caller change needed
+          with `secrets: inherit`). Values must be single-line; pass PEM or
+          kubeconfig material base64-encoded.
+        type: string
+        required: false
+        default: ""
       storage_e2e_ref:
         description: "Git ref of storage-e2e to checkout"
         type: string
@@ -301,6 +315,19 @@ jobs:
       # provider's Bootstrap enables the modules-under-test from cluster_config as
       # part of bringing the cluster up (see cmd/bootstrap-cluster / the bootstrap
       # job above). The step above only injects the suite's connection env.
+
+      # Module-specific suite environment. The pipeline only knows its own
+      # connection variables, so anything a module's suite needs to reach its
+      # backend comes from here: non-secret pairs through the extra_env input,
+      # secret ones through the fixed-name E2E_MODULE_ENV repository secret
+      # (referenced by name so callers keep using `secrets: inherit`). Both are
+      # optional; with neither set the step is a no-op and the "Run E2E tests"
+      # step keeps its exact environment.
+      - name: Export module environment
+        env:
+          E2E_EXTRA_ENV: ${{ inputs.extra_env }}
+          E2E_MODULE_ENV_SECRET: ${{ secrets.E2E_MODULE_ENV }}
+        run: bash _storage-e2e/.github/scripts/e2e-module-env.sh
 
       - name: Run E2E tests
         id: run_tests
