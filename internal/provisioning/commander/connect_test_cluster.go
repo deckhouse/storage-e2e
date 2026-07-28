@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
 
@@ -31,24 +33,49 @@ var _ clusterprovider.Provider = (*commanderProvider)(nil)
 //
 // The connection itself is the one the legacy pkg/cluster path already used
 // through the Connector interface - SSH to the master via the bastion, kubeconfig
-// fetched off the master, in-process API tunnel - so this delegates to Connect
-// rather than duplicating it.
+// fetched off the master, in-process API tunnel - so this reuses the connector
+// rather than duplicating any of it.
 //
-// Nodes and Disks are nil: Commander hands out a cluster, not the infrastructure
-// under it, so there is no node-exec transport and no way to attach block
-// devices. Suites that need either must run on a provider that offers them (dvp);
-// suites that only talk to the Kubernetes API - the common case for a storage
-// module whose backend is external - are fully served here.
+// Disks stays nil: Commander hands out a cluster, not the infrastructure under
+// it, so there is no way to attach block devices. Cluster documents Disks as
+// nillable and pkg/e2e substitutes a stub that says so when a suite tries.
 func (p *commanderProvider) ConnectTestCluster(ctx context.Context) (*clusterprovider.Cluster, error) {
-	restConfig, cleanup, err := p.Connect(ctx)
+	// Detach cancellation: the tunnel must outlive the caller's connect ctx (the
+	// suite keeps the connection for its whole run); Cleanup tears it down.
+	ctx = context.WithoutCancel(ctx)
+
+	creds, err := p.conf.Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("resolve commander credentials: %w", err)
+	}
+	conn := newConnector(p.client, p.conf, creds, p.logger)
+
+	// The node executor SSHes to nodes as the same user the master is reached
+	// with, over the same hops.
+	_, sshUser, err := conn.resolveMaster(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	restConfig, cleanup, err := conn.Connect(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("connect to the commander cluster: %w", err)
 	}
 
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("build clientset for node address lookups: %w", err)
+	}
+
 	return &clusterprovider.Cluster{
 		RESTConfig: restConfig,
-		Nodes:      nil,
-		Disks:      nil,
-		Cleanup:    cleanup,
+		Nodes: &commanderNodeExecutor{
+			conn:     conn,
+			resolver: &internalIPResolver{clientset: clientset},
+			user:     sshUser,
+		},
+		Disks:   nil,
+		Cleanup: cleanup,
 	}, nil
 }
