@@ -27,21 +27,8 @@ import (
 
 var _ clusterprovider.Provider = (*commanderProvider)(nil)
 
-// ConnectTestCluster attaches a test run to the Commander-managed cluster, so
-// suites built on pkg/e2e (e2e.Connect) work with cluster_provider: commander and
-// not only with dvp.
-//
-// The connection itself is the one the legacy pkg/cluster path already used
-// through the Connector interface - SSH to the master via the bastion, kubeconfig
-// fetched off the master, in-process API tunnel - so this reuses the connector
-// rather than duplicating any of it.
-//
-// Disks stays nil: Commander hands out a cluster, not the infrastructure under
-// it, so there is no way to attach block devices. Cluster documents Disks as
-// nillable and pkg/e2e substitutes a stub that says so when a suite tries.
 func (p *commanderProvider) ConnectTestCluster(ctx context.Context) (*clusterprovider.Cluster, error) {
-	// Detach cancellation: the tunnel must outlive the caller's connect ctx (the
-	// suite keeps the connection for its whole run); Cleanup tears it down.
+	// The tunnel must outlive the caller's connect ctx; Cleanup tears it down.
 	ctx = context.WithoutCancel(ctx)
 
 	creds, err := p.conf.Resolve()
@@ -50,8 +37,6 @@ func (p *commanderProvider) ConnectTestCluster(ctx context.Context) (*clusterpro
 	}
 	conn := newConnector(p.client, p.conf, creds, p.logger)
 
-	// The node executor SSHes to nodes as the same user the master is reached
-	// with, over the same hops.
 	_, sshUser, err := conn.resolveMaster(ctx)
 	if err != nil {
 		return nil, err
@@ -75,6 +60,8 @@ func (p *commanderProvider) ConnectTestCluster(ctx context.Context) (*clusterpro
 			resolver: &internalIPResolver{clientset: clientset},
 			user:     sshUser,
 		},
+		// Commander hands out a cluster, not the infrastructure under it, so there
+		// is no way to attach block devices.
 		Disks:   nil,
 		Cleanup: cleanup,
 	}, nil

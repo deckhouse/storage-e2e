@@ -29,14 +29,10 @@ import (
 	"github.com/deckhouse/storage-e2e/pkg/clusterprovider"
 )
 
-// nodeAddressResolver maps a Kubernetes node name to an address reachable over
-// SSH. Commander does not own the infrastructure, so the only address it can
-// offer is the one the node reports itself.
 type nodeAddressResolver interface {
 	Resolve(ctx context.Context, nodeName string) (string, error)
 }
 
-// internalIPResolver reads the node's InternalIP from the Kubernetes API.
 type internalIPResolver struct {
 	clientset kubernetes.Interface
 }
@@ -54,15 +50,6 @@ func (r *internalIPResolver) Resolve(ctx context.Context, nodeName string) (stri
 	return "", fmt.Errorf("node %s reports no InternalIP", nodeName)
 }
 
-// commanderNodeExecutor runs commands on test cluster nodes over SSH. The node
-// name is resolved to its InternalIP through the Kubernetes API, and the
-// connection reuses the connector's route - the bastion when one is configured,
-// then the node itself - so it needs no infrastructure access Commander does not
-// already give us.
-//
-// A fresh client per Exec: node commands are occasional in these suites, and
-// holding one connection per node for the whole run would keep sessions open
-// against every node a scenario ever touched.
 type commanderNodeExecutor struct {
 	conn     *connector
 	resolver nodeAddressResolver
@@ -89,8 +76,8 @@ func (e *commanderNodeExecutor) Exec(ctx context.Context, nodeName, command stri
 		Stderr:   res.Stderr,
 		ExitCode: res.ExitCode,
 	}
-	// Per the NodeExecutor contract a command that ran and exited non-zero is
-	// not an error: the exit code carries that. Only transport failures are.
+	// Per the NodeExecutor contract a non-zero exit is not an error: the exit code
+	// carries it. Only transport failures are.
 	var exitErr *cryptossh.ExitError
 	if errors.As(err, &exitErr) {
 		return out, nil

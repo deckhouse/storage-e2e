@@ -71,15 +71,12 @@ func TestInternalIPResolver_ErrorsOnMissingNode(t *testing.T) {
 	}
 }
 
-// resolverFunc lets a test stub address resolution.
 type resolverFunc func(ctx context.Context, nodeName string) (string, error)
 
 func (f resolverFunc) Resolve(ctx context.Context, nodeName string) (string, error) {
 	return f(ctx, nodeName)
 }
 
-// A resolution failure must surface before any SSH is attempted, so the executor
-// is usable (and its errors legible) without a reachable node.
 func TestCommanderNodeExecutor_SurfacesResolveError(t *testing.T) {
 	e := &commanderNodeExecutor{
 		resolver: resolverFunc(func(context.Context, string) (string, error) {

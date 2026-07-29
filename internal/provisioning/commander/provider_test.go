@@ -142,10 +142,8 @@ func TestBuildValues(t *testing.T) {
 	}
 }
 
-// ConnectTestCluster used to be a stub returning ErrConnectUnsupported, which
-// made pkg/e2e (e2e.Connect) unusable with cluster_provider: commander. Assert it
-// now reaches the real connect path: with no SSH key source configured it must
-// fail on credential resolution, NOT with the unsupported sentinel.
+// With no SSH key source configured the call must fail on credential resolution,
+// not with ErrConnectUnsupported.
 func TestConnectTestCluster_IsImplemented(t *testing.T) {
 	t.Setenv("E2E_COMMANDER_URL", "https://commander.example.com")
 	t.Setenv("E2E_COMMANDER_TOKEN", "secret-token")
