@@ -33,6 +33,9 @@ import (
 // optimistic-locking (current_revision) conflict.
 const updateRevisionRetries = 5
 
+// defaultRegistryMode is sent only when the API reports no mode for the cluster.
+const defaultRegistryMode = "Direct"
+
 // UpdateCluster applies new template input values to an existing cluster via
 // PUT /clusters/:id. The request carries current_revision for optimistic
 // locking: a stale revision yields ErrRevisionConflict (409), and the caller
@@ -101,6 +104,7 @@ func (c *Client) UpdateClusterValues(ctx context.Context, name string, mutate fu
 			Name:                     cluster.Name,
 			ClusterTemplateVersionID: cluster.ClusterTemplateVersionID,
 			RegistryID:               cluster.RegistryID,
+			RegistryMode:             registryModeOrDefault(cluster.RegistryMode),
 			CurrentRevision:          cluster.CurrentRevision,
 			Values:                   values,
 		})
@@ -247,6 +251,15 @@ func (c *Client) SetClusterInputValueAndWait(ctx context.Context, name, key stri
 		case <-ticker.C:
 		}
 	}
+}
+
+// registryModeOrDefault keeps the cluster's own mode — it can legitimately be
+// Unmanaged, and sending the default would repoint its registry.
+func registryModeOrDefault(mode string) string {
+	if mode == "" {
+		return defaultRegistryMode
+	}
+	return mode
 }
 
 // valuesToMap coerces a cluster's Values (decoded as interface{}) into a

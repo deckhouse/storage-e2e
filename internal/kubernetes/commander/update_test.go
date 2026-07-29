@@ -216,6 +216,57 @@ func TestUpdateClusterValues_MergesAndRetriesOnConflict(t *testing.T) {
 	}
 }
 
+func TestUpdateClusterValues_EchoesRegistryMode(t *testing.T) {
+	cases := []struct {
+		name     string
+		reported string // registry_mode as returned by GET /clusters/:id
+		want     string // registry_mode expected in the PUT body
+	}{
+		{"preserves the cluster's own mode", `"registry_mode":"Unmanaged",`, "Unmanaged"},
+		{"falls back to the default when the API reports none", "", defaultRegistryMode},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var lastPut UpdateClusterRequest
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clusters":
+					_, _ = w.Write([]byte(`[{"id":"c1","name":"sys"}]`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clusters/c1":
+					_, _ = w.Write([]byte(`{"id":"c1","name":"sys","current_revision":5,` +
+						`"cluster_template_version_id":"tpl-v1","registry_id":"reg-1",` + tc.reported +
+						`"values":{"masterCount":1}}`))
+				case r.Method == http.MethodPut && r.URL.Path == "/api/v1/clusters/c1":
+					body, _ := io.ReadAll(r.Body)
+					_ = json.Unmarshal(body, &lastPut)
+					_, _ = w.Write([]byte(`{"id":"c1","name":"sys","current_revision":6}`))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			c := mustClient(t, srv.URL, "tok", ClientOptions{})
+			if _, err := c.UpdateClusterValues(context.Background(), "sys", func(values map[string]interface{}) {
+				values["masterCount"] = 3
+			}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if lastPut.RegistryMode != tc.want {
+				t.Errorf("registry_mode=%q, want %q", lastPut.RegistryMode, tc.want)
+			}
+			if lastPut.RegistryID != "reg-1" {
+				t.Errorf("registry_id=%q, want %q", lastPut.RegistryID, "reg-1")
+			}
+		})
+	}
+}
+
 func TestSetClusterInputValueAndWait_ApprovesAndConverges(t *testing.T) {
 	var mu sync.Mutex
 	approved := false
