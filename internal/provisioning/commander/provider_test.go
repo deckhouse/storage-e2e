@@ -17,6 +17,8 @@ limitations under the License.
 package commander
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"testing"
 
@@ -137,5 +139,27 @@ func TestBuildValues(t *testing.T) {
 	bad := &commanderProvider{conf: &Config{InputValues: "{not-json"}}
 	if _, err := bad.buildValues("x"); err == nil {
 		t.Fatal("expected error for invalid E2E_COMMANDER_VALUES JSON, got nil")
+	}
+}
+
+// With no SSH key source configured the call must fail on credential resolution,
+// not with ErrConnectUnsupported.
+func TestConnectTestCluster_IsImplemented(t *testing.T) {
+	t.Setenv("E2E_COMMANDER_URL", "https://commander.example.com")
+	t.Setenv("E2E_COMMANDER_TOKEN", "secret-token")
+	t.Setenv("E2E_COMMANDER_CLUSTER_NAME", "e2e-csi-nfs-pr226")
+	t.Setenv("E2E_COMMANDER_TEMPLATE_NAME", "default-template")
+
+	p, err := NewCommanderProvider(slog.Default(), &clusterprovider.ClusterConfig{})
+	if err != nil {
+		t.Fatalf("NewCommanderProvider returned unexpected error: %v", err)
+	}
+
+	_, err = p.ConnectTestCluster(context.Background())
+	if err == nil {
+		t.Fatal("expected an error without usable SSH credentials, got nil")
+	}
+	if errors.Is(err, clusterprovider.ErrConnectUnsupported) {
+		t.Fatalf("ConnectTestCluster still reports the provider as unsupported: %v", err)
 	}
 }
