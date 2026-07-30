@@ -328,6 +328,17 @@ func (p *Provisioner) Teardown(ctx context.Context) error {
 	return p.teardownVirtualDisks(ctx)
 }
 
+// DeleteNode removes a single node's VirtualMachine and its backing system
+// VirtualDisk, waiting for both to disappear. It is used to reclaim the setup
+// node once its bootstrap role is complete, without touching the rest of the
+// cluster. Missing objects are treated as already deleted.
+func (p *Provisioner) DeleteNode(ctx context.Context, hostname string) error {
+	if err := p.deleteVirtualMachine(ctx, p.cfg.Namespace, hostname); err != nil {
+		return err
+	}
+	return p.deleteVirtualDisk(ctx, p.cfg.Namespace, systemDiskName(hostname))
+}
+
 func (p *Provisioner) teardownVirtualMachines(ctx context.Context) error {
 	vms, err := p.client.ListVirtualMachines(ctx, p.cfg.Namespace)
 	if err != nil {
@@ -342,17 +353,21 @@ func (p *Provisioner) teardownVirtualMachines(ctx context.Context) error {
 			continue
 		}
 		g.Go(func() error {
-			p.log.Info("deleting VirtualMachine", "vm", machine.Name)
-			if err := p.client.DeleteVirtualMachine(gctx, machine.Namespace, machine.Name); err != nil && !apierrors.IsNotFound(err) {
-				return fmt.Errorf("delete VirtualMachine %s/%s: %w", machine.Namespace, machine.Name, err)
-			}
-			return waitDeleted(gctx, p.cfg.Timeouts.PollInterval, p.cfg.Timeouts.DeleteTimeout,
-				func(ctx context.Context) (*v1alpha2.VirtualMachine, error) {
-					return p.client.GetVirtualMachine(ctx, machine.Namespace, machine.Name)
-				}, "VirtualMachine", machine.Name)
+			return p.deleteVirtualMachine(gctx, machine.Namespace, machine.Name)
 		})
 	}
 	return g.Wait()
+}
+
+func (p *Provisioner) deleteVirtualMachine(ctx context.Context, namespace, name string) error {
+	p.log.Info("deleting VirtualMachine", "vm", name)
+	if err := p.client.DeleteVirtualMachine(ctx, namespace, name); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete VirtualMachine %s/%s: %w", namespace, name, err)
+	}
+	return waitDeleted(ctx, p.cfg.Timeouts.PollInterval, p.cfg.Timeouts.DeleteTimeout,
+		func(ctx context.Context) (*v1alpha2.VirtualMachine, error) {
+			return p.client.GetVirtualMachine(ctx, namespace, name)
+		}, "VirtualMachine", name)
 }
 
 func (p *Provisioner) teardownVirtualDisks(ctx context.Context) error {
@@ -369,17 +384,21 @@ func (p *Provisioner) teardownVirtualDisks(ctx context.Context) error {
 			continue
 		}
 		g.Go(func() error {
-			p.log.Info("deleting VirtualDisk", "vd", vd.Name)
-			if err := p.client.DeleteVirtualDisk(gctx, vd.Namespace, vd.Name); err != nil && !apierrors.IsNotFound(err) {
-				return fmt.Errorf("delete VirtualDisk %s/%s: %w", vd.Namespace, vd.Name, err)
-			}
-			return waitDeleted(gctx, p.cfg.Timeouts.PollInterval, p.cfg.Timeouts.DeleteTimeout,
-				func(ctx context.Context) (*v1alpha2.VirtualDisk, error) {
-					return p.client.GetVirtualDisk(ctx, vd.Namespace, vd.Name)
-				}, "VirtualDisk", vd.Name)
+			return p.deleteVirtualDisk(gctx, vd.Namespace, vd.Name)
 		})
 	}
 	return g.Wait()
+}
+
+func (p *Provisioner) deleteVirtualDisk(ctx context.Context, namespace, name string) error {
+	p.log.Info("deleting VirtualDisk", "vd", name)
+	if err := p.client.DeleteVirtualDisk(ctx, namespace, name); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete VirtualDisk %s/%s: %w", namespace, name, err)
+	}
+	return waitDeleted(ctx, p.cfg.Timeouts.PollInterval, p.cfg.Timeouts.DeleteTimeout,
+		func(ctx context.Context) (*v1alpha2.VirtualDisk, error) {
+			return p.client.GetVirtualDisk(ctx, namespace, name)
+		}, "VirtualDisk", name)
 }
 
 func waitDeleted[T any](ctx context.Context, interval, timeout time.Duration, get func(context.Context) (T, error), kind, name string) error {

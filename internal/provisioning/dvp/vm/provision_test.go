@@ -202,6 +202,52 @@ func TestProvisionFailFastOnDegradedVM(t *testing.T) {
 	}
 }
 
+func TestDeleteNodeRemovesVMAndDiskOnly(t *testing.T) {
+	c := newFakeClient()
+	c.seedVMClass(readyVMClass("generic"))
+	c.onGetCVI = func(cvi *v1alpha2.ClusterVirtualImage) { cvi.Status.Phase = v1alpha2.ImageReady }
+	c.onGetVM = func(machine *v1alpha2.VirtualMachine) {
+		machine.Status.Phase = v1alpha2.MachineRunning
+		machine.Status.IPAddress = "10.0.0.9"
+	}
+
+	setup := vmNode("bootstrap-1", "http://example/os-b.qcow2")
+	setup.Role = config.ClusterRoleSetup
+	def := &config.ClusterDefinition{
+		Masters: []config.ClusterNode{vmNode("master-1", "http://example/os-a.qcow2")},
+		Setup:   &setup,
+	}
+
+	p := NewProvisioner(c, testLogger(), testConfig())
+	if err := p.Provision(context.Background(), def); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	if err := p.DeleteNode(context.Background(), "bootstrap-1"); err != nil {
+		t.Fatalf("DeleteNode: %v", err)
+	}
+
+	if _, err := c.GetVirtualMachine(context.Background(), "ns", "bootstrap-1"); err == nil {
+		t.Error("setup VM still present after DeleteNode")
+	}
+	if _, err := c.GetVirtualDisk(context.Background(), "ns", systemDiskName("bootstrap-1")); err == nil {
+		t.Error("setup VirtualDisk still present after DeleteNode")
+	}
+
+	// The rest of the cluster must be untouched.
+	if _, err := c.GetVirtualMachine(context.Background(), "ns", "master-1"); err != nil {
+		t.Errorf("master VM removed by DeleteNode: %v", err)
+	}
+	if _, err := c.GetVirtualDisk(context.Background(), "ns", systemDiskName("master-1")); err != nil {
+		t.Errorf("master VirtualDisk removed by DeleteNode: %v", err)
+	}
+
+	// Deleting an already-gone node is a no-op, not an error.
+	if err := p.DeleteNode(context.Background(), "bootstrap-1"); err != nil {
+		t.Fatalf("second DeleteNode should be idempotent: %v", err)
+	}
+}
+
 func TestTeardownIdempotent(t *testing.T) {
 	c := newFakeClient()
 	c.seedVMClass(readyVMClass("generic"))
