@@ -33,6 +33,19 @@ import (
 // optimistic-locking (current_revision) conflict.
 const updateRevisionRetries = 5
 
+// defaultRegistryMode is sent only when the API reports no mode for the cluster.
+const defaultRegistryMode = "Direct"
+
+// Convergence-wait tuning. Vars, not consts, so the tests can shorten them
+// instead of sleeping through the real grace period.
+var (
+	// waitPollInterval is how often the convergence wait polls the cluster.
+	waitPollInterval = 10 * time.Second
+	// failureStatusPolls is how many consecutive polls a failure status must
+	// persist before the wait gives up on it (12 x 10s = 2 minutes).
+	failureStatusPolls = 12
+)
+
 // UpdateCluster applies new template input values to an existing cluster via
 // PUT /clusters/:id. The request carries current_revision for optimistic
 // locking: a stale revision yields ErrRevisionConflict (409), and the caller
@@ -101,6 +114,7 @@ func (c *Client) UpdateClusterValues(ctx context.Context, name string, mutate fu
 			Name:                     cluster.Name,
 			ClusterTemplateVersionID: cluster.ClusterTemplateVersionID,
 			RegistryID:               cluster.RegistryID,
+			RegistryMode:             registryModeOrDefault(cluster.RegistryMode),
 			CurrentRevision:          cluster.CurrentRevision,
 			Values:                   values,
 		})
@@ -204,12 +218,14 @@ func (c *Client) SetClusterInputValueAndWait(ctx context.Context, name, key stri
 	}
 	clusterID := updated.ID
 
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(waitPollInterval)
 	defer ticker.Stop()
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 
-	var lastStatus string
+	var lastStatus, lastMessage string
+	var statuses []string
+	failingPolls := 0
 	for {
 		// Approve any pending change requests so a disruptive resize can proceed.
 		if clusterID != "" {
@@ -227,7 +243,11 @@ func (c *Client) SetClusterInputValueAndWait(ctx context.Context, name, key stri
 
 		cluster, err := c.GetClusterByName(ctx, name)
 		if err == nil {
-			lastStatus = cluster.Status
+			if cluster.Status != lastStatus {
+				statuses = append(statuses, cluster.Status)
+				failingPolls = 0
+			}
+			lastStatus, lastMessage = cluster.Status, cluster.Message
 			if clusterID == "" {
 				clusterID = cluster.ID
 			}
@@ -237,16 +257,53 @@ func (c *Client) SetClusterInputValueAndWait(ctx context.Context, name, key stri
 			case ClusterPhaseFailed:
 				return fmt.Errorf("cluster %q failed to converge (status %q): %s", name, cluster.Status, cluster.Message)
 			}
+			// A failure status that sticks is the answer, not something to keep
+			// waiting on: a control-plane resize that ends in
+			// synchronization_failure held the suite for the full timeout and the
+			// error said nothing but the status. Give it a short grace (Commander
+			// retries its own sync) and then report it, with Commander's message.
+			if isFailureStatus(cluster.Status) {
+				failingPolls++
+				if failingPolls >= failureStatusPolls {
+					return fmt.Errorf("cluster %q stayed in %q for %s after setting %q=%v: %s (statuses seen: %s)",
+						name, cluster.Status, time.Duration(failureStatusPolls)*waitPollInterval, key, value,
+						messageOrUnset(cluster.Message), strings.Join(statuses, " -> "))
+				}
+			}
 		}
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("timeout waiting for cluster %q to converge after setting %q=%v (last status: %s)", name, key, value, lastStatus)
+			return fmt.Errorf("timeout waiting for cluster %q to converge after setting %q=%v (last status: %s, message: %s, statuses seen: %s)",
+				name, key, value, lastStatus, messageOrUnset(lastMessage), strings.Join(statuses, " -> "))
 		case <-ticker.C:
 		}
 	}
+}
+
+// isFailureStatus reports whether a Commander cluster status names a failure.
+// Matched on substring: the API has more of them than the phase mapping knows
+// (synchronization_failure, for one).
+func isFailureStatus(status string) bool {
+	return strings.Contains(strings.ToLower(status), "fail")
+}
+
+func messageOrUnset(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return "<none reported>"
+	}
+	return message
+}
+
+// registryModeOrDefault keeps the cluster's own mode — it can legitimately be
+// Unmanaged, and sending the default would repoint its registry.
+func registryModeOrDefault(mode string) string {
+	if mode == "" {
+		return defaultRegistryMode
+	}
+	return mode
 }
 
 // valuesToMap coerces a cluster's Values (decoded as interface{}) into a

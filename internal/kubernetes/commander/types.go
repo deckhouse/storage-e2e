@@ -213,11 +213,15 @@ type CreateClusterRequest struct {
 // for optimistic locking (a stale value is rejected so the caller re-fetches and
 // retries) and the full desired set of template input Values (the caller merges
 // its change onto the cluster's current values before sending).
+//
+// RegistryMode has to be echoed back too: omitting it writes NULL into a NOT NULL
+// column and the update fails with a 500. Create does not need it.
 // See: https://deckhouse.io/modules/commander/stable/integration_api.html
 type UpdateClusterRequest struct {
 	Name                     string                 `json:"name"`
 	ClusterTemplateVersionID string                 `json:"cluster_template_version_id"`
 	RegistryID               string                 `json:"registry_id,omitempty"`
+	RegistryMode             string                 `json:"registry_mode,omitempty"`
 	CurrentRevision          int                    `json:"current_revision"`
 	Values                   map[string]interface{} `json:"values"`
 }
@@ -294,6 +298,7 @@ type ClusterResponse struct {
 	DesiredProviderSpecificClusterConfigurationRendered string      `json:"desired_provider_specific_cluster_configuration_rendered,omitempty"`
 	RenderErrors                                        interface{} `json:"render_errors,omitempty"`
 	RegistryID                                          string      `json:"registry_id,omitempty"`
+	RegistryMode                                        string      `json:"registry_mode,omitempty"`
 	ClusterKubernetesResourceGroupVersionsRendered      interface{} `json:"cluster_kubernetes_resource_group_versions_rendered,omitempty"`
 	ClusterAgentData                                    interface{} `json:"cluster_agent_data,omitempty"`
 	ConnectionHosts                                     interface{} `json:"connection_hosts,omitempty"`

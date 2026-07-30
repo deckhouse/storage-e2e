@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -216,6 +217,57 @@ func TestUpdateClusterValues_MergesAndRetriesOnConflict(t *testing.T) {
 	}
 }
 
+func TestUpdateClusterValues_EchoesRegistryMode(t *testing.T) {
+	cases := []struct {
+		name     string
+		reported string // registry_mode as returned by GET /clusters/:id
+		want     string // registry_mode expected in the PUT body
+	}{
+		{"preserves the cluster's own mode", `"registry_mode":"Unmanaged",`, "Unmanaged"},
+		{"falls back to the default when the API reports none", "", defaultRegistryMode},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var lastPut UpdateClusterRequest
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clusters":
+					_, _ = w.Write([]byte(`[{"id":"c1","name":"sys"}]`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clusters/c1":
+					_, _ = w.Write([]byte(`{"id":"c1","name":"sys","current_revision":5,` +
+						`"cluster_template_version_id":"tpl-v1","registry_id":"reg-1",` + tc.reported +
+						`"values":{"masterCount":1}}`))
+				case r.Method == http.MethodPut && r.URL.Path == "/api/v1/clusters/c1":
+					body, _ := io.ReadAll(r.Body)
+					_ = json.Unmarshal(body, &lastPut)
+					_, _ = w.Write([]byte(`{"id":"c1","name":"sys","current_revision":6}`))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			c := mustClient(t, srv.URL, "tok", ClientOptions{})
+			if _, err := c.UpdateClusterValues(context.Background(), "sys", func(values map[string]interface{}) {
+				values["masterCount"] = 3
+			}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if lastPut.RegistryMode != tc.want {
+				t.Errorf("registry_mode=%q, want %q", lastPut.RegistryMode, tc.want)
+			}
+			if lastPut.RegistryID != "reg-1" {
+				t.Errorf("registry_id=%q, want %q", lastPut.RegistryID, "reg-1")
+			}
+		})
+	}
+}
+
 func TestSetClusterInputValueAndWait_ApprovesAndConverges(t *testing.T) {
 	var mu sync.Mutex
 	approved := false
@@ -261,5 +313,65 @@ func TestSetClusterInputValueAndWait_ApprovesAndConverges(t *testing.T) {
 	}
 	if approveHits != 1 {
 		t.Errorf("approve hit %d times, want 1", approveHits)
+	}
+}
+
+// TestSetClusterInputValueAndWait_GivesUpOnStickyFailure covers a status the phase
+// mapping does not know: a control-plane resize that ends in
+// synchronization_failure used to hold the caller for the entire timeout (30
+// minutes in CI, twice over in one suite) and then report nothing but the status.
+// It must give up once the failure has stuck, and say what Commander said.
+func TestSetClusterInputValueAndWait_GivesUpOnStickyFailure(t *testing.T) {
+	defer func(interval time.Duration, polls int) {
+		waitPollInterval, failureStatusPolls = interval, polls
+	}(waitPollInterval, failureStatusPolls)
+	waitPollInterval, failureStatusPolls = time.Millisecond, 3
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clusters":
+			_, _ = w.Write([]byte(`[{"id":"c1","name":"sys","current_revision":5,` +
+				`"status":"synchronization_failure","message":"converge failed on master-1",` +
+				`"values":{"masterCount":3}}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clusters/c1":
+			_, _ = w.Write([]byte(`{"id":"c1","name":"sys","current_revision":5,"cluster_template_version_id":"tpl-v1","values":{"masterCount":3}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/clusters/c1":
+			_, _ = w.Write([]byte(`{"id":"c1","name":"sys","current_revision":6,"status":"updating"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/cluster_change_requests":
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := mustClient(t, srv.URL, "tok", ClientOptions{})
+	// A timeout far longer than the grace: the point is that it does not wait for it.
+	err := c.SetClusterInputValueAndWait(context.Background(), "sys", "masterCount", 1, time.Minute)
+	if err == nil {
+		t.Fatal("expected an error for a cluster stuck in synchronization_failure, got nil")
+	}
+	for _, want := range []string{"synchronization_failure", "converge failed on master-1", "masterCount"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "timeout waiting") {
+		t.Errorf("gave up by timing out instead of reporting the failure status: %v", err)
+	}
+}
+
+func TestIsFailureStatus(t *testing.T) {
+	for status, want := range map[string]bool{
+		"synchronization_failure": true,
+		"failed":                  true,
+		"Failure":                 true,
+		"in_sync":                 false,
+		"updating":                false,
+		"":                        false,
+	} {
+		if got := isFailureStatus(status); got != want {
+			t.Errorf("isFailureStatus(%q) = %v, want %v", status, got, want)
+		}
 	}
 }
