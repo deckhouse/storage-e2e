@@ -358,7 +358,10 @@ jobs:
   teardown:
     name: teardown
     needs: [resolve, bootstrap, run-tests]
-    if: ${{ always() && needs.bootstrap.result == 'success' && needs.resolve.outputs.keep_cluster != 'true' }}
+    # Clean up even if bootstrap failed (it may have left a partial cluster).
+    # Requires resolve to have produced namespace/keep_cluster; skipped only when
+    # the e2e/keep-cluster label is set.
+    if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.keep_cluster != 'true' }}
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 60
     steps:

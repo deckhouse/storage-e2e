@@ -15,7 +15,7 @@ resolve ──> bootstrap ──> run-tests ──> teardown
 | `resolve` | — | always (workflow invoked) | Sparse-checks-out `.github/scripts`, runs `e2e-resolve-labels.sh` → outputs `keep_cluster`, `ginkgo_filter`, `namespace` |
 | `bootstrap` | resolve | always when reached | `e2e-prune-workspace.sh` + `go run ./cmd/bootstrap-cluster`. For `commander` this creates the cluster (Commander API, wait Ready) **and** enables the modules-under-test from `cluster_config` — connecting **in-process** via the commander connector (SSH to the master through the bastion, kubeconfig fetched off the master, API tunnel). No kubeconfig artifact, no separate enable-modules step |
 | `run-tests` | resolve, bootstrap | bootstrap succeeded | `e2e-run-tests.sh` (`go mod replace` + `go test`). A provider-gated step injects the suite connection env: for `dvp` — `E2E_TEST_CLUSTER_PROVIDER=dvp` + `E2E_DVP_BASE_CLUSTER_*` (consumed by `e2e.Connect`); for `commander` — `E2E_TEST_CLUSTER_PROVIDER=commander` + `E2E_COMMANDER_*` (legacy connector path). The suite attaches **in-process** — no kubeconfig artifact, no external tunnel |
-| `teardown` | resolve, bootstrap, run-tests | `always() && bootstrap succeeded && keep_cluster != 'true'` | `e2e-prune-workspace.sh` + `go run ./cmd/remove-cluster` |
+| `teardown` | resolve, bootstrap, run-tests | `always() && resolve succeeded && keep_cluster != 'true'` | `e2e-prune-workspace.sh` + `go run ./cmd/remove-cluster` |
 
 > **Provider neutrality.** All commander-specific behavior lives in
 > commander-gated steps; the shared `bootstrap`/`run-tests`/`teardown` jobs are
@@ -30,8 +30,11 @@ resolve ──> bootstrap ──> run-tests ──> teardown
 > attaches via `e2e.Connect`. The in-process module enablement above is
 > implemented for `commander`.
 
-`run-tests` does **not** block teardown by its own result — the cluster is
-cleaned regardless of test pass/fail, unless the `e2e/keep-cluster` label is set.
+Neither `run-tests` nor `bootstrap` blocks teardown by its result — the cluster
+is cleaned regardless of test pass/fail **and even if bootstrap failed** (a failed
+bootstrap may leave a partial cluster to remove), unless the `e2e/keep-cluster`
+label is set. Teardown only requires `resolve` to have succeeded, since it needs
+the resolved `namespace` / `keep_cluster` outputs.
 
 ## PR labels (Kubernetes/Prow style)
 
