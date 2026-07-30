@@ -272,7 +272,7 @@ func (p *dvpProvider) deleteSetupNode(ctx context.Context, fleet vmFleet, def *c
 	p.logger.Info("deleting setup node; its bootstrap role is complete", "hostname", hostname)
 	if err := fleet.DeleteNode(ctx, hostname); err != nil {
 		p.logger.Warn("failed to delete setup node; it will be reclaimed by teardown",
-			"hostname", hostname, "error", err)
+			"hostname", hostname, "err", err)
 		return
 	}
 	p.logger.Info("setup node deleted", "hostname", hostname)
