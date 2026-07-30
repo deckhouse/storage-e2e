@@ -154,14 +154,20 @@ func (f fakeKube) DeleteNamespace(ctx context.Context, kube *rest.Config, ns str
 }
 
 type fakeFleet struct {
-	rec          *recorder
-	provisionErr error
-	teardownErr  error
+	rec           *recorder
+	provisionErr  error
+	deleteNodeErr error
+	teardownErr   error
 }
 
 func (f fakeFleet) Provision(ctx context.Context, def *config.ClusterDefinition) error {
 	f.rec.log("provision")
 	return f.provisionErr
+}
+
+func (f fakeFleet) DeleteNode(ctx context.Context, hostname string) error {
+	f.rec.log("delete-node")
+	return f.deleteNodeErr
 }
 
 func (f fakeFleet) Teardown(ctx context.Context) error {
@@ -211,7 +217,7 @@ func TestProvisionHappyPath(t *testing.T) {
 	p := newTestProvider(t, conn, kube, factory)
 
 	cleanups := cleanupStack{}
-	if _, err := p.provision(context.Background(), &cleanups); err != nil {
+	if _, _, err := p.provision(context.Background(), &cleanups); err != nil {
 		t.Fatalf("provision() error = %v", err)
 	}
 	cleanups.run()
@@ -236,7 +242,7 @@ func TestProvisionConnectErrorShortCircuits(t *testing.T) {
 	p := newTestProvider(t, conn, kube, factory)
 
 	cleanups := cleanupStack{}
-	if _, err := p.provision(context.Background(), &cleanups); err == nil {
+	if _, _, err := p.provision(context.Background(), &cleanups); err == nil {
 		t.Fatal("provision() error = nil, want connect error")
 	}
 	cleanups.run()
@@ -260,7 +266,7 @@ func TestProvisionModuleErrorRunsCleanup(t *testing.T) {
 	p := newTestProvider(t, conn, kube, factory)
 
 	cleanups := cleanupStack{}
-	if _, err := p.provision(context.Background(), &cleanups); err == nil {
+	if _, _, err := p.provision(context.Background(), &cleanups); err == nil {
 		t.Fatal("provision() error = nil, want module error")
 	}
 	cleanups.run()
@@ -285,7 +291,7 @@ func TestProvisionFleetError(t *testing.T) {
 	p := newTestProvider(t, conn, kube, factory)
 
 	cleanups := cleanupStack{}
-	_, err := p.provision(context.Background(), &cleanups)
+	_, _, err := p.provision(context.Background(), &cleanups)
 	if err == nil {
 		t.Fatal("provision() error = nil, want provision error")
 	}

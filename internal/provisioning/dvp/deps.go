@@ -57,6 +57,7 @@ type kubeOps interface {
 
 type vmFleet interface {
 	Provision(ctx context.Context, def *config.ClusterDefinition) error
+	DeleteNode(ctx context.Context, hostname string) error
 	Teardown(ctx context.Context) error
 }
 
