@@ -80,8 +80,23 @@ on:
         required: false
         default: "90m"
 
+# One pipeline at a time per (module, provider, PR) — not per (module, PR).
+#
+# The provider belongs in the key because a module can legitimately call this
+# workflow twice for the same pull request, once per provider, and those two runs
+# share nothing: they bootstrap on different backends (a namespace in the DVP base
+# cluster against a cluster in Commander), they carry complementary Ginkgo label
+# filters, and neither can interfere with the other. Keyed without it they queue
+# behind one another instead, so a PR that exercises both pays the sum of two
+# bootstraps — around an hour for Commander alone — for no isolation it did not
+# already have.
+#
+# What the key still serialises is the case it was written for: the same module,
+# the same provider, the same PR, pushed twice. Those DO collide, on the cluster
+# name and the namespace, both of which are derived from the module slug and the
+# PR number alone.
 concurrency:
-  group: e2e-${{ inputs.module_slug }}-pr${{ github.event.pull_request.number }}
+  group: e2e-${{ inputs.module_slug }}-${{ inputs.cluster_provider }}-pr${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 permissions:
@@ -350,7 +365,13 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-test-logs-${{ inputs.module_slug }}-pr${{ github.event.pull_request.number }}
+          # The provider is part of the name because artifact names have to be
+          # unique within a workflow run, and a caller that runs two providers for
+          # one pull request puts both pipelines in the same run. Without it the
+          # second upload fails outright — and it fails in the `always()` step
+          # whose whole job is to preserve the log of a suite that has just gone
+          # red.
+          name: e2e-test-logs-${{ inputs.module_slug }}-${{ inputs.cluster_provider }}-pr${{ github.event.pull_request.number }}
           path: ${{ github.workspace }}/e2e-test-output.log
           retention-days: 7
           if-no-files-found: ignore
