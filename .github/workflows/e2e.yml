@@ -80,8 +80,15 @@ on:
         required: false
         default: "90m"
 
+# The provider is in the key because a module may call this workflow once per
+# provider for the same PR, and those two runs share nothing — a namespace in the
+# DVP base cluster against a cluster in Commander. Without it they queue behind
+# one another for isolation they already have.
+#
+# Same module, same provider, same PR still serialises: those do collide, on the
+# namespace and the cluster name.
 concurrency:
-  group: e2e-${{ inputs.module_slug }}-pr${{ github.event.pull_request.number }}
+  group: e2e-${{ inputs.module_slug }}-${{ inputs.cluster_provider }}-pr${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 permissions:
@@ -350,7 +357,11 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-test-logs-${{ inputs.module_slug }}-pr${{ github.event.pull_request.number }}
+          # Artifact names must be unique within a workflow run, and two providers
+          # for one PR report into the same run. Without the provider the second
+          # upload fails — in the always() step that exists to keep the log of a
+          # suite that has just gone red.
+          name: e2e-test-logs-${{ inputs.module_slug }}-${{ inputs.cluster_provider }}-pr${{ github.event.pull_request.number }}
           path: ${{ github.workspace }}/e2e-test-output.log
           retention-days: 7
           if-no-files-found: ignore
