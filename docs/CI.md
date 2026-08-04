@@ -50,28 +50,24 @@ Namespace / cluster identity is `e2e-<module_slug>-pr<pr_number>` — **no `run_
 Bootstrap is idempotent (`CreateNamespaceIfNotExists`), so re-runs land in the
 same namespace → "same cluster".
 
-The provider is deliberately absent from that identity: `dvp` names a namespace in
-the DVP base cluster while `commander` names a cluster in Commander, so the two
-never refer to the same thing.
+The provider is deliberately absent from it: `dvp` names a namespace in the DVP
+base cluster while `commander` names a cluster in Commander, so the two never
+refer to the same thing.
 
 ## Running two providers for one PR
 
-A module may call this workflow more than once per pull request — typically once
-per provider, with complementary Ginkgo filters, when part of its suite needs
-infrastructure only one provider has (a disk it can attach) and the rest needs
-only a node shell. Those calls run **in parallel**, not one after the other:
+A module may call this workflow once per provider for the same PR, with
+complementary Ginkgo filters, when part of its suite needs infrastructure only
+one provider has. Those calls run in parallel:
 
 - the concurrency group is keyed by `(module_slug, cluster_provider, pr_number)`,
-  so a second provider does not queue behind the first — while a re-push of the
-  same provider still serialises, which is what the group is for (it protects the
-  shared namespace / cluster name);
-- the E2E log artifact carries the provider in its name, because artifact names
-  must be unique within a workflow run and both pipelines report into the same
-  run of the caller's workflow.
+  so the second provider does not queue behind the first — a re-push of the same
+  provider still serialises, which is what the group is for;
+- the log artifact carries the provider in its name, since artifact names must be
+  unique within a workflow run and both pipelines report into the same run.
 
-What is *not* handled here is runner supply: with `runner_labels` pointing at a
-single self-hosted runner the two pipelines still take turns. Give the label at
-least two runners if the parallelism is meant to be real.
+Runner supply is not handled here: with `runner_labels` pointing at a single
+self-hosted runner the two pipelines still take turns.
 
 ## Reusable workflow inputs
 
