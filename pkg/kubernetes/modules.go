@@ -281,10 +281,13 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 			err = deckhouse.CreateModuleConfig(ctx, kubeconfig, moduleConfig.Name, moduleConfig.Version, moduleConfig.Enabled, settings)
 			if err != nil {
 				lastErr = err
-				// Check if it's a retryable error (webhook or network timeout)
-				if retry.IsRetryable(err) && attempt < maxRetries-1 {
+				// Retryable: webhook, network timeout, or an API surface
+				// Deckhouse has not registered yet.
+				if isRetryableModuleConfigError(err) && attempt < maxRetries-1 {
 					if isWebhookConnectionError(err) {
 						logger.Debug("webhook-handler connection error for %s", moduleConfig.Name)
+					} else if retry.IsAPINotRegisteredError(err) || retry.IsGroupDiscoveryFailedError(err) {
+						logger.Warn("API discovery not settled yet, creating ModuleConfig for %s: %v", moduleConfig.Name, err)
 					} else {
 						logger.Warn("Network timeout error creating ModuleConfig for %s: %v", moduleConfig.Name, err)
 					}
@@ -310,10 +313,13 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 			err = deckhouse.UpdateModuleConfig(ctx, kubeconfig, moduleConfig.Name, moduleConfig.Version, moduleConfig.Enabled, settings)
 			if err != nil {
 				lastErr = err
-				// Check if it's a retryable error (webhook or network timeout)
-				if retry.IsRetryable(err) && attempt < maxRetries-1 {
+				// Retryable: webhook, network timeout, or an API surface
+				// Deckhouse has not registered yet.
+				if isRetryableModuleConfigError(err) && attempt < maxRetries-1 {
 					if isWebhookConnectionError(err) {
 						logger.Debug("webhook-handler connection error for %s", moduleConfig.Name)
+					} else if retry.IsAPINotRegisteredError(err) || retry.IsGroupDiscoveryFailedError(err) {
+						logger.Warn("API discovery not settled yet, updating ModuleConfig for %s: %v", moduleConfig.Name, err)
 					} else {
 						logger.Warn("Network timeout error updating ModuleConfig for %s: %v", moduleConfig.Name, err)
 					}
@@ -338,6 +344,14 @@ func configureModuleConfig(ctx context.Context, kubeconfig *rest.Config, moduleC
 	}
 
 	return fmt.Errorf("failed to configure moduleconfig %s after %d attempts: %w", moduleConfig.Name, maxRetries, lastErr)
+}
+
+// isRetryableModuleConfigError widens the generic classification for the one
+// caller that writes into a cluster that has only just come up: Commander
+// reports Ready before Deckhouse has registered deckhouse.io, so a RESTMapper
+// "no matches for deckhouse.io/v1alpha1" here means "not yet", not "absent".
+func isRetryableModuleConfigError(err error) bool {
+	return retry.IsRetryable(err) || retry.IsAPINotRegisteredError(err)
 }
 
 // isWebhookConnectionError checks if the error is a webhook connection error

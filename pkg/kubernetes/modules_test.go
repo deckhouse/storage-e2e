@@ -249,6 +249,43 @@ func TestIsWebhookConnectionError(t *testing.T) {
 	}
 }
 
+func TestIsRetryableModuleConfigError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+
+		// Inherited from the generic classification.
+		{"webhook cold start", errors.New("failed calling webhook validate.deckhouse.io"), true},
+		{"tunnel EOF", errors.New(`Get "https://127.0.0.1:36143/api": EOF`), true},
+		{
+			"partial discovery",
+			errors.New("unable to retrieve the complete list of server APIs: deckhouse.io/v1alpha1: no matches for deckhouse.io/v1alpha1, Resource="),
+			true,
+		},
+
+		// Widened for bootstrap only: Deckhouse has not registered its API yet.
+		{
+			"ModuleConfig kind not registered yet",
+			errors.New(`no matches for kind "ModuleConfig" in version "deckhouse.io/v1alpha1"`),
+			true,
+		},
+
+		{"unrelated error", errors.New("oops"), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isRetryableModuleConfigError(tc.err)
+			if got != tc.want {
+				t.Fatalf("isRetryableModuleConfigError(%v)=%v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 // helpers ---------------------------------------------------------------
 
 func names(modules []*config.ModuleConfig) []string {

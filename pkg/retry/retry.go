@@ -26,6 +26,8 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/discovery"
 
 	"github.com/deckhouse/storage-e2e/internal/config"
 	"github.com/deckhouse/storage-e2e/internal/logger"
@@ -164,6 +166,12 @@ func IsRetryable(err error) bool {
 		return true
 	}
 
+	// Partial discovery failure: an apiserver that is still converging fails the
+	// call before it is ever sent.
+	if IsGroupDiscoveryFailedError(err) {
+		return true
+	}
+
 	// Check for EOF errors (common in broken connections)
 	if errors.Is(err, io.EOF) {
 		return true
@@ -227,6 +235,44 @@ func IsRetryable(err error) bool {
 	}
 
 	return false
+}
+
+// IsGroupDiscoveryFailedError reports whether err is (or wraps) a partial
+// discovery failure. discovery.IsGroupDiscoveryFailedError does a bare type
+// assertion, so it misses the error once any caller has wrapped it.
+func IsGroupDiscoveryFailedError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var discoveryErr *discovery.ErrGroupDiscoveryFailed
+	if errors.As(err, &discoveryErr) {
+		return true
+	}
+
+	return strings.Contains(err.Error(), "unable to retrieve the complete list of server APIs")
+}
+
+// IsAPINotRegisteredError reports whether err says the RESTMapper knows nothing
+// about the requested kind or resource.
+//
+// Deliberately NOT part of IsRetryable: on an established cluster it means the
+// CRD is genuinely absent. Only the bootstrap path, where it means "not yet",
+// opts in.
+func IsAPINotRegisteredError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var (
+		noKind     *meta.NoKindMatchError
+		noResource *meta.NoResourceMatchError
+	)
+	if errors.As(err, &noKind) || errors.As(err, &noResource) {
+		return true
+	}
+
+	return strings.Contains(err.Error(), "no matches for ")
 }
 
 // IsSSHConnectionError checks if an error specifically indicates SSH connection failure
