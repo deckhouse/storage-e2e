@@ -34,4 +34,3 @@ If no category is specified, add items under a `## General` heading.
 2. When adding, append to the end of the appropriate section.
 3. When removing, delete the entire line. If the section becomes empty (no items), remove the section heading too.
 4. After any change, confirm to the user what was done (e.g. "Added TODO: ..." or "Removed TODO: ...").
-5. Also append a worklog entry to `docs/WORKLOG.md` describing the TODO change.
