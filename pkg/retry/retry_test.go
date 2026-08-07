@@ -26,9 +26,28 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 )
+
+// deckhouseGV is the group/version missing while Deckhouse registers its API.
+var deckhouseGV = schema.GroupVersion{Group: "deckhouse.io", Version: "v1alpha1"}
+
+// noResourceMatch is what a RESTMapper returns for a group/version discovery
+// does not list yet.
+func noResourceMatch() error {
+	return &meta.NoResourceMatchError{PartialResource: deckhouseGV.WithResource("")}
+}
+
+// groupDiscoveryFailed reproduces the error that killed csi-ceph PR #199's
+// bootstrap.
+func groupDiscoveryFailed() error {
+	return &discovery.ErrGroupDiscoveryFailed{
+		Groups: map[schema.GroupVersion]error{deckhouseGV: noResourceMatch()},
+	}
+}
 
 // statusErr constructs a *apierrors.StatusError with the given HTTP code and
 // optional RetryAfterSeconds, mirroring how apiserver decodes failures.
@@ -105,6 +124,27 @@ func TestIsRetryable(t *testing.T) {
 		{"etcdserver leader changed", errors.New("etcdserver: leader changed"), true},
 		{"failed to get server groups", errors.New("failed to get server groups"), true},
 
+		// Partial discovery failure, chain preserved or flattened.
+		{"group discovery failed", groupDiscoveryFailed(), true},
+		{
+			"wrapped group discovery failed",
+			fmt.Errorf("failed to create moduleconfig snapshot-controller: %w", groupDiscoveryFailed()),
+			true,
+		},
+		{
+			"group discovery failed, chain lost",
+			errors.New("unable to retrieve the complete list of server APIs: deckhouse.io/v1alpha1: no matches for deckhouse.io/v1alpha1, Resource="),
+			true,
+		},
+
+		// A bare no-match is an absent CRD everywhere except bootstrap.
+		{"no resource match alone", noResourceMatch(), false},
+		{
+			"no kind match alone",
+			&meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "deckhouse.io", Kind: "ModuleConfig"}},
+			false,
+		},
+
 		{"ssh handshake failed", errors.New("ssh: handshake failed"), true},
 		{"ssh unable to authenticate", errors.New("ssh: unable to authenticate"), true},
 		{"ssh connection lost", errors.New("ssh: connection lost"), true},
@@ -124,6 +164,74 @@ func TestIsRetryable(t *testing.T) {
 			got := IsRetryable(tc.err)
 			if got != tc.want {
 				t.Fatalf("IsRetryable(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsGroupDiscoveryFailedError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+
+		{"typed", groupDiscoveryFailed(), true},
+		// discovery.IsGroupDiscoveryFailedError misses this one.
+		{"wrapped twice", fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", groupDiscoveryFailed())), true},
+		{
+			"message only",
+			errors.New("unable to retrieve the complete list of server APIs: deckhouse.io/v1alpha1: no matches for deckhouse.io/v1alpha1, Resource="),
+			true,
+		},
+
+		{"unrelated no-match", noResourceMatch(), false},
+		{"plain error", errors.New("oops"), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsGroupDiscoveryFailedError(tc.err); got != tc.want {
+				t.Fatalf("IsGroupDiscoveryFailedError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsAPINotRegisteredError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+
+		{"no resource match", noResourceMatch(), true},
+		{
+			"no kind match",
+			&meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "deckhouse.io", Kind: "ModuleConfig"}},
+			true,
+		},
+		{
+			"wrapped no resource match",
+			fmt.Errorf("failed to create moduleconfig snapshot-controller: %w", noResourceMatch()),
+			true,
+		},
+		{
+			"message only",
+			errors.New(`no matches for kind "ModuleConfig" in version "deckhouse.io/v1alpha1"`),
+			true,
+		},
+
+		{"plain error", errors.New("oops"), false},
+		{"not found status", statusErr(404, 0), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsAPINotRegisteredError(tc.err); got != tc.want {
+				t.Fatalf("IsAPINotRegisteredError(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
